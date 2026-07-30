@@ -1,53 +1,41 @@
 # velog-mcp
 
-Velog 를 Claude 같은 MCP 클라이언트에서 다루기 위한 서버.
+[![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Runtime deps](https://img.shields.io/badge/runtime%20deps-2-lightgrey)](package.json)
 
-**설계 원칙 한 줄**: 읽기는 넓게, 쓰기는 **초안까지만**.
+An MCP server for [Velog](https://velog.io), the Korean developer blogging platform.
+Read your blog, draft posts, publish them, and back everything up — from Claude or any
+MCP client.
 
-```
-읽기   글·검색·트렌딩·사용자·시리즈·태그·통계·백업   → 도구 10개
-쓰기   초안 작성 / 초안 수정 / 초안 목록            → 도구 3개, is_temp=true 고정
-발행   ✗ 코드에 경로 자체가 없음
-삭제   ✗ 코드에 경로 자체가 없음
-계정   ✗ 탈퇴·프로필·이메일 변경 전부 미구현
-```
+**[한국어 문서 →](README.ko.md)**
 
-발행 버튼은 사람이 누른다. 이 서버는 초안을 만들어 놓을 뿐이다.
+---
 
-이 서버가 저지를 수 있는 최악의 일은 **비공개 임시저장 글이 몇 개 생기는 것**이다.
-사용자가 벨로그에서 지우면 원복된다.
+## Why another one?
 
-단, 이건 방어를 넣고 나서야 사실이 됐다. 벨로그는 최근 5분의 공개 글이 10건을
-넘으면 **그 시간대 글을 전부 비공개로 바꾸는데**, 초안도 이 계수에 들어간다.
-그래서 쓰기는 재시도하지 않고, 초안 생성에 5분 5건 자체 상한을 둔다.
-경위는 [docs/security.md](docs/security.md) 에 적어뒀다.
+Two Velog MCP servers already exist. This one differs in three ways.
 
-## 할 수 있는 일
+**1. Publishing is a permission, not a default.**
+Out of the box the server can create drafts and publish **privately**. Public
+publishing requires you to set an environment variable. The model cannot flip that
+switch — only you can, in your MCP config.
 
-```
-"이번 기여 건으로 벨로그 초안 잡아줘"        → 마크다운 작성 후 임시저장
-"작년에 쓴 HTTP/2 글 어디였지"               → 내 글 안에서 검색
-"내 글 조회수 상위 10개랑 태그별 분포"       → 집계 리포트
-"내 글 전부 마크다운으로 내려받아"           → 프론트매터 붙여 로컬 백업
-"어제 잡아둔 초안 이어서 마무리하자"         → 초안 목록 → 수정
-```
+**2. Every quirk is measured, not assumed.**
+Velog's GraphQL API is undocumented. This repo records what it *actually* does,
+verified against [velog-io/velog](https://github.com/velog-io/velog) source and live
+calls. Six server-side quirks are written up in
+[docs/api-reference.md](docs/api-reference.md) — including one that silently returns an
+empty list, and one that can turn your published posts private.
 
-## 왜 또 만들었나
+**3. Two runtime dependencies.** `@modelcontextprotocol/sdk` and `zod`. HTTP, test
+runner, and TypeScript execution all come from Node 24 itself.
 
-기존 구현이 둘 있으나 (`velog-mcp`, `velog-mcp-claude`) 셋 다 다른 문제가 있었다.
-자세한 비교는 [docs/decisions/0001-why-build-our-own.md](docs/decisions/0001-why-build-our-own.md).
+---
 
-요약하면 — 발행·삭제가 한 번에 되고, macOS 키체인에서 Chrome 암호키를 뽑고,
-npm 배포본이 소스보다 10버전 뒤처져 있었다.
+## Install
 
-## 요구사항
-
-- Node.js **24 이상** (내장 `fetch`, 타입 스트리핑 사용)
-
-런타임 의존성은 두 개뿐이다 — `@modelcontextprotocol/sdk`, `zod`.
-HTTP 클라이언트·테스트 러너·트랜스파일러는 전부 Node 내장을 쓴다.
-
-## 설치
+Requires **Node.js 24 or newer**.
 
 ```bash
 git clone https://github.com/milcho0604/velog-mcp.git
@@ -55,47 +43,227 @@ cd velog-mcp
 npm install && npm run build
 ```
 
-## 설정
+## Configure
 
-토큰은 **환경변수로만** 받는다. 디스크에 쓰지 않고, 브라우저 쿠키 DB 도 읽지 않는다.
+Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, …):
 
 ```json
 {
   "mcpServers": {
     "velog": {
       "command": "node",
-      "args": ["/절대경로/velog-mcp/dist/index.js"],
+      "args": ["/absolute/path/to/velog-mcp/dist/index.js"],
       "env": {
-        "VELOG_ACCESS_TOKEN": "…",
-        "VELOG_REFRESH_TOKEN": "…"
+        "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
     }
   }
 }
 ```
 
-토큰 없이 실행하면 **읽기 전용**으로 동작한다. 공개 글 조회·검색·트렌딩은 인증이 필요 없다.
+With the Claude Code CLI:
 
-토큰 위치: velog.io 로그인 → `F12` → Application → Cookies
+```bash
+claude mcp add velog -- node /absolute/path/to/velog-mcp/dist/index.js
+# then add the "env" block to the entry it created
+```
 
-**`VELOG_REFRESH_TOKEN` 하나만 넣어도 된다.** 벨로그 서버가 `access_token` 을
-알아서 재발급하고(`authPlugin.mts` 확인), 이 서버는 응답의 `Set-Cookie` 로 오는
-새 토큰을 메모리에 반영한다. 그래서 한 번 넣으면 **30일간** 쓸 수 있다.
-`access_token` 은 1시간짜리라 단독으로 넣으면 그만큼만 간다.
+### Getting your token
 
-갱신된 토큰도 디스크에는 쓰지 않는다 — 프로세스가 살아 있는 동안만 존재한다.
+Velog has no public write API, so the server authenticates with your browser session
+cookie.
 
-## 문서
+1. Log in at [velog.io](https://velog.io)
+2. Open DevTools (`F12`) → **Application** → **Cookies** → `https://velog.io`
+3. Copy the value of **`refresh_token`**
 
-| 문서 | 내용 |
+**`VELOG_REFRESH_TOKEN` alone is enough.** Velog's server reissues the short-lived
+`access_token` on its own ([`authPlugin.mts`](https://github.com/velog-io/velog/blob/main/apps/server/src/common/plugins/global/authPlugin.mts)),
+and this server picks the refreshed cookie out of the response. One paste lasts
+**30 days**.
+
+`VELOG_ACCESS_TOKEN` also works but expires in about an hour by itself.
+
+> Tokens are read from the environment only. They are never written to disk, and the
+> server never reads your browser's cookie database or your OS keychain.
+> Whatever you put in your MCP config file does live there in plain text, though —
+> that file is yours to protect.
+
+**Without a token the server still starts**, read-only. Public posts, search, trending,
+and blog stats all work unauthenticated.
+
+---
+
+## Permissions
+
+| Environment | What you get |
 | --- | --- |
-| [docs/PRD.md](docs/PRD.md) | 기획서 — 목표·비목표·성공 기준 |
-| [docs/architecture.md](docs/architecture.md) | 구조와 데이터 흐름 |
-| [docs/api-reference.md](docs/api-reference.md) | 벨로그 GraphQL 스키마 실측 기록 |
-| [docs/security.md](docs/security.md) | 토큰 취급, 의도적으로 뺀 mutation 목록 |
-| [docs/tools.md](docs/tools.md) | 도구 카탈로그 |
-| [docs/decisions/](docs/decisions/) | 설계 결정 기록 (ADR) |
+| *(nothing set)* | Read everything · create drafts · **publish privately** |
+| `VELOG_ALLOW_PUBLIC=1` | All of the above **plus public publishing** |
 
-## 라이선스
+```json
+"env": {
+  "VELOG_REFRESH_TOKEN": "...",
+  "VELOG_ALLOW_PUBLIC": "1"
+}
+```
+
+Accepted as "on": `1`, `true`, `yes`, `on`. Anything else is off — a typo won't quietly
+enable it.
+
+When public publishing is off, the `is_private` parameter **does not exist** on any
+tool, so the model has no way to ask for it. When it's on, `is_private` appears and
+still defaults to `true`.
+
+### Why private-by-default
+
+Not caution for its own sake. Velog's rate limiter counts only `is_private: false`
+posts:
+
+```ts
+// apps/server/src/services/PostApiService/index.mts
+count({ where: { fk_user_id, is_private: false, released_at: { gt: fiveMinutesAgo } } })
+if (count >= 10) {
+  updateMany({ where: { fk_user_id, released_at: { gt: fiveMinutesAgo } },
+               data: { is_private: true } })   // flips *everything* recent to private
+}
+```
+
+Private posts never enter that count, so they can't trigger it. Public posts can — and
+once a post is public it has already gone out through RSS, search indexes, and
+subscriber email, none of which a delete reaches. That asymmetry is what deserves an
+explicit opt-in.
+
+Full reasoning: [docs/security.md](docs/security.md)
+
+---
+
+## Tools
+
+18 tools. Only 6 of them change anything on Velog.
+
+### Reading — no auth required
+
+| Tool | Purpose |
+| --- | --- |
+| `velog_get_post` | Read one post, body included |
+| `velog_list_posts` | A user's posts, optionally filtered by tag |
+| `velog_search_posts` | Keyword search; pass `username` to search inside one blog |
+| `velog_trending_posts` | Trending by `day` / `week` / `month` / `year` |
+| `velog_recent_posts` | Newest posts across Velog |
+| `velog_get_user` | Profile, follower counts, bio |
+| `velog_list_series` | A user's series, with post counts and IDs |
+| `velog_user_tags` | Tags a user writes about, with counts |
+
+### Reading — auth required
+
+| Tool | Purpose |
+| --- | --- |
+| `velog_whoami` | Which account the token belongs to (also a token health check) |
+| `velog_list_drafts` | Your saved drafts, with IDs |
+
+### Derived — things Velog doesn't provide
+
+| Tool | Purpose |
+| --- | --- |
+| `velog_blog_stats` | Aggregate views/likes/comments, top posts, per-year and per-tag breakdown |
+| `velog_export_posts` | Save posts as Markdown files with YAML front matter |
+
+### Writing
+
+| Tool | Effect |
+| --- | --- |
+| `velog_create_draft` | Save a draft. Never publishes, under any configuration |
+| `velog_update_draft` | Replace a draft **entirely** — omitted fields are reset |
+| `velog_publish_post` | Publish a new post |
+| `velog_publish_draft` | Publish an existing draft, reusing its stored body |
+| `velog_unpublish_post` | Send a published post back to drafts |
+| `velog_update_post` | Edit a published post — omitted fields are **kept** |
+
+> `velog_update_draft` resets what you omit; `velog_update_post` preserves it.
+> The asymmetry is deliberate — see [docs/tools.md](docs/tools.md).
+
+Tools that take a `username` — `velog_list_drafts`, `velog_blog_stats`,
+`velog_export_posts`, `velog_search_posts` — fall back to your own account when you
+omit it.
+
+---
+
+## Usage
+
+Once it's configured, just talk to your MCP client.
+
+```
+"Draft a Velog post about the bug I fixed today"
+   → writes Markdown, saves it as a draft, hands back the edit URL
+
+"What did I write about HTTP/2 last year?"
+   → searches inside your own posts
+
+"Show my top 10 posts by views, and which tags get read most"
+   → walks your whole blog and aggregates
+
+"Back up all my posts to ~/blog-backup"
+   → writes .md files with front matter
+
+"Publish that draft"
+   → private by default; public only with VELOG_ALLOW_PUBLIC=1
+```
+
+Your MCP client asks for approval before each tool call, and irreversible tools carry
+`destructiveHint`, so nothing gets published without you seeing it first.
+
+### Exported file format
+
+```yaml
+---
+title: "Post title"
+date: 2022-12-31T18:32:39.790Z
+slug: "url-slug"
+url: "https://velog.io/@username/url-slug"
+tags: ["tag1", "tag2"]
+likes: 260
+views: 16323
+---
+
+Post body in Markdown…
+```
+
+---
+
+## Development
+
+```bash
+npm test              # node:test, runs .ts directly — no jest, no ts-node
+npm run typecheck
+npm run build
+npm run schema:dump   # dump Velog's current GraphQL schema
+```
+
+120 tests. The ones in `src/__tests__/safety.test.ts` pin the security invariants —
+if that file fails, find out why instead of working around it.
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [docs/PRD.md](docs/PRD.md) | Goals, non-goals, success criteria |
+| [docs/architecture.md](docs/architecture.md) | Layering, and the TypeScript subset Node's type stripping allows |
+| [docs/api-reference.md](docs/api-reference.md) | Measured Velog GraphQL schema and server quirks |
+| [docs/security.md](docs/security.md) | Token handling, capability model, what's deliberately unimplemented |
+| [docs/tools.md](docs/tools.md) | Full tool catalog with gotchas |
+| [docs/decisions/](docs/decisions/) | Architecture decision records |
+
+## Notes
+
+This talks to Velog's internal GraphQL API, which is undocumented and can change
+without warning. When something breaks, run `npm run schema:dump` and diff it against
+`docs/api-reference.md` — that's the fastest way to find what moved.
+
+Velog's [terms of service](https://velog.io/policy/terms) contain no clause restricting
+automated access. Using your own token to manage your own posts stays within scope, and
+your posts remain yours (Article 5).
+
+## License
 
 MIT
