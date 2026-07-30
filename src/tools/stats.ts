@@ -29,21 +29,40 @@ export async function fetchAllPosts(
 	maxPages: number,
 ): Promise<{ posts: VelogPostSummary[]; truncated: boolean }> {
 	const posts: VelogPostSummary[] = [];
+	// ★ 중복 방어. 커서가 안 움직이면(벨로그가 같은 페이지를 반복 반환) 같은 글을
+	//   여러 번 담아 집계가 배수로 부풀려진다. 실측 재현: 커서 고착 시 50편이
+	//   250편으로 계수됨 — 조회수 총계가 5배가 된다. 통계 도구에서 이건 치명적이다.
+	const seenIds = new Set<string>();
+	const seenCursors = new Set<string>();
 	let cursor: string | undefined;
 
 	for (let page = 0; page < maxPages; page++) {
 		const input: Record<string, unknown> = { username, limit: PAGE_SIZE };
 		if (cursor) input['cursor'] = cursor;
 
-		const data = await client.request<{ posts: VelogPostSummary[] }>(QUERY_POSTS, {
-			input,
-		});
+		const data = await client.request<{ posts: VelogPostSummary[] | null }>(
+			QUERY_POSTS,
+			{ input },
+		);
 		const batch = data.posts ?? [];
-		posts.push(...batch);
 
+		let added = 0;
+		for (const post of batch) {
+			if (post.id && seenIds.has(post.id)) continue;
+			if (post.id) seenIds.add(post.id);
+			posts.push(post);
+			added++;
+		}
+
+		// 새로 들어온 게 없으면 더 돌아봐야 같은 결과다.
+		if (added === 0) return { posts, truncated: false };
 		if (batch.length < PAGE_SIZE) return { posts, truncated: false };
-		cursor = batch.at(-1)?.id;
-		if (!cursor) return { posts, truncated: false };
+
+		const next = batch.at(-1)?.id;
+		// 커서가 제자리면 무한 반복이므로 멈춘다.
+		if (!next || seenCursors.has(next)) return { posts, truncated: false };
+		seenCursors.add(next);
+		cursor = next;
 	}
 	return { posts, truncated: true };
 }

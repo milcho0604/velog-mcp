@@ -6,6 +6,8 @@
  * 설계 근거: docs/PRD.md, docs/security.md
  */
 
+import { pathToFileURL } from 'node:url';
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
@@ -59,7 +61,20 @@ async function main(): Promise<void> {
 }
 
 // 직접 실행될 때만 기동한다. 테스트에서 import 할 때는 돌지 않아야 한다.
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop()!)) {
+//
+// basename 비교(`endsWith('index.js')`)는 다른 디렉터리의 동명 파일에도 참이 된다.
+// 경로를 URL 로 정규화해 정확히 대조한다.
+function isDirectRun(): boolean {
+	const entry = process.argv[1];
+	if (!entry) return false;
+	try {
+		return import.meta.url === pathToFileURL(entry).href;
+	} catch {
+		return false;
+	}
+}
+
+if (isDirectRun()) {
 	main().catch((error: unknown) => {
 		process.stderr.write(`기동 실패: ${error instanceof Error ? error.message : String(error)}\n`);
 		process.exit(1);

@@ -73,6 +73,10 @@ export function isTransient(error: unknown): boolean {
 const defaultSleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => setTimeout(resolve, ms));
 
+/** 인증 만료 안내. HTTP 401 경로와 GraphQL errors 경로 둘 다에서 쓴다. */
+const AUTH_HINT =
+	' — access_token 이 만료됐을 수 있습니다(유효기간 1시간). 새 토큰으로 갱신하세요.';
+
 export class VelogClient {
 	readonly #auth: AuthState;
 	readonly #endpoint: string;
@@ -150,8 +154,13 @@ export class VelogClient {
 
 		if (!response.ok) {
 			const body = this.#mask(await response.text().catch(() => ''));
+			// ★ 벨로그는 만료 토큰에 HTTP 401 을 준다 (실측). GraphQL errors 경로가
+			//   아니라 여기로 떨어지므로, 만료 안내를 이쪽에도 붙여야 한다.
+			//   실사용에서 제일 흔한 오류인데 안내가 없으면 원인을 못 찾는다.
+			const hint =
+				response.status === 401 || response.status === 403 ? AUTH_HINT : '';
 			throw new VelogApiError(
-				`벨로그 HTTP ${response.status}: ${truncate(body, 400)}`,
+				`벨로그 HTTP ${response.status}: ${truncate(body, 400)}${hint}`,
 				{ status: response.status },
 			);
 		}
@@ -167,9 +176,7 @@ export class VelogClient {
 			// 만료를 뭉뚱그리면 사용자가 원인을 못 찾는다. 별도로 짚어준다.
 			const looksUnauthenticated =
 				codes.includes('UNAUTHENTICATED') || /not logged|unauthor/i.test(messages);
-			const hint = looksUnauthenticated
-				? ' — access_token 이 만료됐을 수 있습니다(유효기간 1시간). 새 토큰으로 갱신하세요.'
-				: '';
+			const hint = looksUnauthenticated ? AUTH_HINT : '';
 
 			throw new VelogApiError(`벨로그 GraphQL 오류: ${this.#mask(messages)}${hint}`, {
 				graphqlErrors: payload.errors,

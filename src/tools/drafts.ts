@@ -35,6 +35,13 @@ const MUTATION_EDIT_POST = `
   }
 `;
 
+/** 수정 전 상태 확인용. 필요한 필드만 받는다. */
+const QUERY_POST_STATE = `
+  query PostState($input: ReadPostInput!) {
+    post(input: $input) { id is_temp }
+  }
+`;
+
 interface WrittenPost {
 	id: string;
 	title: string;
@@ -136,6 +143,25 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 		},
 		async ({ id, title, body, tags, url_slug, thumbnail, series_id }) => {
 			client.requireAuth('velog_update_draft');
+
+			// ★ 발행된 글을 임시저장으로 끌어내리는 사고를 코드로 막는다.
+			//   editPost 는 is_temp 를 덮어쓰므로, 발행글 id 가 들어오면 그 글이
+			//   조용히 비공개가 된다. 문서 경고만으로는 부족해 사전 확인을 넣었다.
+			const before = await client.request<{ post: { is_temp?: boolean } | null }>(
+				QUERY_POST_STATE,
+				{ input: { id } },
+			);
+			if (!before.post) {
+				throw new Error(
+					`id=${id} 인 글을 찾지 못했습니다. velog_list_drafts 로 id 를 확인하세요.`,
+				);
+			}
+			if (before.post.is_temp !== true) {
+				throw new Error(
+					`id=${id} 는 이미 발행된 글입니다. 이 도구로 수정하면 임시저장으로 내려가 ` +
+						`비공개가 되므로 중단했습니다. 발행된 글은 벨로그에서 직접 수정하세요.`,
+				);
+			}
 
 			const input: Record<string, unknown> = {
 				id,
