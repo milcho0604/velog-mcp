@@ -3,6 +3,9 @@
 - 측정: **2026-07-30**
 - 방법: 엔드포인트에 introspection 질의 직접 전송 (인증 불필요)
 - 출처: 벨로그 서버 응답. 타사 구현 소스를 참조하지 않았다
+- **교차검증**: 벨로그 공식 오픈소스 [velog-io/velog](https://github.com/velog-io/velog)
+  (⭐207, 2025-10-24) 의 `apps/server/src/graphql/Post.gql` 및
+  `apps/server/src/services/PostService/index.ts` 와 대조 — 아래 표시된 항목 일치 확인
 
 > 비공식 API 다. 벨로그가 예고 없이 바꿀 수 있다.
 > 무언가 깨지면 **먼저 이 문서와 현재 스키마를 diff** 하라.
@@ -68,7 +71,10 @@ Cookie: access_token=<...>; refresh_token=<...>
 > `deletePost` 는 v3 mutation 목록에 **없다**. 삭제는 다른 경로인 듯하나
 > 어차피 구현하지 않으므로 조사하지 않았다.
 
-### WritePostInput (11필드)
+### WritePostInput (11필드) — ✅ 공식 소스와 일치
+
+`velog-io/velog` 의 `apps/server/src/graphql/Post.gql` 원문과 대조했고 필드·필수여부가
+전부 같다. introspection 실측이 정확했음이 확인됐다.
 
 ```
 * title          String        필수
@@ -152,6 +158,44 @@ is_certified  is_trusted  is_followed
 profile(UserProfile)  velog_config(VelogConfig)
 series_list  user_meta  followers_count  followings_count
 ```
+
+## 공식 소스로 확인한 서버 동작
+
+`velog-io/velog` 를 읽어 확인한 것들. 우리 대응 코드의 근거다.
+
+### `updated_at` 이 왜 응답 전체를 죽이나
+
+```graphql
+# apps/server/src/graphql/Post.gql
+type Post {
+  created_at:  Date!    # non-null
+  updated_at:  Date!    # non-null  ← 여기
+  released_at: Date     # nullable
+}
+```
+
+**스키마는 non-null 로 선언했는데 실제 DB 에 null 인 행이 있다.** GraphQL 규약상
+non-null 필드에 null 이 오면 그 필드만 비우는 게 아니라 상위 객체를, 리스트 안이면
+응답 전체를 무효화한다. 그래서 글 하나 때문에 검색 결과 전부가 날아간다.
+`released_at` 은 nullable 이라 안전 — 우리가 이쪽만 쓰는 이유다.
+
+### 커서가 고착되는 조건
+
+```ts
+// apps/server/src/services/PostService/index.ts
+const cursorData = cursor ? await ...findUnique({ fk_post_id: cursor }) : null
+const cursorQueryOption = cursorData
+  ? { released_at: { lt: cursorData.created_at }, id: { not: cursorData.id } }
+  : {}                                    // ★ 못 찾으면 필터 없음
+take: limit
+```
+
+**커서 id 를 서버가 못 찾으면 필터가 통째로 빠져 1페이지를 다시 준다.**
+그대로 두면 같은 50편을 무한히 재수집한다. `fetchAllPosts` 가 id 중복 제거와
+커서 반복 감지를 하는 이유가 이것이다 (`src/tools/stats.ts`).
+
+또한 서버가 `limit > 100` 을 `BadRequestError` 로 막는다. 우리 도구는 50 을
+상한으로 두므로 걸리지 않는다.
 
 ## 스키마 변경 감지
 
