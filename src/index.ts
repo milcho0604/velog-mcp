@@ -53,8 +53,9 @@ async function main(): Promise<void> {
 	process.stderr.write(
 		`[${SERVER_NAME} ${SERVER_VERSION}] ` +
 			(client.isAuthenticated
-				? '인증됨 — 초안 작성 가능\n'
-				: '무인증 — 읽기 전용 (VELOG_ACCESS_TOKEN 미설정)\n'),
+				? '인증됨 — 초안 작성 가능 (발행 기능 없음)\n'
+				: '무인증 — 읽기 전용 ' +
+					'(VELOG_REFRESH_TOKEN 만 넣어도 동작합니다)\n'),
 	);
 
 	await server.connect(new StdioServerTransport());

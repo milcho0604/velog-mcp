@@ -71,6 +71,8 @@ const DRAFT_ONLY = { is_temp: true } as const;
 | **macOS 키체인을 건드리지 않는다** | 같음 |
 | 로그·에러에 싣지 않는다 | GraphQL 에러를 그대로 던지면 Cookie 헤더가 섞일 수 있어 마스킹 |
 | 없으면 읽기 전용으로 기동 | 토큰 없음은 에러가 아니라 상태 |
+| 갱신 토큰도 메모리에만 | 서버가 Set-Cookie 로 주는 새 토큰을 받되 디스크엔 안 쓴다 |
+| 갱신 **전** 토큰도 계속 마스킹 | 옛 토큰이 나중에 로그로 새면 갱신한 의미가 없다 |
 
 → [ADR 0003](decisions/0003-token-env-only.md)
 

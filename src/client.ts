@@ -8,8 +8,9 @@
 import {
 	type AuthState,
 	AuthRequiredError,
+	TokenStore,
 	buildCookieHeader,
-	maskSecrets,
+	parseSetCookie,
 } from './auth.ts';
 
 export const VELOG_ENDPOINT = 'https://v3.velog.io/graphql';
@@ -78,7 +79,7 @@ const AUTH_HINT =
 	' — access_token 이 만료됐을 수 있습니다(유효기간 1시간). 새 토큰으로 갱신하세요.';
 
 export class VelogClient {
-	readonly #auth: AuthState;
+	readonly #tokens: TokenStore;
 	readonly #endpoint: string;
 	readonly #timeoutMs: number;
 	readonly #fetch: typeof fetch;
@@ -86,7 +87,7 @@ export class VelogClient {
 	readonly #sleep: (ms: number) => Promise<void>;
 
 	constructor(options: ClientOptions) {
-		this.#auth = options.auth;
+		this.#tokens = new TokenStore(options.auth);
 		this.#endpoint = options.endpoint ?? VELOG_ENDPOINT;
 		this.#timeoutMs = options.timeoutMs ?? 20_000;
 		this.#fetch = options.fetchImpl ?? fetch;
@@ -95,12 +96,12 @@ export class VelogClient {
 	}
 
 	get isAuthenticated(): boolean {
-		return this.#auth.kind === 'authenticated';
+		return this.#tokens.isAuthenticated;
 	}
 
 	/** 인증이 필요한 도구가 먼저 호출한다. */
 	requireAuth(toolName: string): void {
-		if (this.#auth.kind !== 'authenticated') throw new AuthRequiredError(toolName);
+		if (!this.#tokens.isAuthenticated) throw new AuthRequiredError(toolName);
 	}
 
 	/**
@@ -132,8 +133,9 @@ export class VelogClient {
 			'Content-Type': 'application/json',
 			Accept: 'application/json',
 		};
-		if (this.#auth.kind === 'authenticated') {
-			headers['Cookie'] = buildCookieHeader(this.#auth.credentials);
+		const auth = this.#tokens.state;
+		if (auth.kind === 'authenticated') {
+			headers['Cookie'] = buildCookieHeader(auth.credentials);
 		}
 
 		let response: Response;
@@ -151,6 +153,12 @@ export class VelogClient {
 				`벨로그 요청 실패: ${this.#mask(reason)}`,
 			);
 		}
+
+		// ★ 벨로그는 access_token 수명이 30분 아래로 내려가면 refresh_token 으로
+		//   재발급해 Set-Cookie 로 돌려준다 (공식 authPlugin.mts). 이걸 버리면
+		//   1시간마다 세션이 죽는다. 받아서 메모리에만 반영한다 — 디스크엔 안 쓴다.
+		//   실패 응답에도 실려 올 수 있으므로 상태 확인보다 먼저 처리한다.
+		this.#tokens.update(parseSetCookie(response.headers.get('set-cookie')));
 
 		if (!response.ok) {
 			const body = this.#mask(await response.text().catch(() => ''));
@@ -190,7 +198,7 @@ export class VelogClient {
 	}
 
 	#mask(text: string): string {
-		return maskSecrets(text, this.#auth);
+		return this.#tokens.mask(text);
 	}
 }
 

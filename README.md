@@ -71,8 +71,14 @@ npm install && npm run build
 
 토큰 없이 실행하면 **읽기 전용**으로 동작한다. 공개 글 조회·검색·트렌딩은 인증이 필요 없다.
 
-토큰 위치: velog.io 로그인 → `F12` → Application → Cookies → `access_token` / `refresh_token`
-(`access_token` 1시간, `refresh_token` 30일)
+토큰 위치: velog.io 로그인 → `F12` → Application → Cookies
+
+**`VELOG_REFRESH_TOKEN` 하나만 넣어도 된다.** 벨로그 서버가 `access_token` 을
+알아서 재발급하고(`authPlugin.mts` 확인), 이 서버는 응답의 `Set-Cookie` 로 오는
+새 토큰을 메모리에 반영한다. 그래서 한 번 넣으면 **30일간** 쓸 수 있다.
+`access_token` 은 1시간짜리라 단독으로 넣으면 그만큼만 간다.
+
+갱신된 토큰도 디스크에는 쓰지 않는다 — 프로세스가 살아 있는 동안만 존재한다.
 
 ## 문서
 

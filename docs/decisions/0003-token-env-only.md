@@ -69,8 +69,41 @@ const REFRESH = process.env.VELOG_REFRESH_TOKEN;
 - `A3`: 파일 쓰기 API 를 쓰지 않음을 검사 + 에러 마스킹 단위 테스트
 - `A4`: 토큰 없이 공개 글 조회가 되는 통합 테스트
 
+## 개정 (2026-07-30) — 갱신은 서버가 한다
+
+초안에서는 "`refresh_token` 자동 갱신을 넣지 않는다. 넣으면 30일 자격증명을 상시
+보관해야 해서 B 와 같아진다"고 적었다. **이건 사실 확인 없이 내린 결론이었고,
+벨로그 공식 소스를 읽고 뒤집었다.**
+
+```ts
+// velog-io/velog · apps/server/src/common/plugins/global/authPlugin.mts
+const diff = accessTokenData.exp * 1000 - new Date().getTime()
+// refresh token when life < 30mins
+if (diff < Time.ONE_MINUTE_IN_MS * 30 && refreshToken) {
+  await userService.restoreToken({ request, reply })
+}
+...
+if (!accessToken && refreshToken) {          // access 가 아예 없어도
+  const tokens = await userService.restoreToken({ request, reply })
+}
+```
+
+**갱신 로직은 이미 서버에 있다.** 우리가 구현할 게 없다. 우리는 두 가지만 하면 된다.
+
+1. `refresh_token` 만 있어도 인증을 시도한다 — 서버가 `access_token` 을 만들어준다
+2. 응답의 `Set-Cookie` 로 오는 새 토큰을 **메모리에** 반영한다
+
+이래도 원칙은 그대로다: **디스크에 쓰지 않는다.** 갱신된 토큰은 프로세스가
+살아 있는 동안만 존재하고, 종료하면 사라진다. 파일도, 키체인도 없다.
+
+얻는 것은 크다. 종전에는 1시간마다 세션이 죽었는데, 이제 `refresh_token` 하나만
+넣으면 **30일간** 초안 작성이 된다. 그리고 사용자가 넣을 값이 둘에서 하나로 줄었다.
+
+`TokenStore` 가 **갱신 전 토큰도 계속 마스킹 대상에 둔다** — 옛 토큰이 나중에
+로그로 새면 갱신한 의미가 없다.
+
 ## 재검토 조건
 
-`refresh_token` 자동 갱신은 넣지 않는다. 넣는 순간 30일 자격증명을 상시
-보관해야 하고, 그러면 B 와 같아진다. 편의가 정말 문제가 되면 그때는
-**세션 시작 시 1회 입력** 같은 방식을 검토한다 — 디스크에 안 남는 선을 유지한 채로.
+토큰을 디스크에 쓰자는 제안이 오면 이 문서를 먼저 볼 것. 편의 문제는 위
+서버 주도 갱신으로 대부분 해소됐으므로, 파일 저장을 정당화하려면 새로운
+근거가 필요하다.
