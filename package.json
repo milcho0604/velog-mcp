@@ -1,0 +1,48 @@
+{
+  "name": "@milcho0604/velog-mcp",
+  "version": "0.1.0",
+  "description": "Velog MCP server — 읽기 도구 전면 지원 + 쓰기는 '초안 전용'. 발행·삭제·계정변경 경로가 코드에 존재하지 않는다.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "velog-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'src/__tests__/*.test.ts'",
+    "schema:dump": "node scripts/dump-schema.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "velog",
+    "blog",
+    "claude"
+  ],
+  "license": "MIT",
+  "author": "Changhyun Kim <milcho0604@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/milcho0604/velog-mcp.git"
+  },
+  "homepage": "https://github.com/milcho0604/velog-mcp#readme"
+}

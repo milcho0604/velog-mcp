@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 토큰이 실수로 들어올 수 있는 경로 — 통째로 차단
+.env
+.env.*
+*.token
+tokens.json
+secrets/
+
+# 스키마 덤프 산출물 (docs/api-reference.md 로 정제해서만 커밋)
+schema-dump/
+*.introspection.json
+
+.DS_Store
