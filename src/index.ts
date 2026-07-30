@@ -16,6 +16,7 @@ import { registerDiscoverTools } from './tools/discover.ts';
 import { registerDraftTools } from './tools/drafts.ts';
 import { registerStatsTools } from './tools/stats.ts';
 import { registerExportTools } from './tools/export.ts';
+import { registerProfileTools } from './tools/profile.ts';
 
 export const SERVER_NAME = 'velog-mcp';
 export const SERVER_VERSION = '0.1.0';
@@ -36,6 +37,7 @@ export function createServer(client: VelogClient): McpServer {
 	registerDraftTools(server, client);
 	registerStatsTools(server, client);
 	registerExportTools(server, client);
+	registerProfileTools(server, client);
 
 	return server;
 }
