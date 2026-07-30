@@ -13,6 +13,7 @@ import { readAuthFromEnv } from './auth.ts';
 import { VelogClient } from './client.ts';
 import { registerPostTools } from './tools/posts.ts';
 import { registerDiscoverTools } from './tools/discover.ts';
+import { registerDraftTools } from './tools/drafts.ts';
 
 export const SERVER_NAME = 'velog-mcp';
 export const SERVER_VERSION = '0.1.0';
@@ -30,6 +31,7 @@ export function createServer(client: VelogClient): McpServer {
 
 	registerPostTools(server, client);
 	registerDiscoverTools(server, client);
+	registerDraftTools(server, client);
 
 	return server;
 }

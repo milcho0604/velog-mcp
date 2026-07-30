@@ -14,14 +14,26 @@ import {
 
 export const VELOG_ENDPOINT = 'https://v3.velog.io/graphql';
 
-/** 벨로그가 비정상 응답을 줬을 때. 메시지는 마스킹을 거친 뒤 담긴다. */
+/**
+ * 벨로그가 비정상 응답을 줬을 때. 메시지는 마스킹을 거친 뒤 담긴다.
+ *
+ * ★ 파라미터 프로퍼티(`constructor(readonly x: T)`)를 쓰지 않는다.
+ *   Node 의 타입 스트리핑은 '지우기만' 하지 코드를 생성하지 않아
+ *   ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX 로 죽는다. 같은 이유로 이 레포는
+ *   enum·namespace·데코레이터도 쓰지 않는다. (docs/architecture.md 참고)
+ */
+export interface VelogApiErrorDetail {
+	readonly status?: number;
+	readonly graphqlErrors?: unknown;
+}
+
 export class VelogApiError extends Error {
-	constructor(
-		message: string,
-		readonly detail?: { readonly status?: number; readonly graphqlErrors?: unknown },
-	) {
+	readonly detail: VelogApiErrorDetail | undefined;
+
+	constructor(message: string, detail?: VelogApiErrorDetail) {
 		super(message);
 		this.name = 'VelogApiError';
+		this.detail = detail;
 	}
 }
 
