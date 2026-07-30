@@ -6,6 +6,27 @@
  * 한글을 로마자로 바꾸지 않고 그대로 둔다 — 억지 음차보다 원문이 낫다.
  */
 
+/**
+ * 이미지 URL 검사.
+ *
+ * ★ zod 의 `z.string().url()` 로는 부족하다. 실측하면 아래를 전부 통과시킨다:
+ *     javascript:alert(1)          data:text/html,<script>…
+ *     file:///etc/passwd           http://127.0.0.1/…
+ *   URL 형식이 맞는지만 보고 스킴은 안 따지기 때문이다. 썸네일은 결국 남의
+ *   페이지에서 렌더되므로 http/https 로 못 박는다.
+ */
+export function isSafeImageUrl(value: string): boolean {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		return false;
+	}
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+	// 호스트가 없는 http URL(예: "http:///x")은 이미지가 될 수 없다.
+	return url.hostname.length > 0;
+}
+
 /** URL 에서 실제로 문제가 되는 문자만 제거한다. */
 export function slugify(title: string): string {
 	const slug = title

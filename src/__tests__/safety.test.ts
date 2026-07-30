@@ -156,7 +156,14 @@ describe('A5 — 런타임 의존성을 늘리지 않는다', () => {
 
 describe('네트워크 — 벨로그 외 호스트로 나가지 않는다', () => {
 	test('소스의 http(s) URL 은 velog.io 뿐이다', async () => {
-		for (const [name, src] of await readAllSources()) {
+		for (const [name, rawSrc] of await readAllSources()) {
+			// 주석은 뺀다. 문서·예시 URL 이 요청 경로는 아니다.
+			// (예: slug.ts 가 위험한 URL 예시를 주석에 든다)
+			const src = rawSrc
+				.replace(/\/\*[\s\S]*?\*\//g, '')
+				.split('\n')
+				.filter((l) => !l.trim().startsWith('//'))
+				.join('\n');
 			for (const url of src.match(/https?:\/\/[^\s'"`)]+/g) ?? []) {
 				assert.ok(
 					url.includes('velog.io') || url.includes('images.velog'),

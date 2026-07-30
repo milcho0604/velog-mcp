@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 
 import { VelogClient } from '../client.ts';
 import { fetchAllPosts } from '../tools/stats.ts';
+import { isSafeImageUrl } from '../slug.ts';
 import { createServer } from '../index.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -257,5 +258,61 @@ describe('★ 발행 차단 — 실제 전송 payload 로 검증한다', () => {
 		});
 		assert.ok(!String(input['url_slug']).includes('/'), '슬러그에 경로 구분자가 남았다');
 		assert.ok(!String(input['url_slug']).includes('..'));
+	});
+});
+
+describe('D5 — 썸네일 URL 스킴 검증 (코덱스 교차검증에서 발견)', () => {
+	// zod 의 z.string().url() 은 형식만 보고 스킴은 안 따진다. 실측하면
+	// javascript: / data: / file: 이 전부 통과한다. 썸네일은 남의 페이지에서
+	// 렌더되므로 http/https 로 못 박아야 한다.
+	test('위험한 스킴을 거부한다', () => {
+		for (const bad of [
+			'javascript:alert(1)',
+			'data:text/html,<script>x</script>',
+			'file:///etc/passwd',
+			'ftp://x/a.png',
+			'not-a-url',
+			'',
+		]) {
+			assert.equal(isSafeImageUrl(bad), false, `${bad} 를 통과시켰다`);
+		}
+	});
+
+	test('http/https 는 허용한다', () => {
+		for (const ok of [
+			'https://images.velog.io/x.png',
+			'http://example.com/a.jpg',
+			'https://cdn.example.com/path?query=1',
+		]) {
+			assert.equal(isSafeImageUrl(ok), true, `${ok} 를 막았다`);
+		}
+	});
+
+	test('호스트 없는 형태는 URL 파싱 자체가 실패한다', () => {
+		// 참고: 'http:///nohost' 는 실패하지 않는다 — URL 이 'http://nohost/' 로
+		// 정규화한다(실측). 그래서 hostname 검사는 방어적 잔여물이고, 실제로
+		// 걸러지는 건 파싱 실패 쪽이다.
+		assert.equal(isSafeImageUrl('http://'), false);
+		assert.equal(isSafeImageUrl('https://'), false);
+	});
+
+	test('도구 호출 단계에서 실제로 막힌다', async () => {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: async () => {},
+			fetchImpl: jsonFetch(() => ({ body: { data: { writePost: {} } } })),
+		});
+		const server = createServer(client);
+		const [ct, st] = InMemoryTransport.createLinkedPair();
+		const mcp = new Client({ name: 'u', version: '0' });
+		await Promise.all([mcp.connect(ct), server.connect(st)]);
+
+		// MCP 는 스키마 위반을 throw 가 아니라 isError:true 로 돌려준다(실측).
+		const r = await mcp.callTool({
+			name: 'velog_create_draft',
+			arguments: { title: 't', body: 'b', thumbnail: 'javascript:alert(1)' },
+		});
+		assert.equal(r.isError, true, 'javascript: 썸네일이 통과했다');
+		await mcp.close();
 	});
 });

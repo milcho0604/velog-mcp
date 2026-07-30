@@ -13,7 +13,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { VelogClient } from '../client.ts';
 import { QUERY_POSTS } from '../graphql.ts';
 import { formatPostList, textResult } from '../format.ts';
-import { toUrlSlug } from '../slug.ts';
+import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { resolveMyUsername } from '../me.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
@@ -93,7 +93,11 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				body: z.string().min(1).describe('본문 (마크다운)'),
 				tags: z.array(z.string()).default([]).describe('태그 목록'),
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
-				thumbnail: z.string().url().optional().describe('썸네일 이미지 URL'),
+				thumbnail: z
+					.string()
+					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
+					.optional()
+					.describe('썸네일 이미지 URL (http/https 만)'),
 				series_id: z.string().optional().describe('소속시킬 시리즈 id'),
 			},
 			// 되돌릴 수 있는 쓰기다 — 비공개 초안이므로 파괴적이지 않다.
@@ -137,7 +141,10 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				body: z.string().min(1).describe('본문 전체 (마크다운). 부분 수정이 아니라 교체다'),
 				tags: z.array(z.string()).default([]),
 				url_slug: z.string().optional(),
-				thumbnail: z.string().url().optional(),
+				thumbnail: z
+					.string()
+					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
+					.optional(),
 				series_id: z.string().optional(),
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
