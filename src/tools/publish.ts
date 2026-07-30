@@ -115,7 +115,14 @@ export function registerPublishTools(
 	capabilities: Capabilities,
 	limiter: DraftRateLimiter,
 ): void {
-	/** 공개 발행이 켜져 있을 때만 노출하는 파라미터. */
+	/**
+	 * 공개 발행이 켜져 있을 때만 노출하는 파라미터.
+	 *
+	 * ★ '새 글'과 '기존 글 수정'의 기본값이 달라야 한다.
+	 *   새 글: 생략하면 비공개 (안전한 쪽)
+	 *   수정 : 생략하면 **기존 값 유지** — .default(true) 를 걸면 공개글을
+	 *          수정만 해도 조용히 비공개가 된다. 실측으로 잡은 버그다.
+	 */
 	const visibilityField = capabilities.publicPublish
 		? {
 				is_private: z
@@ -124,6 +131,19 @@ export function registerPublishTools(
 					.describe(
 						'true=비공개 발행(기본), false=공개 발행. ' +
 							'공개하면 RSS·검색·구독 메일로 나가며 지워도 회수되지 않는다.',
+					),
+			}
+		: {};
+
+	/** 수정용 — 기본값을 두지 않는다. 생략 = 기존 공개 범위 유지. */
+	const visibilityFieldForUpdate = capabilities.publicPublish
+		? {
+				is_private: z
+					.boolean()
+					.optional()
+					.describe(
+						'생략하면 이 글의 현재 공개 범위를 그대로 둔다. ' +
+							'true=비공개로 전환, false=공개로 전환.',
 					),
 			}
 		: {};
@@ -314,7 +334,7 @@ export function registerPublishTools(
 					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
 					.optional(),
 				series_id: z.string().optional(),
-				...visibilityField,
+				...visibilityFieldForUpdate,
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 		},
