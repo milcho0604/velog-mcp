@@ -47,19 +47,47 @@ export interface ClientOptions {
 	readonly endpoint?: string;
 	readonly timeoutMs?: number;
 	readonly fetchImpl?: typeof fetch;
+	readonly maxRetries?: number;
+	/** 테스트에서 대기를 건너뛰기 위해 주입한다. */
+	readonly sleepImpl?: (ms: number) => Promise<void>;
 }
+
+/**
+ * 벨로그는 Prisma 커넥션 풀이 작다 (connection limit 5 / timeout 10s).
+ * 연속 호출하면 아래 오류가 실제로 뜬다 — 우리 잘못이 아니라 상대 쪽 포화다.
+ *
+ *   Timed out fetching a new connection from the connection pool
+ *
+ * 2026-07-30 실측: velog_export_posts 처럼 순차 요청이 많은 도구에서 재현.
+ * 영구 실패가 아니므로 잠깐 쉬었다 다시 친다.
+ */
+export function isTransient(error: unknown): boolean {
+	if (!(error instanceof VelogApiError)) return false;
+	const status = error.detail?.status;
+	if (status !== undefined && status >= 500) return true;
+	return /connection pool|timed out|ETIMEDOUT|ECONNRESET|socket hang up/i.test(
+		error.message,
+	);
+}
+
+const defaultSleep = (ms: number): Promise<void> =>
+	new Promise((resolve) => setTimeout(resolve, ms));
 
 export class VelogClient {
 	readonly #auth: AuthState;
 	readonly #endpoint: string;
 	readonly #timeoutMs: number;
 	readonly #fetch: typeof fetch;
+	readonly #maxRetries: number;
+	readonly #sleep: (ms: number) => Promise<void>;
 
 	constructor(options: ClientOptions) {
 		this.#auth = options.auth;
 		this.#endpoint = options.endpoint ?? VELOG_ENDPOINT;
 		this.#timeoutMs = options.timeoutMs ?? 20_000;
 		this.#fetch = options.fetchImpl ?? fetch;
+		this.#maxRetries = options.maxRetries ?? 2;
+		this.#sleep = options.sleepImpl ?? defaultSleep;
 	}
 
 	get isAuthenticated(): boolean {
@@ -71,9 +99,30 @@ export class VelogClient {
 		if (this.#auth.kind !== 'authenticated') throw new AuthRequiredError(toolName);
 	}
 
+	/**
+	 * 일시적 실패는 지수 백오프로 다시 친다. 영구 오류(인증 만료·잘못된 질의)는
+	 * 즉시 던진다 — 재시도해봤자 같은 답이고 사용자만 기다린다.
+	 */
 	async request<T>(
 		query: string,
 		variables: Record<string, unknown> = {},
+	): Promise<T> {
+		let lastError: unknown;
+		for (let attempt = 0; attempt <= this.#maxRetries; attempt++) {
+			try {
+				return await this.#requestOnce<T>(query, variables);
+			} catch (error) {
+				lastError = error;
+				if (!isTransient(error) || attempt === this.#maxRetries) throw error;
+				await this.#sleep(500 * 2 ** attempt); // 500ms → 1s
+			}
+		}
+		throw lastError;
+	}
+
+	async #requestOnce<T>(
+		query: string,
+		variables: Record<string, unknown>,
 	): Promise<T> {
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',

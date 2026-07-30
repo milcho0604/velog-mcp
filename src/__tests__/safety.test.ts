@@ -115,6 +115,7 @@ describe('A2 — 위험한 mutation 이 도구로 노출되지 않는다', () =>
 			[
 				'velog_blog_stats',
 				'velog_create_draft',
+				'velog_export_posts',
 				'velog_get_post',
 				'velog_list_drafts',
 				'velog_list_posts',
