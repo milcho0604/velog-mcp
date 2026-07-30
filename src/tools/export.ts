@@ -67,6 +67,7 @@ export function registerExportTools(server: McpServer, client: VelogClient): voi
 			description:
 				'한 사용자의 벨로그 글을 프론트매터가 붙은 마크다운 파일로 로컬에 저장한다. ' +
 				'벨로그에 공식 내보내기가 없어서 만든 기능이다. ' +
+				'★ 같은 이름의 기존 파일이 있으면 덮어쓴다 — 전용 디렉터리를 쓰는 것을 권한다. ' +
 				'글 본문을 한 편씩 받아오므로 글이 많으면 시간이 걸린다.',
 			inputSchema: {
 				username: z
@@ -82,8 +83,9 @@ export function registerExportTools(server: McpServer, client: VelogClient): voi
 					.default(50)
 					.describe('내보낼 최대 글 수'),
 			},
-			// 파일을 쓰지만 읽어온 글을 저장할 뿐이라 벨로그 쪽 상태는 안 바뀐다.
-			annotations: { ...READ_ONLY, readOnlyHint: false, destructiveHint: false },
+			// 벨로그 쪽 상태는 안 바뀌지만 로컬 파일은 '덮어쓴다'. MCP 명세상
+			// destructiveHint:false 는 '추가만 한다'는 뜻이라 거짓이 된다.
+			annotations: { ...READ_ONLY, readOnlyHint: false, destructiveHint: true },
 		},
 		async ({ username, out_dir, limit }) => {
 			const target = username ?? (await resolveMyUsername(client));

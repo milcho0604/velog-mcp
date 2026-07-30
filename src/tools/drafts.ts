@@ -15,6 +15,7 @@ import { QUERY_POSTS } from '../graphql.ts';
 import { formatPostList, textResult } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { resolveMyUsername } from '../me.ts';
+import { DraftRateLimiter } from '../ratelimit.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
 
@@ -79,7 +80,11 @@ function draftResult(post: WrittenPost, verb: string): string {
 	].join('\n');
 }
 
-export function registerDraftTools(server: McpServer, client: VelogClient): void {
+export function registerDraftTools(
+	server: McpServer,
+	client: VelogClient,
+	limiter: DraftRateLimiter = new DraftRateLimiter(),
+): void {
 	server.registerTool(
 		'velog_create_draft',
 		{
@@ -111,6 +116,9 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 		},
 		async ({ title, body, tags, url_slug, thumbnail, series_id }) => {
 			client.requireAuth('velog_create_draft');
+			// ★ 벨로그 한계(5분 10건)에 닿기 전에 우리가 먼저 멈춘다.
+			//   넘으면 같은 시간대에 발행한 진짜 글이 비공개가 된다. ratelimit.ts 참고.
+			limiter.check();
 
 			const input: Record<string, unknown> = {
 				title,
@@ -124,7 +132,8 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			if (thumbnail) input['thumbnail'] = thumbnail;
 			if (series_id) input['series_id'] = series_id;
 
-			const data = await client.request<{ writePost: WrittenPost }>(
+			// mutate 는 재시도하지 않는다 — 응답 유실 시 초안이 중복 생성된다.
+			const data = await client.mutate<{ writePost: WrittenPost }>(
 				MUTATION_WRITE_POST,
 				{ input },
 			);
@@ -149,9 +158,12 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 		{
 			title: '벨로그 초안 수정',
 			description:
-				'기존 초안을 수정한다. 수정 후에도 임시저장 상태로 남는다. ' +
-				'★ 주의: 이미 발행된 글의 id 를 주면 그 글이 임시저장으로 내려가 비공개가 된다. ' +
-				'velog_list_drafts 로 확인한 초안 id 만 사용할 것.',
+				'기존 초안을 **통째로 교체**한다. 부분 수정이 아니다. ' +
+				'생략한 필드는 유지되지 않고 초기화된다 — tags 를 안 주면 기존 태그가 전부 지워지고, ' +
+				'url_slug 를 안 주면 제목에서 새로 만들어 주소가 바뀌며, series_id 를 안 주면 ' +
+				'기존 시리즈 연결이 끊긴다. 그래서 수정 전에 velog_get_post 로 현재 값을 읽어 ' +
+				'바꾸지 않을 필드도 그대로 다시 넘기는 것을 권한다. ' +
+				'발행된 글의 id 는 거부한다(비공개로 내려가는 사고 방지).',
 			inputSchema: {
 				id: z.string().min(1).describe('초안의 id (velog_list_drafts 로 확인)'),
 				title: z.string().min(1),
@@ -164,7 +176,9 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					.optional(),
 				series_id: z.string().optional(),
 			},
-			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+			// ★ destructive 가 맞다. 생략 필드가 보존되지 않고 초기화된다 —
+			//   MCP 명세상 destructiveHint:false 는 '추가만 한다'는 뜻이라 거짓이 된다.
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
 		async ({ id, title, body, tags, url_slug, thumbnail, series_id }) => {
 			client.requireAuth('velog_update_draft');
@@ -201,10 +215,27 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			if (thumbnail) input['thumbnail'] = thumbnail;
 			if (series_id) input['series_id'] = series_id;
 
-			const data = await client.request<{ editPost: WrittenPost }>(MUTATION_EDIT_POST, {
+			const data = await client.mutate<{ editPost: WrittenPost }>(MUTATION_EDIT_POST, {
 				input,
 			});
-			assertStayedDraft(data.editPost);
+
+			// ★ editPost 의 응답으로는 사후 상태를 알 수 없다. 공식 구현이
+			//   `return { ...post, url_slug: data.url_slug }` 로 **갱신 전에 읽은**
+			//   post 를 돌려주고 url_slug 만 덮기 때문이다
+			//   (apps/server/src/services/PostApiService/index.mts).
+			//   그래서 응답의 is_temp 는 '수정 전' 값이다 — 그걸 검사해봐야 사전확인을
+			//   한 번 더 하는 것에 불과하다. 진짜 사후 확인은 재조회뿐이다.
+			const after = await client.request<{ post: { is_temp?: boolean } | null }>(
+				QUERY_POST_STATE,
+				{ input: { id } },
+			);
+			if (after.post && after.post.is_temp !== true) {
+				throw new Error(
+					`⚠️ 수정 후 확인 결과 이 글이 임시저장이 아닙니다 (id=${id}). ` +
+						'수정 직전에 다른 곳에서 발행됐을 수 있습니다. 벨로그에서 상태를 확인하세요.',
+				);
+			}
+
 			return textResult(draftResult(data.editPost, '수정'));
 		},
 	);

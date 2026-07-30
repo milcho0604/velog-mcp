@@ -25,7 +25,29 @@ export const VELOG_ENDPOINT = 'https://v3.velog.io/graphql';
  */
 export interface VelogApiErrorDetail {
 	readonly status?: number;
-	readonly graphqlErrors?: unknown;
+	/** 코드만 보관한다. 원본 응답에는 토큰이 섞일 수 있다. */
+	readonly graphqlErrorCodes?: readonly string[];
+	/**
+	 * 네트워크 오류의 원인 표식 (ECONNRESET·TimeoutError 등).
+	 * ★ Node 의 fetch 실패는 TypeError('fetch failed') 로 오고 진짜 원인은
+	 *   cause 체인에 있다. message 만 뽑으면 'fetch failed' 만 남아 재시도 판정이
+	 *   전부 실패한다 — 실측으로 확인함.
+	 */
+	readonly networkCodes?: readonly string[];
+}
+
+/** cause 체인을 훑어 code·name 을 모은다. 토큰이 섞일 수 있는 message 는 담지 않는다. */
+export function collectCauseCodes(error: unknown, depth = 5): string[] {
+	const codes: string[] = [];
+	let current: unknown = error;
+	for (let i = 0; i < depth && current; i++) {
+		if (typeof current !== 'object') break;
+		const node = current as { name?: unknown; code?: unknown; cause?: unknown };
+		if (typeof node.name === 'string') codes.push(node.name);
+		if (typeof node.code === 'string') codes.push(node.code);
+		current = node.cause;
+	}
+	return codes;
 }
 
 export class VelogApiError extends Error {
@@ -51,6 +73,11 @@ export interface ClientOptions {
 	readonly maxRetries?: number;
 	/** 테스트에서 대기를 건너뛰기 위해 주입한다. */
 	readonly sleepImpl?: (ms: number) => Promise<void>;
+	/**
+	 * 인증 상태로 비-벨로그 엔드포인트에 요청하는 것을 허용한다.
+	 * 가짜 fetch 로 도구를 검사하는 테스트 전용이며, 운영 경로에서는 절대 켜지 않는다.
+	 */
+	readonly allowInsecureEndpoint?: boolean;
 }
 
 /**
@@ -62,11 +89,26 @@ export interface ClientOptions {
  * 2026-07-30 실측: velog_export_posts 처럼 순차 요청이 많은 도구에서 재현.
  * 영구 실패가 아니므로 잠깐 쉬었다 다시 친다.
  */
+const TRANSIENT_CODES = new Set([
+	'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN',
+	'ENOTFOUND', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
+	'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+	'TimeoutError', 'AbortError',
+]);
+
 export function isTransient(error: unknown): boolean {
 	if (!(error instanceof VelogApiError)) return false;
+
 	const status = error.detail?.status;
 	if (status !== undefined && status >= 500) return true;
-	return /connection pool|timed out|ETIMEDOUT|ECONNRESET|socket hang up/i.test(
+	// 4xx 는 다시 쳐도 같은 답이다.
+	if (status !== undefined && status < 500) return false;
+
+	// ★ 네트워크 오류는 message 가 아니라 cause 체인의 code 로 판정한다.
+	for (const code of error.detail?.networkCodes ?? []) {
+		if (TRANSIENT_CODES.has(code)) return true;
+	}
+	return /connection pool|timed out|timeout|ETIMEDOUT|ECONNRESET|socket hang up/i.test(
 		error.message,
 	);
 }
@@ -85,6 +127,7 @@ export class VelogClient {
 	readonly #fetch: typeof fetch;
 	readonly #maxRetries: number;
 	readonly #sleep: (ms: number) => Promise<void>;
+	readonly #allowInsecureEndpoint: boolean;
 
 	constructor(options: ClientOptions) {
 		this.#tokens = new TokenStore(options.auth);
@@ -93,6 +136,7 @@ export class VelogClient {
 		this.#fetch = options.fetchImpl ?? fetch;
 		this.#maxRetries = options.maxRetries ?? 2;
 		this.#sleep = options.sleepImpl ?? defaultSleep;
+		this.#allowInsecureEndpoint = options.allowInsecureEndpoint ?? false;
 	}
 
 	get isAuthenticated(): boolean {
@@ -107,6 +151,10 @@ export class VelogClient {
 	/**
 	 * 일시적 실패는 지수 백오프로 다시 친다. 영구 오류(인증 만료·잘못된 질의)는
 	 * 즉시 던진다 — 재시도해봤자 같은 답이고 사용자만 기다린다.
+	 *
+	 * ★ mutation 은 재시도하지 않는다. 멱등하지 않기 때문이다.
+	 *   서버가 글을 만든 뒤 응답만 유실되면 재시도가 초안을 하나 더 만든다.
+	 *   그냥 중복이 아니라 실제 피해로 이어진다 — mutate() 주석 참고.
 	 */
 	async request<T>(
 		query: string,
@@ -125,6 +173,32 @@ export class VelogClient {
 		throw lastError;
 	}
 
+	/**
+	 * 쓰기 전용 — **재시도하지 않는다.**
+	 *
+	 * 벨로그는 최근 5분의 `is_private:false` 글을 세는데 `is_temp` 를 구분하지
+	 * 않는다. 10개를 넘으면 최근 5분의 글을 **전부** `is_private:true` 로 바꾼다:
+	 *
+	 *   // apps/server/src/services/PostApiService/index.mts
+	 *   const recentPostCount = await db.post.count({
+	 *     where: { fk_user_id, is_private: false, released_at: { gt: 5분전 } } })
+	 *   if (recentPostCount < 10) return false
+	 *   await db.post.updateMany({
+	 *     where: { fk_user_id, released_at: { gt: 5분전 } },   // is_private 필터 없음
+	 *     data: { is_private: true } })
+	 *
+	 * 초안도 Prisma 기본값으로 `released_at = now()` 가 붙으므로(schema.prisma)
+	 * 이 카운트에 들어간다. 즉 초안을 몰아 만들면 **같은 시간대에 발행한 진짜 글이
+	 * 비공개로 내려간다.** 응답 유실로 인한 자동 재시도가 이 한계를 앞당길 수 있어
+	 * 쓰기는 한 번만 친다. 실패하면 사용자가 상태를 확인하고 다시 부르게 한다.
+	 */
+	async mutate<T>(
+		query: string,
+		variables: Record<string, unknown> = {},
+	): Promise<T> {
+		return this.#requestOnce<T>(query, variables);
+	}
+
 	async #requestOnce<T>(
 		query: string,
 		variables: Record<string, unknown>,
@@ -133,9 +207,20 @@ export class VelogClient {
 			'Content-Type': 'application/json',
 			Accept: 'application/json',
 		};
+		// ★ 자격증명은 벨로그 정규 엔드포인트로만 보낸다.
+		//   endpoint 는 테스트 주입용 옵션인데, 임의 URL 이 들어오면 쿠키가 그
+		//   호스트로 나간다. "벨로그 외 호스트에 접속하지 않는다"는 보장을 코드로
+		//   지키려면 여기서 목적지를 확인해야 한다 — 문자열 검색 테스트로는 못 막는다.
 		const auth = this.#tokens.state;
 		if (auth.kind === 'authenticated') {
-			headers['Cookie'] = buildCookieHeader(auth.credentials);
+			if (this.#endpoint === VELOG_ENDPOINT) {
+				headers['Cookie'] = buildCookieHeader(auth.credentials);
+			} else if (!this.#allowInsecureEndpoint) {
+				throw new VelogApiError(
+					`인증 요청은 ${VELOG_ENDPOINT} 로만 보낼 수 있습니다. ` +
+						'다른 엔드포인트로는 토큰을 전송하지 않습니다.',
+				);
+			}
 		}
 
 		let response: Response;
@@ -148,9 +233,12 @@ export class VelogClient {
 			});
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
+			const codes = collectCauseCodes(cause);
 			// 네트워크 예외에도 요청 정보가 실릴 수 있으므로 마스킹한다.
+			// 원인 코드를 detail 에 실어야 재시도 판정이 동작한다.
 			throw new VelogApiError(
-				`벨로그 요청 실패: ${this.#mask(reason)}`,
+				`벨로그 요청 실패: ${this.#mask(reason)}${codes.length ? ` (${codes.join('/')})` : ''}`,
+				{ networkCodes: codes },
 			);
 		}
 
@@ -173,7 +261,18 @@ export class VelogClient {
 			);
 		}
 
-		const payload = (await response.json()) as GraphQLResponse<T>;
+		// ★ JSON 파싱 실패가 그냥 SyntaxError 로 빠지면 마스킹도 재시도 판정도 우회한다.
+		//   벨로그가 502 HTML 을 200 으로 주는 경우가 실제로 있다.
+		let payload: GraphQLResponse<T>;
+		try {
+			payload = (await response.json()) as GraphQLResponse<T>;
+		} catch (cause) {
+			const reason = cause instanceof Error ? cause.message : String(cause);
+			throw new VelogApiError(
+				`벨로그 응답을 JSON 으로 읽지 못했습니다: ${this.#mask(reason)}`,
+				{ networkCodes: collectCauseCodes(cause) },
+			);
+		}
 
 		if (payload.errors?.length) {
 			const messages = payload.errors
@@ -186,8 +285,11 @@ export class VelogClient {
 				codes.includes('UNAUTHENTICATED') || /not logged|unauthor/i.test(messages);
 			const hint = looksUnauthenticated ? AUTH_HINT : '';
 
+			// ★ 원본 payload.errors 를 그대로 담으면 토큰이 Error 객체에 남는다.
+			//   지금은 MCP SDK 가 message 만 내보내지만, 나중에 console.error(error)
+			//   나 오류 수집기를 붙이는 순간 샌다. 코드만 보관한다.
 			throw new VelogApiError(`벨로그 GraphQL 오류: ${this.#mask(messages)}${hint}`, {
-				graphqlErrors: payload.errors,
+				graphqlErrorCodes: codes.filter((c): c is string => typeof c === 'string'),
 			});
 		}
 
