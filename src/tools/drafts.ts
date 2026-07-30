@@ -2,9 +2,11 @@
  * 초안 도구 — 이 파일이 이 레포의 '유일한' 쓰기 경로다.
  *
  * ★★ is_temp 는 상수다. 도구 입력 스키마에 없으므로 호출자가 덮어쓸 수 없고,
- *    따라서 이 서버는 글을 발행할 수 없다. 설계 근거: docs/decisions/0002.
+ *    따라서 **이 도구들은** 어떤 설정에서도 글을 발행하지 않는다.
+ *    발행은 별도 파일(tools/publish.ts)이 담당한다 — 이름이 다르면 초안을
+ *    쓰려다 실수로 발행되는 사고가 안 난다.
  *
- * 이 파일을 고칠 때는 ADR 0002 를 먼저 읽을 것.
+ * 이 파일을 고칠 때는 ADR 0004 를 먼저 읽을 것.
  */
 
 import { z } from 'zod';
@@ -74,8 +76,7 @@ function draftResult(post: WrittenPost, verb: string): string {
 		`- 상태: 임시저장 (is_temp=true) — 나만 볼 수 있음`,
 		`- 편집: ${where}`,
 		'',
-		'발행하려면 벨로그에서 내용을 확인한 뒤 직접 "출간하기"를 누르세요.',
-		'이 서버에는 발행 기능이 없습니다.',
+		'발행하려면 velog_publish_draft 를 쓰거나, 벨로그에서 직접 "출간하기"를 누르세요.',
 	].join('\n');
 }
 
@@ -86,7 +87,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			title: '벨로그 초안 작성',
 			description:
 				'벨로그에 임시저장 글(초안)을 만든다. 발행되지 않으며 작성자 본인만 볼 수 있다. ' +
-				'이 서버는 발행 기능이 없다 — 초안 생성 후 사용자에게 "벨로그에서 확인하고 직접 출간하세요"라고 안내할 것. ' +
+				'이 도구는 어떤 설정에서도 발행하지 않는다 — 발행하려면 velog_publish_draft 를 따로 부를 것. ' +
 				'body 는 마크다운으로 쓴다.',
 			inputSchema: {
 				title: z.string().min(1).describe('글 제목'),

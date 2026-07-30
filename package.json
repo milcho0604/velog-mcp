@@ -1,7 +1,7 @@
 {
   "name": "@milcho0604/velog-mcp",
-  "version": "0.1.0",
-  "description": "Velog MCP server — 읽기 도구 전면 지원 + 쓰기는 '초안 전용'. 발행·삭제·계정변경 경로가 코드에 존재하지 않는다.",
+  "version": "0.2.0",
+  "description": "Velog MCP server — 읽기 전면 지원. 쓰기는 초안과 비공개 발행이 기본이고, 공개 발행은 VELOG_ALLOW_PUBLIC=1 로 사용자가 켠다.",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {

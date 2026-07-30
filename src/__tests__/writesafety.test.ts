@@ -21,9 +21,9 @@ import assert from 'node:assert/strict';
 
 import { VelogClient, VelogApiError, VELOG_ENDPOINT } from '../client.ts';
 import {
-	DraftRateLimiter,
-	DraftRateLimitError,
-	DRAFT_LIMIT,
+	PublishRateLimiter,
+	PublishRateLimitError,
+	PUBLIC_PUBLISH_LIMIT,
 	VELOG_DESTRUCTIVE_THRESHOLD,
 } from '../ratelimit.ts';
 
@@ -35,14 +35,14 @@ const authed = {
 describe('초안 생성 속도 제한', () => {
 	test('우리 상한은 벨로그 파괴 임계보다 낮다', () => {
 		assert.ok(
-			DRAFT_LIMIT < VELOG_DESTRUCTIVE_THRESHOLD,
-			`상한 ${DRAFT_LIMIT} 가 벨로그 임계 ${VELOG_DESTRUCTIVE_THRESHOLD} 이상이다`,
+			PUBLIC_PUBLISH_LIMIT < VELOG_DESTRUCTIVE_THRESHOLD,
+			`상한 ${PUBLIC_PUBLISH_LIMIT} 가 벨로그 임계 ${VELOG_DESTRUCTIVE_THRESHOLD} 이상이다`,
 		);
 	});
 
 	test('상한까지는 통과한다', () => {
 		let now = 0;
-		const limiter = new DraftRateLimiter({ limit: 3, windowMs: 1000, now: () => now });
+		const limiter = new PublishRateLimiter({ limit: 3, windowMs: 1000, now: () => now });
 		limiter.check();
 		limiter.check();
 		limiter.check();
@@ -51,15 +51,15 @@ describe('초안 생성 속도 제한', () => {
 
 	test('상한을 넘으면 막는다', () => {
 		let now = 0;
-		const limiter = new DraftRateLimiter({ limit: 2, windowMs: 1000, now: () => now });
+		const limiter = new PublishRateLimiter({ limit: 2, windowMs: 1000, now: () => now });
 		limiter.check();
 		limiter.check();
-		assert.throws(() => limiter.check(), DraftRateLimitError);
+		assert.throws(() => limiter.check(), PublishRateLimitError);
 	});
 
 	test('★ 막을 때 왜 막는지와 언제 풀리는지를 말한다', () => {
 		let now = 0;
-		const limiter = new DraftRateLimiter({ limit: 1, windowMs: 60_000, now: () => now });
+		const limiter = new PublishRateLimiter({ limit: 1, windowMs: 60_000, now: () => now });
 		limiter.check();
 		try {
 			limiter.check();
@@ -68,13 +68,13 @@ describe('초안 생성 속도 제한', () => {
 			const message = (error as Error).message;
 			assert.match(message, /비공개/, '무슨 일이 생기는지 안 알렸다');
 			assert.match(message, /초 뒤에/, '언제 풀리는지 안 알렸다');
-			assert.ok((error as DraftRateLimitError).retryAfterMs > 0);
+			assert.ok((error as PublishRateLimitError).retryAfterMs > 0);
 		}
 	});
 
 	test('창이 지나면 다시 통과한다', () => {
 		let now = 0;
-		const limiter = new DraftRateLimiter({ limit: 1, windowMs: 1000, now: () => now });
+		const limiter = new PublishRateLimiter({ limit: 1, windowMs: 1000, now: () => now });
 		limiter.check();
 		assert.throws(() => limiter.check());
 		now += 1001;

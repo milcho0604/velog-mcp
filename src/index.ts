@@ -2,7 +2,8 @@
 /**
  * velog-mcp — 벨로그 MCP 서버.
  *
- * 읽기는 넓게, 쓰기는 초안까지만. 발행·삭제·계정변경 경로는 이 레포에 없다.
+ * 읽기는 넓게. 쓰기는 초안과 비공개 발행까지 기본으로 열고, 공개 발행만
+ * VELOG_ALLOW_PUBLIC=1 로 사용자가 켠다. 삭제·소셜·계정변경 경로는 이 레포에 없다.
  * 설계 근거: docs/PRD.md, docs/security.md
  */
 
@@ -13,7 +14,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { readAuthFromEnv } from './auth.ts';
 import { readCapabilities, describeCapabilities, type Capabilities } from './capabilities.ts';
-import { DraftRateLimiter } from './ratelimit.ts';
+import { PublishRateLimiter } from './ratelimit.ts';
 import { VelogClient } from './client.ts';
 import { registerPostTools } from './tools/posts.ts';
 import { registerDiscoverTools } from './tools/discover.ts';
@@ -24,7 +25,7 @@ import { registerProfileTools } from './tools/profile.ts';
 import { registerPublishTools } from './tools/publish.ts';
 
 export const SERVER_NAME = 'velog-mcp';
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.2.0';
 
 export function createServer(
 	client: VelogClient,
@@ -43,7 +44,7 @@ export function createServer(
 		},
 	);
 
-	const limiter = new DraftRateLimiter();
+	const limiter = new PublishRateLimiter();
 
 	registerPostTools(server, client);
 	registerDiscoverTools(server, client);

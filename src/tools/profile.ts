@@ -99,7 +99,7 @@ export function registerProfileTools(server: McpServer, client: VelogClient): vo
 					`- 소개: ${me.profile?.short_bio ?? '—'}`,
 					`- 내 블로그: https://velog.io/@${me.username ?? ''}`,
 					'',
-					'이 서버는 초안 작성만 가능하며 발행 기능이 없습니다.',
+					'※ 공개 발행은 VELOG_ALLOW_PUBLIC=1 이 설정돼 있을 때만 가능합니다.',
 				].join('\n'),
 			);
 		},
