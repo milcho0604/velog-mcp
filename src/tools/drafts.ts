@@ -15,7 +15,6 @@ import { QUERY_POSTS } from '../graphql.ts';
 import { formatPostList, textResult } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { resolveMyUsername } from '../me.ts';
-import { DraftRateLimiter } from '../ratelimit.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
 
@@ -23,7 +22,7 @@ import { READ_ONLY } from './posts.ts';
  * ★ 발행 차단 지점. 이 값은 파라미터가 아니라 상수다.
  *   true = 임시저장(남에게 보이지 않음), false = 발행(되돌릴 수 없음).
  */
-const DRAFT_ONLY = { is_temp: true, is_markdown: true } as const;
+const DRAFT_ONLY = { is_temp: true, is_markdown: true, is_private: true } as const;
 
 const MUTATION_WRITE_POST = `
   mutation WriteDraft($input: WritePostInput!) {
@@ -80,11 +79,7 @@ function draftResult(post: WrittenPost, verb: string): string {
 	].join('\n');
 }
 
-export function registerDraftTools(
-	server: McpServer,
-	client: VelogClient,
-	limiter: DraftRateLimiter = new DraftRateLimiter(),
-): void {
+export function registerDraftTools(server: McpServer, client: VelogClient): void {
 	server.registerTool(
 		'velog_create_draft',
 		{
@@ -116,16 +111,14 @@ export function registerDraftTools(
 		},
 		async ({ title, body, tags, url_slug, thumbnail, series_id }) => {
 			client.requireAuth('velog_create_draft');
-			// ★ 벨로그 한계(5분 10건)에 닿기 전에 우리가 먼저 멈춘다.
-			//   넘으면 같은 시간대에 발행한 진짜 글이 비공개가 된다. ratelimit.ts 참고.
-			limiter.check();
+			// ★ 초안은 is_private:true 라 벨로그 계수(is_private:false 만 셈)에
+			//   잡히지 않는다. 그래서 상한을 걸지 않는다 — 상한은 '공개 발행' 쪽에 있다.
 
 			const input: Record<string, unknown> = {
 				title,
 				body,
 				tags,
 				url_slug: toUrlSlug(title, url_slug),
-				is_private: false,
 				meta: {},
 				...DRAFT_ONLY, // ★ 마지막에 펼쳐서 위 값들이 덮어쓸 수 없게 한다
 			};
@@ -208,7 +201,6 @@ export function registerDraftTools(
 				body,
 				tags,
 				url_slug: toUrlSlug(title, url_slug),
-				is_private: false,
 				meta: {},
 				...DRAFT_ONLY,
 			};

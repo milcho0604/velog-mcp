@@ -1,0 +1,365 @@
+/**
+ * 발행 도구.
+ *
+ * 기본은 **비공개 발행**이다. 공개 발행은 `VELOG_ALLOW_PUBLIC=1` 이 있어야 한다
+ * — 근거는 src/capabilities.ts 주석 참고 (비공개 글은 벨로그의 파괴적 제한에
+ * 걸리지 않지만 공개 글은 걸리고, RSS·검색·구독메일로 나가면 회수가 안 된다).
+ *
+ * 초안 작성과 발행을 **별도 도구**로 나눈 이유: 같은 도구에 `is_temp` 파라미터를
+ * 두면 초안을 쓰려다 값 하나 잘못 넣어 발행되는 경로가 생긴다. 이름이 다르면
+ * 그 사고가 안 난다.
+ */
+
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+import type { VelogClient } from '../client.ts';
+import type { Capabilities } from '../capabilities.ts';
+import { textResult } from '../format.ts';
+import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
+import type { DraftRateLimiter } from '../ratelimit.ts';
+
+const MUTATION_WRITE_POST = `
+  mutation PublishPost($input: WritePostInput!) {
+    writePost(input: $input) { id title url_slug is_temp is_private user { username } }
+  }
+`;
+
+const MUTATION_EDIT_POST = `
+  mutation EditPost($input: EditPostInput!) {
+    editPost(input: $input) { id title url_slug is_temp is_private user { username } }
+  }
+`;
+
+const QUERY_POST_FULL = `
+  query PostForEdit($input: ReadPostInput!) {
+    post(input: $input) {
+      id title body url_slug is_temp is_private thumbnail tags
+      series { id }
+      user { username }
+    }
+  }
+`;
+
+/**
+ * 도구 인자 타입.
+ *
+ * `is_private` 는 설정에 따라 스키마에 있기도 없기도 하다(조건부 spread).
+ * 그러면 SDK 의 추론이 끊기므로 여기서 명시한다 — 스키마에 없으면 undefined 가
+ * 들어오고, resolvePrivacy 가 비공개로 확정한다.
+ */
+interface PublishArgs {
+	title: string;
+	body: string;
+	tags: string[];
+	url_slug?: string | undefined;
+	thumbnail?: string | undefined;
+	series_id?: string | undefined;
+	is_private?: boolean | undefined;
+}
+
+interface PublishDraftArgs {
+	id: string;
+	is_private?: boolean | undefined;
+}
+
+interface UpdatePostArgs {
+	id: string;
+	title?: string | undefined;
+	body?: string | undefined;
+	tags?: string[] | undefined;
+	url_slug?: string | undefined;
+	thumbnail?: string | undefined;
+	series_id?: string | undefined;
+	is_private?: boolean | undefined;
+}
+
+interface PostState {
+	id: string;
+	title?: string | null;
+	body?: string | null;
+	url_slug?: string | null;
+	is_temp?: boolean | null;
+	is_private?: boolean | null;
+	thumbnail?: string | null;
+	tags?: string[] | null;
+	series?: { id?: string } | null;
+	user?: { username?: string } | null;
+}
+
+function resultLines(post: PostState, verb: string): string {
+	const username = post.user?.username;
+	const url =
+		username && post.url_slug
+			? `https://velog.io/@${username}/${post.url_slug}`
+			: `(id: ${post.id})`;
+	const visibility = post.is_private ? '🔒 비공개' : '🌍 공개';
+	return [
+		`✅ ${verb}했습니다.`,
+		'',
+		`- 제목: ${post.title ?? '(제목 없음)'}`,
+		`- 상태: ${post.is_temp ? '임시저장' : '발행됨'} · ${visibility}`,
+		`- URL: ${url}`,
+		`- id: \`${post.id}\``,
+	].join('\n');
+}
+
+/** 공개 발행일 때만 벨로그 계수에 잡힌다 — 그때만 상한을 적용한다. */
+function guardIfPublic(isPrivate: boolean, limiter: DraftRateLimiter): void {
+	if (!isPrivate) limiter.check();
+}
+
+export function registerPublishTools(
+	server: McpServer,
+	client: VelogClient,
+	capabilities: Capabilities,
+	limiter: DraftRateLimiter,
+): void {
+	/** 공개 발행이 켜져 있을 때만 노출하는 파라미터. */
+	const visibilityField = capabilities.publicPublish
+		? {
+				is_private: z
+					.boolean()
+					.default(true)
+					.describe(
+						'true=비공개 발행(기본), false=공개 발행. ' +
+							'공개하면 RSS·검색·구독 메일로 나가며 지워도 회수되지 않는다.',
+					),
+			}
+		: {};
+
+	/** 설정에 따라 실제로 쓸 is_private 값을 정한다. 모델이 못 넘는 선이다. */
+	function resolvePrivacy(requested: boolean | undefined): boolean {
+		if (!capabilities.publicPublish) return true; // 공개 불가 — 무조건 비공개
+		return requested ?? true;
+	}
+
+	const publicNote = capabilities.publicPublish
+		? ''
+		: ' 현재 설정에서는 **비공개로만** 발행된다 ' +
+			'(공개 발행은 VELOG_ALLOW_PUBLIC=1 이 필요하다).';
+
+	server.registerTool(
+		'velog_publish_post',
+		{
+			title: '벨로그 글 발행',
+			description:
+				'새 글을 바로 발행한다. 초안을 거치지 않는다.' +
+				publicNote +
+				' 되돌리려면 velog_unpublish_post 로 초안으로 내릴 수 있다.',
+			inputSchema: {
+				title: z.string().min(1),
+				body: z.string().min(1).describe('본문 (마크다운)'),
+				tags: z.array(z.string()).default([]),
+				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
+				thumbnail: z
+					.string()
+					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
+					.optional(),
+				series_id: z.string().optional(),
+				...visibilityField,
+			},
+			// 공개 발행은 되돌릴 수 없다(RSS·검색·메일). destructive 로 표시한다.
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+		},
+		async (args: PublishArgs) => {
+			client.requireAuth('velog_publish_post');
+			const { title, body, tags, url_slug, thumbnail, series_id } = args;
+			const isPrivate = resolvePrivacy(args.is_private);
+			guardIfPublic(isPrivate, limiter);
+
+			const input: Record<string, unknown> = {
+				title,
+				body,
+				tags,
+				url_slug: toUrlSlug(title, url_slug),
+				is_markdown: true,
+				is_temp: false,
+				is_private: isPrivate,
+				meta: {},
+			};
+			if (thumbnail) input['thumbnail'] = thumbnail;
+			if (series_id) input['series_id'] = series_id;
+
+			const data = await client.mutate<{ writePost: PostState }>(
+				MUTATION_WRITE_POST,
+				{ input },
+			);
+			return textResult(resultLines(data.writePost, '발행'));
+		},
+	);
+
+	server.registerTool(
+		'velog_publish_draft',
+		{
+			title: '초안 발행',
+			description:
+				'기존 임시저장 글을 발행한다. 본문은 저장된 내용을 그대로 쓴다 — ' +
+				'다시 넘길 필요가 없다.' +
+				publicNote,
+			inputSchema: {
+				id: z.string().min(1).describe('초안 id (velog_list_drafts 로 확인)'),
+				...visibilityField,
+			},
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+		},
+		async (args: PublishDraftArgs) => {
+			client.requireAuth('velog_publish_draft');
+			const { id } = args;
+			const isPrivate = resolvePrivacy(args.is_private);
+			guardIfPublic(isPrivate, limiter);
+
+			// ★ 저장된 내용을 그대로 살려 발행한다. 호출자가 본문을 다시 넘기게
+			//   하면 그 과정에서 태그·슬러그·시리즈가 날아간다(editPost 는 전체 교체).
+			const current = await client.request<{ post: PostState | null }>(
+				QUERY_POST_FULL,
+				{ input: { id } },
+			);
+			const post = current.post;
+			if (!post) throw new Error(`id=${id} 인 글을 찾지 못했습니다.`);
+			if (post.is_temp !== true) {
+				throw new Error(
+					`id=${id} 는 이미 발행된 글입니다. 공개 범위만 바꾸려면 velog_update_post 를 쓰세요.`,
+				);
+			}
+
+			const input: Record<string, unknown> = {
+				id,
+				title: post.title ?? '(제목 없음)',
+				body: post.body ?? '',
+				tags: post.tags ?? [],
+				url_slug: post.url_slug ?? toUrlSlug(post.title ?? id),
+				is_markdown: true,
+				is_temp: false,
+				is_private: isPrivate,
+				meta: {},
+			};
+			if (post.thumbnail) input['thumbnail'] = post.thumbnail;
+			if (post.series?.id) input['series_id'] = post.series.id;
+
+			await client.mutate<{ editPost: PostState }>(MUTATION_EDIT_POST, { input });
+
+			// editPost 응답은 '갱신 전' 상태라 사후 확인은 재조회로 한다.
+			const after = await client.request<{ post: PostState | null }>(QUERY_POST_FULL, {
+				input: { id },
+			});
+			return textResult(resultLines(after.post ?? post, '발행'));
+		},
+	);
+
+	server.registerTool(
+		'velog_unpublish_post',
+		{
+			title: '발행 취소 (초안으로 되돌리기)',
+			description:
+				'발행된 글을 임시저장으로 되돌린다. 글은 사라지지 않고 초안 목록으로 간다. ' +
+				'★ 이미 나간 RSS·구독 메일은 회수되지 않는다 — 검색엔진 캐시도 한동안 남는다.',
+			inputSchema: { id: z.string().min(1).describe('발행된 글의 id') },
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+		},
+		async ({ id }) => {
+			client.requireAuth('velog_unpublish_post');
+
+			const current = await client.request<{ post: PostState | null }>(
+				QUERY_POST_FULL,
+				{ input: { id } },
+			);
+			const post = current.post;
+			if (!post) throw new Error(`id=${id} 인 글을 찾지 못했습니다.`);
+			if (post.is_temp === true) {
+				return textResult(`id=${id} 는 이미 임시저장 상태입니다. 아무것도 하지 않았습니다.`);
+			}
+
+			const input: Record<string, unknown> = {
+				id,
+				title: post.title ?? '(제목 없음)',
+				body: post.body ?? '',
+				tags: post.tags ?? [],
+				url_slug: post.url_slug ?? toUrlSlug(post.title ?? id),
+				is_markdown: true,
+				is_temp: true,
+				is_private: post.is_private ?? true,
+				meta: {},
+			};
+			if (post.thumbnail) input['thumbnail'] = post.thumbnail;
+			if (post.series?.id) input['series_id'] = post.series.id;
+
+			await client.mutate<{ editPost: PostState }>(MUTATION_EDIT_POST, { input });
+			const after = await client.request<{ post: PostState | null }>(QUERY_POST_FULL, {
+				input: { id },
+			});
+			return textResult(
+				`${resultLines(after.post ?? post, '초안으로 되돌리기')}\n\n` +
+					'※ 이미 배포된 RSS·구독 메일과 검색엔진 캐시는 회수되지 않습니다.',
+			);
+		},
+	);
+
+	server.registerTool(
+		'velog_update_post',
+		{
+			title: '발행글 수정',
+			description:
+				'이미 발행된 글을 수정한다. 발행 상태는 그대로 유지된다. ' +
+				'생략한 필드는 **기존 값을 그대로 유지**한다 — 초안 도구와 달리 전체 교체가 아니다.' +
+				(capabilities.publicPublish ? ' is_private 로 공개 범위도 바꿀 수 있다.' : ''),
+			inputSchema: {
+				id: z.string().min(1),
+				title: z.string().min(1).optional(),
+				body: z.string().min(1).optional().describe('생략하면 기존 본문 유지'),
+				tags: z.array(z.string()).optional().describe('생략하면 기존 태그 유지'),
+				url_slug: z.string().optional().describe('생략하면 기존 주소 유지'),
+				thumbnail: z
+					.string()
+					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
+					.optional(),
+				series_id: z.string().optional(),
+				...visibilityField,
+			},
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+		},
+		async (args: UpdatePostArgs) => {
+			client.requireAuth('velog_update_post');
+			const { id, title, body, tags, url_slug, thumbnail, series_id } = args;
+
+			// ★ 병합 수정. 기존 값을 읽어 생략 필드를 채운다 — 초안 도구에서
+			//   '생략하면 초기화'가 사고를 부른다는 걸 확인했으므로 이쪽은 보존한다.
+			const current = await client.request<{ post: PostState | null }>(
+				QUERY_POST_FULL,
+				{ input: { id } },
+			);
+			const post = current.post;
+			if (!post) throw new Error(`id=${id} 인 글을 찾지 못했습니다.`);
+
+			const requested = args.is_private;
+			const isPrivate = capabilities.publicPublish
+				? (requested ?? post.is_private ?? true)
+				: true;
+			// 비공개 → 공개로 바뀌는 경우에만 계수 대상이 된다.
+			if (post.is_private !== false && isPrivate === false) limiter.check();
+
+			const nextTitle = title ?? post.title ?? '(제목 없음)';
+			const input: Record<string, unknown> = {
+				id,
+				title: nextTitle,
+				body: body ?? post.body ?? '',
+				tags: tags ?? post.tags ?? [],
+				url_slug: url_slug ? toUrlSlug(nextTitle, url_slug) : (post.url_slug ?? toUrlSlug(nextTitle)),
+				is_markdown: true,
+				is_temp: post.is_temp ?? false,
+				is_private: isPrivate,
+				meta: {},
+			};
+			const nextThumbnail = thumbnail ?? post.thumbnail;
+			if (nextThumbnail) input['thumbnail'] = nextThumbnail;
+			const nextSeries = series_id ?? post.series?.id;
+			if (nextSeries) input['series_id'] = nextSeries;
+
+			await client.mutate<{ editPost: PostState }>(MUTATION_EDIT_POST, { input });
+			const after = await client.request<{ post: PostState | null }>(QUERY_POST_FULL, {
+				input: { id },
+			});
+			return textResult(resultLines(after.post ?? post, '수정'));
+		},
+	);
+}
