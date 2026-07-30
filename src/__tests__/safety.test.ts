@@ -113,6 +113,7 @@ describe('A2 — 위험한 mutation 이 도구로 노출되지 않는다', () =>
 		assert.deepEqual(
 			tools.map((t) => t.name).sort(),
 			[
+				'velog_blog_stats',
 				'velog_create_draft',
 				'velog_get_post',
 				'velog_list_drafts',
