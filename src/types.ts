@@ -21,8 +21,12 @@ export interface VelogSeries {
 
 export interface VelogPostSummary {
 	id: string;
-	title: string;
-	url_slug: string;
+	// ★ 공식 스키마에서 title·url_slug·body 는 전부 nullable 이다
+	//   (velog-io/velog · apps/server/src/graphql/Post.gql).
+	//   updated_at 이 'non-null 선언인데 실데이터는 null' 이었던 전례가 있으므로
+	//   선언을 믿지 않고 사용처에서 방어한다.
+	title?: string | null;
+	url_slug?: string | null;
 	short_description?: string | null;
 	thumbnail?: string | null;
 	likes?: number | null;

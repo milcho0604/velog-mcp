@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 import { VelogClient } from '../client.ts';
 import { fetchAllPosts } from '../tools/stats.ts';
 import { isSafeImageUrl } from '../slug.ts';
+import { formatPostList } from '../format.ts';
+import { toMarkdown } from '../tools/export.ts';
 import { createServer } from '../index.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -413,5 +415,74 @@ describe('D7 — 초안 생성 시 series_id 가 버려지는 것을 알린다 (
 	test('series_id 를 안 주면 불필요한 경고를 붙이지 않는다', async () => {
 		const text = await createDraft({ title: 't', body: 'b' });
 		assert.ok(!/적용되지 않았습니다/.test(text));
+	});
+});
+
+describe('D8 — 수집 결과를 3분류로 보고한다 (코덱스 교차검증)', () => {
+	// truncated:boolean 하나로는 '다 봤다'와 '커서가 막혀 멈췄다'를 구분 못 한다.
+	// 커서 고착인데 complete 로 보고하면 '첫 50편이 전부'라는 거짓말이 된다.
+	const feeder = (handler: () => unknown[]) =>
+		new VelogClient({
+			auth: { kind: 'anonymous' },
+			sleepImpl: async () => {},
+			fetchImpl: jsonFetch(() => ({ body: { data: { posts: handler() } } })),
+		});
+
+	test('커서 고착은 cursor_stalled 로 보고한다 — complete 가 아니다', async () => {
+		const r = await fetchAllPosts(
+			feeder(() => Array.from({ length: 50 }, (_, i) => ({ id: `same-${i}` }))),
+			'u',
+			5,
+		);
+		assert.equal(r.outcome, 'cursor_stalled');
+		assert.equal(r.truncated, true, '더 있을 수 있는데 완료로 보고했다');
+	});
+
+	test('마지막 페이지까지 봤으면 complete', async () => {
+		let n = 0;
+		const r = await fetchAllPosts(
+			feeder(() =>
+				++n <= 1 ? Array.from({ length: 50 }, (_, i) => ({ id: `p${i}` })) : [{ id: 'last' }],
+			),
+			'u',
+			5,
+		);
+		assert.equal(r.outcome, 'complete');
+		assert.equal(r.truncated, false);
+	});
+
+	test('페이지 상한에 걸리면 page_limit', async () => {
+		let m = 0;
+		const r = await fetchAllPosts(
+			feeder(() => Array.from({ length: 50 }, (_, i) => ({ id: `p${m++}-${i}` }))),
+			'u',
+			3,
+		);
+		assert.equal(r.outcome, 'page_limit');
+		assert.equal(r.truncated, true);
+	});
+});
+
+describe('D9 — nullable 필드에 null 이 와도 죽지 않는다 (코덱스 교차검증)', () => {
+	// 공식 Post.gql 에서 title·url_slug·body 는 전부 nullable 이다.
+	// updated_at 이 'non-null 선언인데 실데이터는 null' 이었던 전례가 있다.
+	test('title 이 null 이어도 목록이 만들어진다', () => {
+		const out = formatPostList([
+			{ id: 'a', title: null, url_slug: 'x', user: { username: 'u' } },
+		]);
+		assert.match(out, /제목 없음/);
+	});
+
+	test('url_slug 가 null 이면 id 로 대체한다', () => {
+		const out = formatPostList([{ id: 'abc-123', title: 't', url_slug: null }]);
+		assert.match(out, /abc-123/);
+		assert.ok(!out.includes('/null'), 'URL 에 null 이 박혔다');
+	});
+
+	test('백업 프론트매터가 null 로 깨지지 않는다', () => {
+		const md = toMarkdown({ id: 'zz', title: null, url_slug: null, body: null }, 'me');
+		assert.match(md, /title: "\(제목 없음\)"/);
+		assert.match(md, /slug: "zz"/, 'slug 가 id 로 대체되지 않았다');
+		assert.ok(!md.includes('null'), `프론트매터에 null 이 남았다:\n${md.slice(0, 200)}`);
 	});
 });

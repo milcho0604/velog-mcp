@@ -9,9 +9,15 @@ import type { VelogPostSummary, VelogPostDetail } from './types.ts';
 
 export function postUrl(post: VelogPostSummary): string {
 	const username = post.user?.username;
-	return username
-		? `https://velog.io/@${username}/${post.url_slug}`
-		: `(url_slug: ${post.url_slug})`;
+	// url_slug 는 공식 스키마상 nullable 이다.
+	const slug = post.url_slug;
+	if (!slug) return `(id: ${post.id})`;
+	return username ? `https://velog.io/@${username}/${slug}` : `(url_slug: ${slug})`;
+}
+
+/** title 도 nullable 이라 표시 전에 한 번 거른다. */
+export function postTitle(post: VelogPostSummary): string {
+	return post.title?.trim() || '(제목 없음)';
 }
 
 function dateOnly(iso: string | null | undefined): string {
@@ -26,7 +32,7 @@ export function formatPostList(
 	if (posts.length === 0) return '결과 없음';
 
 	const lines = posts.map((p, i) => {
-		const head = `${String(i + 1).padStart(2)}. ${p.title}`;
+		const head = `${String(i + 1).padStart(2)}. ${postTitle(p)}`;
 		const author = options.showAuthor && p.user?.username ? `@${p.user.username} · ` : '';
 		const stats = `${author}♥${p.likes ?? 0} · 👁${p.views ?? 0} · 💬${p.comments_count ?? 0}`;
 		const tags = p.tags?.length ? ` · #${p.tags.join(' #')}` : '';
@@ -45,7 +51,7 @@ export function formatPostList(
 /** 단건 — 메타는 압축하고 본문을 그대로 넘긴다. */
 export function formatPostDetail(post: VelogPostDetail): string {
 	const meta = [
-		`# ${post.title}`,
+		`# ${postTitle(post)}`,
 		'',
 		`- URL: ${postUrl(post)}`,
 		`- 작성: ${dateOnly(post.released_at ?? post.created_at)}`,

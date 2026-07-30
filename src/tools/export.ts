@@ -27,12 +27,16 @@ function yamlString(value: string): string {
 }
 
 export function toMarkdown(post: VelogPostDetail, username: string): string {
+	// 공식 스키마상 title·url_slug 는 nullable 이다. 여기서 막지 않으면
+	// yamlString(null) 이 프론트매터를 깨뜨린다.
+	const title = post.title ?? '(제목 없음)';
+	const slug = post.url_slug ?? post.id;
 	const front = [
 		'---',
-		`title: ${yamlString(post.title)}`,
+		`title: ${yamlString(title)}`,
 		`date: ${post.released_at ?? post.created_at ?? ''}`,
-		`slug: ${yamlString(post.url_slug)}`,
-		`url: ${yamlString(`https://velog.io/@${username}/${post.url_slug}`)}`,
+		`slug: ${yamlString(slug)}`,
+		`url: ${yamlString(`https://velog.io/@${username}/${slug}`)}`,
 	];
 	if (post.tags?.length) {
 		front.push(`tags: [${post.tags.map(yamlString).join(', ')}]`);
@@ -107,13 +111,16 @@ export function registerExportTools(server: McpServer, client: VelogClient): voi
 					// 목록에는 body 가 없으므로 한 편씩 상세를 받는다.
 					const data = await client.request<{ post: VelogPostDetail | null }>(
 						QUERY_POST,
-						{ input: { username: target, url_slug: summary.url_slug } },
+						// url_slug 가 없으면 id 로 조회한다.
+						summary.url_slug
+							? { input: { username: target, url_slug: summary.url_slug } }
+							: { input: { id: summary.id } },
 					);
 					if (!data.post) {
 						failed.push(`${summary.title} (본문 조회 실패)`);
 						continue;
 					}
-					const name = safeFileName(summary.url_slug, index + 1);
+					const name = safeFileName(summary.url_slug ?? summary.id, index + 1);
 					await writeFile(join(dir, name), toMarkdown(data.post, target), 'utf8');
 					written.push(name);
 				} catch (error) {

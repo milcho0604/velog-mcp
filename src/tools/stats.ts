@@ -24,11 +24,23 @@ const PAGE_SIZE = 50;
  * maxPages 로 상한을 둔다 — 무한 루프 방지이자 이용약관 8조(정상 운영 방해)
  * 회피다. 상한에 걸리면 조용히 자르지 않고 호출자에게 알린다.
  */
+/**
+ * 수집이 어떻게 끝났는지. `truncated: boolean` 하나로는 '다 봤다'와
+ * '커서가 막혀서 멈췄다'를 구분할 수 없어 오보고가 난다.
+ */
+export type FetchOutcome =
+	/** 마지막 페이지까지 봤다. */
+	| 'complete'
+	/** maxPages 상한에 걸렸다. 더 있을 수 있다. */
+	| 'page_limit'
+	/** 커서가 안 움직였다. 벨로그가 커서를 못 찾으면 1페이지를 다시 준다. */
+	| 'cursor_stalled';
+
 export async function fetchAllPosts(
 	client: VelogClient,
 	username: string,
 	maxPages: number,
-): Promise<{ posts: VelogPostSummary[]; truncated: boolean }> {
+): Promise<{ posts: VelogPostSummary[]; truncated: boolean; outcome: FetchOutcome }> {
 	const posts: VelogPostSummary[] = [];
 	// ★ 중복 방어. 커서가 안 움직이면(벨로그가 같은 페이지를 반복 반환) 같은 글을
 	//   여러 번 담아 집계가 배수로 부풀려진다. 실측 재현: 커서 고착 시 50편이
@@ -55,17 +67,23 @@ export async function fetchAllPosts(
 			added++;
 		}
 
-		// 새로 들어온 게 없으면 더 돌아봐야 같은 결과다.
-		if (added === 0) return { posts, truncated: false };
-		if (batch.length < PAGE_SIZE) return { posts, truncated: false };
+		// 새로 들어온 게 없다 = 커서가 제자리다. '다 봤다'가 아니다.
+		if (added === 0) {
+			return { posts, truncated: true, outcome: 'cursor_stalled' };
+		}
+		// 한 페이지를 못 채웠으면 진짜 마지막이다.
+		if (batch.length < PAGE_SIZE) {
+			return { posts, truncated: false, outcome: 'complete' };
+		}
 
 		const next = batch.at(-1)?.id;
-		// 커서가 제자리면 무한 반복이므로 멈춘다.
-		if (!next || seenCursors.has(next)) return { posts, truncated: false };
+		if (!next || seenCursors.has(next)) {
+			return { posts, truncated: true, outcome: 'cursor_stalled' };
+		}
 		seenCursors.add(next);
 		cursor = next;
 	}
-	return { posts, truncated: true };
+	return { posts, truncated: true, outcome: 'page_limit' };
 }
 
 interface Totals {
@@ -144,7 +162,7 @@ export function registerStatsTools(server: McpServer, client: VelogClient): void
 		},
 		async ({ username, top, max_pages }) => {
 			const target = username ?? (await resolveMyUsername(client));
-			const { posts, truncated } = await fetchAllPosts(client, target, max_pages);
+			const { posts, truncated, outcome } = await fetchAllPosts(client, target, max_pages);
 			if (posts.length === 0) return textResult(`@${target} 의 공개 글이 없습니다.`);
 
 			const totals = sum(posts);
@@ -164,7 +182,7 @@ export function registerStatsTools(server: McpServer, client: VelogClient): void
 			const report = [
 				`# @${target} 블로그 통계`,
 				'',
-				`- 글 ${num(posts.length)}편${truncated ? ` (상한 ${max_pages}페이지에서 잘림 — 더 있음)` : ''}`,
+				`- 글 ${num(posts.length)}편${truncated ? ' (전부는 아닙니다 — 아래 참고)' : ''}`,
 				`- 총 조회수 👁 ${num(totals.views)}`,
 				`- 총 좋아요 ♥ ${num(totals.likes)}`,
 				`- 총 댓글 💬 ${num(totals.comments)}`,
@@ -180,10 +198,15 @@ export function registerStatsTools(server: McpServer, client: VelogClient): void
 				tagBreakdown(posts, 10),
 			].join('\n');
 
-			const warning = truncated
-				? `\n\n⚠️ 최대 ${max_pages}페이지(${max_pages * PAGE_SIZE}편)까지만 집계했습니다. ` +
-					'전체를 보려면 max_pages 를 올리세요.'
-				: '';
+			// 왜 덜 봤는지에 따라 사용자가 할 일이 다르다. 뭉뚱그리면 안 된다.
+			const warning =
+				outcome === 'page_limit'
+					? `\n\n⚠️ 상한 ${max_pages}페이지(${max_pages * PAGE_SIZE}편)에서 멈췄습니다. ` +
+						'전체를 보려면 max_pages 를 올리세요.'
+					: outcome === 'cursor_stalled'
+						? '\n\n⚠️ 벨로그 페이지네이션이 더 진행되지 않아 여기서 멈췄습니다. ' +
+							'집계는 위 편수 기준이며 실제 글은 더 있을 수 있습니다.'
+						: '';
 
 			return textResult(report + warning);
 		},

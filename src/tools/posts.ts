@@ -79,11 +79,18 @@ export function registerPostTools(server: McpServer, client: VelogClient): void 
 			const posts = data.posts ?? [];
 			const body = formatPostList(posts);
 			const last = posts.at(-1);
-			const more =
-				posts.length === limit && last
-					? `\n\n다음 페이지: cursor="${last.id}"`
-					: '';
-			return textResult(body + more);
+
+			// ★ tag 를 주면 벨로그가 요청 limit 을 무시하고 고정 20건을 준다
+			//   (2026-07-30 실측: tag='React', limit=5 → 20건).
+			//   그래서 `posts.length === limit` 으로 다음 페이지를 판정하면
+			//   태그 조회에서 항상 '더 없음'으로 오판한다. 반환이 비지 않았으면
+			//   커서를 안내하는 쪽이 안전하다 — 헛걸음 한 번이 누락보다 낫다.
+			const hasMore = tag ? posts.length > 0 : posts.length >= limit;
+			const more = hasMore && last ? `\n\n다음 페이지: cursor="${last.id}"` : '';
+			const tagNote = tag
+				? '\n(벨로그는 태그 조회에서 limit 을 무시하고 20건 단위로 줍니다)'
+				: '';
+			return textResult(body + more + tagNote);
 		},
 	);
 }
