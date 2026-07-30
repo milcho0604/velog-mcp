@@ -8,10 +8,45 @@
 
 이 서버가 저지를 수 있는 최악의 일:
 
-> **비공개 임시저장 글이 여러 개 생긴다.**
+> **비공개 임시저장 글이 몇 개 생긴다.** (사용자가 지우면 원복)
 
-그게 전부다. 사용자가 벨로그 임시글 목록에서 지우면 원복된다.
-남에게 보인 적도, 알림이 간 적도, 검색에 걸린 적도 없다.
+다만 이 문장은 **처음엔 틀렸다가 방어를 넣고 나서야 사실이 된 것**이다.
+경위를 남겨둔다 — 같은 착각을 다시 하지 않기 위해서다.
+
+### 초안이 '발행된 글'을 비공개로 만들 수 있었다
+
+벨로그 공식 구현(`apps/server/src/services/PostApiService/index.mts`):
+
+```ts
+private async isPostLimitReached(signedUserId) {
+  const recentPostCount = await db.post.count({
+    where: { fk_user_id, is_private: false,          // ← is_temp 구분 없음
+             released_at: { gt: 5분전 } } })
+  if (recentPostCount < 10) return false
+  await db.post.updateMany({
+    where: { fk_user_id, released_at: { gt: 5분전 } },   // ← is_private 필터도 없음
+    data: { is_private: true } })                        // ← 최근 5분 글 전부 비공개
+}
+```
+
+그리고 `schema.prisma`:
+
+```prisma
+released_at  DateTime?  @default(now())    // 초안도 생성 즉시 시각이 붙는다
+```
+
+두 사실이 겹치면 — **초안을 5분에 10개 만들면 그 시간대에 발행한 진짜 글이
+비공개로 내려간다.** 초안은 되돌릴 수 있지만 이건 사용자가 글마다 공개 설정을
+다시 손봐야 한다. "최악은 비공개 초안"이라는 전제가 깨진 지점이다.
+
+**대응 두 가지:**
+
+| 조치 | 이유 |
+| --- | --- |
+| 쓰기는 **재시도하지 않는다** (`client.mutate`) | 멱등하지 않다. 응답만 유실돼도 재시도가 초안을 하나 더 만들어 한계를 앞당긴다 |
+| 초안 **5분 5건** 자체 상한 (`ratelimit.ts`) | 벨로그 임계 10보다 낮게 잡는다 — 사용자가 웹에서 직접 쓴 글은 우리 카운터에 안 잡히므로 여유가 필요하다 |
+
+막을 때는 이유와 해제 시각을 함께 알린다. 조용히 거절하면 사용자가 원인을 못 찾는다.
 
 ## 구현하지 않은 것과 이유
 
