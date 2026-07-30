@@ -18,6 +18,23 @@ import { READ_ONLY } from './posts.ts';
 /** 벨로그 트렌딩이 받는 기간 값. */
 const TIMEFRAMES = ['day', 'week', 'month', 'year'] as const;
 
+/**
+ * ★ timeframe='year' 에는 별도 상한이 있다. 넘기면 **에러가 아니라 빈 배열**이 온다.
+ *
+ *   // velog-io/velog · apps/server/src/services/PostService/index.ts
+ *   if (timeframe === 'year' && (offset > 1000 || limit > 20)) {
+ *     console.log('Detected GraphQL Abuse', ip)
+ *     return []
+ *   }
+ *
+ * 최악의 실패 모드다 — 오류가 없으니 "올해 인기글이 없나보다"로 오독되고,
+ * 서버는 우리를 abuse 로 기록한다. 2026-07-30 실측으로 재현 확인
+ * (year+limit:50 → [], year+limit:20 → 정상).
+ * 그래서 넘기기 전에 우리가 깎고, 깎았다는 사실을 사용자에게 말한다.
+ */
+const YEAR_MAX_LIMIT = 20;
+const YEAR_MAX_OFFSET = 1000;
+
 export function registerDiscoverTools(server: McpServer, client: VelogClient): void {
 	server.registerTool(
 		'velog_search_posts',
@@ -73,12 +90,32 @@ export function registerDiscoverTools(server: McpServer, client: VelogClient): v
 			annotations: READ_ONLY,
 		},
 		async ({ timeframe, limit, offset }) => {
-			const data = await client.request<{ trendingPosts: VelogPostSummary[] }>(
+			const notes: string[] = [];
+			let safeLimit = limit;
+			let safeOffset = offset;
+
+			if (timeframe === 'year') {
+				if (limit > YEAR_MAX_LIMIT) {
+					safeLimit = YEAR_MAX_LIMIT;
+					notes.push(
+						`limit 을 ${limit}→${YEAR_MAX_LIMIT} 로 낮췄습니다 ` +
+							`(벨로그는 year 기간에 limit>${YEAR_MAX_LIMIT} 이면 빈 결과를 줍니다).`,
+					);
+				}
+				if (offset > YEAR_MAX_OFFSET) {
+					safeOffset = YEAR_MAX_OFFSET;
+					notes.push(`offset 을 ${offset}→${YEAR_MAX_OFFSET} 로 낮췄습니다.`);
+				}
+			}
+
+			const data = await client.request<{ trendingPosts: VelogPostSummary[] | null }>(
 				QUERY_TRENDING_POSTS,
-				{ input: { timeframe, limit, offset } },
+				{ input: { timeframe, limit: safeLimit, offset: safeOffset } },
 			);
+			const head = notes.length > 0 ? `⚠️ ${notes.join(' ')}\n\n` : '';
 			return textResult(
-				`[트렌딩 · ${timeframe}]\n\n` +
+				head +
+					`[트렌딩 · ${timeframe}]\n\n` +
 					formatPostList(data.trendingPosts ?? [], { showAuthor: true }),
 			);
 		},

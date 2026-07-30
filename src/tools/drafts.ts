@@ -98,7 +98,13 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
 					.optional()
 					.describe('썸네일 이미지 URL (http/https 만)'),
-				series_id: z.string().optional().describe('소속시킬 시리즈 id'),
+				series_id: z
+					.string()
+					.optional()
+					.describe(
+						'소속시킬 시리즈 id. ★ 벨로그는 임시저장 단계에서 이걸 무시한다 — ' +
+							'초안 생성 후 velog_update_draft 로 다시 지정해야 실제로 붙는다',
+					),
 			},
 			// 되돌릴 수 있는 쓰기다 — 비공개 초안이므로 파괴적이지 않다.
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -123,7 +129,18 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				{ input },
 			);
 			assertStayedDraft(data.writePost);
-			return textResult(draftResult(data.writePost, '저장'));
+
+			// ★ 벨로그는 임시저장 생성 시 series_id 를 조용히 버린다:
+			//   // apps/server/src/services/PostApiService/index.mts
+			//   if (series_id && !data.is_temp) await appendToSeries(...)
+			// edit 경로에는 이 조건이 없어 update_draft 로는 붙는다. 이 비대칭을
+			// 사용자가 알 방법이 없으므로 직접 알린다.
+			const seriesNote = series_id
+				? '\n\n⚠️ 시리즈는 **적용되지 않았습니다.** 벨로그가 임시저장 생성 단계에서는' +
+					' series_id 를 무시합니다. 방금 만든 초안 id 로 velog_update_draft 를' +
+					' 한 번 호출하면 그때 실제로 붙습니다.'
+				: '';
+			return textResult(draftResult(data.writePost, '저장') + seriesNote);
 		},
 	);
 

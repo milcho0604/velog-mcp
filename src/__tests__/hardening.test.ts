@@ -316,3 +316,102 @@ describe('D5 — 썸네일 URL 스킴 검증 (코덱스 교차검증에서 발�
 		await mcp.close();
 	});
 });
+
+describe('D6 — trending year 기간의 숨은 상한 (코덱스 교차검증)', () => {
+	// 벨로그는 year + limit>20 이면 에러가 아니라 '빈 배열'을 준다.
+	//   if (timeframe === 'year' && (offset > 1000 || limit > 20)) {
+	//     console.log('Detected GraphQL Abuse', ip); return []
+	//   }
+	// 오류가 없으니 '올해 인기글이 없나보다'로 오독되고 서버는 abuse 로 기록한다.
+	async function callTrending(args: Record<string, unknown>) {
+		let sentLimit: unknown;
+		const client = new VelogClient({
+			auth: { kind: 'anonymous' },
+			sleepImpl: async () => {},
+			fetchImpl: jsonFetch((body) => {
+				sentLimit = (body as { variables: { input: { limit: number } } }).variables.input;
+				return { body: { data: { trendingPosts: [] } } };
+			}),
+		});
+		const server = createServer(client);
+		const [ct, st] = InMemoryTransport.createLinkedPair();
+		const mcp = new Client({ name: 'y', version: '0' });
+		await Promise.all([mcp.connect(ct), server.connect(st)]);
+		const r = await mcp.callTool({ name: 'velog_trending_posts', arguments: args });
+		await mcp.close();
+		return { input: sentLimit as { limit: number; offset: number }, result: r };
+	}
+
+	test('year + limit>20 은 20 으로 깎아서 보낸다', async () => {
+		const { input } = await callTrending({ timeframe: 'year', limit: 50 });
+		assert.equal(input.limit, 20, `limit ${input.limit} 로 보냈다 — 빈 결과가 온다`);
+	});
+
+	test('깎았으면 조용히 넘어가지 않고 알린다', async () => {
+		const { result } = await callTrending({ timeframe: 'year', limit: 50 });
+		const text = String((result.content as Array<{ text: string }>)[0]?.text);
+		assert.match(text, /낮췄습니다/, '깎은 사실을 안 알렸다');
+	});
+
+	test('year + offset>1000 도 깎는다', async () => {
+		const { input } = await callTrending({
+			timeframe: 'year',
+			limit: 10,
+			offset: 5000,
+		});
+		assert.equal(input.offset, 1000);
+	});
+
+	test('다른 기간은 손대지 않는다', async () => {
+		const { input } = await callTrending({ timeframe: 'week', limit: 50 });
+		assert.equal(input.limit, 50, 'week 인데 깎였다');
+	});
+
+	test('year 라도 상한 이내면 그대로 보낸다', async () => {
+		const { input } = await callTrending({ timeframe: 'year', limit: 20 });
+		assert.equal(input.limit, 20);
+	});
+});
+
+describe('D7 — 초안 생성 시 series_id 가 버려지는 것을 알린다 (코덱스 교차검증)', () => {
+	// write 경로:  if (series_id && !data.is_temp) appendToSeries(...)  ← 초안이면 무시
+	// edit  경로:  is_temp 조건 없음                                    ← 초안이어도 붙음
+	// 이 비대칭을 사용자가 알 방법이 없다.
+	async function createDraft(args: Record<string, unknown>) {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: async () => {},
+			fetchImpl: jsonFetch(() => ({
+				body: {
+					data: {
+						writePost: {
+							id: 'x',
+							title: 't',
+							url_slug: 's',
+							is_temp: true,
+							user: { username: 'u' },
+						},
+					},
+				},
+			})),
+		});
+		const server = createServer(client);
+		const [ct, st] = InMemoryTransport.createLinkedPair();
+		const mcp = new Client({ name: 's', version: '0' });
+		await Promise.all([mcp.connect(ct), server.connect(st)]);
+		const r = await mcp.callTool({ name: 'velog_create_draft', arguments: args });
+		await mcp.close();
+		return String((r.content as Array<{ text: string }>)[0]?.text);
+	}
+
+	test('series_id 를 주면 적용 안 됐다고 경고한다', async () => {
+		const text = await createDraft({ title: 't', body: 'b', series_id: 'sid' });
+		assert.match(text, /적용되지 않았습니다/, '조용히 버려진 것을 안 알렸다');
+		assert.match(text, /velog_update_draft/, '해결 방법을 안 알렸다');
+	});
+
+	test('series_id 를 안 주면 불필요한 경고를 붙이지 않는다', async () => {
+		const text = await createDraft({ title: 't', body: 'b' });
+		assert.ok(!/적용되지 않았습니다/.test(text));
+	});
+});
