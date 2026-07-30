@@ -13,6 +13,7 @@ import { QUERY_POSTS } from '../graphql.ts';
 import { postUrl, textResult } from '../format.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
+import { resolveMyUsername } from '../me.ts';
 
 /** 한 번에 받는 최대치. 벨로그 커넥션 풀이 작아 크게 잡지 않는다. */
 const PAGE_SIZE = 50;
@@ -126,7 +127,10 @@ export function registerStatsTools(server: McpServer, client: VelogClient): void
 				'연도별·태그별 분포와 상위 글 순위를 함께 낸다. 벨로그에 없는 화면이라 직접 계산한다. ' +
 				'글이 많으면 여러 번 요청하므로 몇 초 걸릴 수 있다.',
 			inputSchema: {
-				username: z.string().describe('@ 없이'),
+				username: z
+					.string()
+					.optional()
+					.describe('@ 없이. 생략하면 인증된 내 계정을 쓴다'),
 				top: z.number().int().min(1).max(30).default(10).describe('상위 몇 편까지 보여줄지'),
 				max_pages: z
 					.number()
@@ -139,8 +143,9 @@ export function registerStatsTools(server: McpServer, client: VelogClient): void
 			annotations: READ_ONLY,
 		},
 		async ({ username, top, max_pages }) => {
-			const { posts, truncated } = await fetchAllPosts(client, username, max_pages);
-			if (posts.length === 0) return textResult(`@${username} 의 공개 글이 없습니다.`);
+			const target = username ?? (await resolveMyUsername(client));
+			const { posts, truncated } = await fetchAllPosts(client, target, max_pages);
+			if (posts.length === 0) return textResult(`@${target} 의 공개 글이 없습니다.`);
 
 			const totals = sum(posts);
 			const avgViews = Math.round(totals.views / posts.length);
@@ -157,7 +162,7 @@ export function registerStatsTools(server: McpServer, client: VelogClient): void
 				.join('\n');
 
 			const report = [
-				`# @${username} 블로그 통계`,
+				`# @${target} 블로그 통계`,
 				'',
 				`- 글 ${num(posts.length)}편${truncated ? ` (상한 ${max_pages}페이지에서 잘림 — 더 있음)` : ''}`,
 				`- 총 조회수 👁 ${num(totals.views)}`,

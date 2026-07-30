@@ -126,6 +126,7 @@ describe('A2 — 위험한 mutation 이 도구로 노출되지 않는다', () =>
 				'velog_trending_posts',
 				'velog_update_draft',
 				'velog_user_tags',
+				'velog_whoami',
 			],
 			'도구 목록이 바뀌었다. 새 도구가 안전한지 확인하고 이 스냅샷을 갱신할 것.',
 		);

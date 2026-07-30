@@ -19,6 +19,7 @@ import { slugify } from '../slug.ts';
 import type { VelogPostDetail } from '../types.ts';
 import { fetchAllPosts } from './stats.ts';
 import { READ_ONLY } from './posts.ts';
+import { resolveMyUsername } from '../me.ts';
 
 /** YAML 문자열 값. 따옴표·백슬래시를 이스케이프해 프론트매터가 깨지지 않게 한다. */
 function yamlString(value: string): string {
@@ -68,7 +69,10 @@ export function registerExportTools(server: McpServer, client: VelogClient): voi
 				'벨로그에 공식 내보내기가 없어서 만든 기능이다. ' +
 				'글 본문을 한 편씩 받아오므로 글이 많으면 시간이 걸린다.',
 			inputSchema: {
-				username: z.string().describe('@ 없이'),
+				username: z
+					.string()
+					.optional()
+					.describe('@ 없이. 생략하면 인증된 내 계정을 쓴다'),
 				out_dir: z.string().describe('저장할 디렉터리 (절대경로 권장). 없으면 만든다'),
 				limit: z
 					.number()
@@ -82,13 +86,14 @@ export function registerExportTools(server: McpServer, client: VelogClient): voi
 			annotations: { ...READ_ONLY, readOnlyHint: false, destructiveHint: false },
 		},
 		async ({ username, out_dir, limit }) => {
+			const target = username ?? (await resolveMyUsername(client));
 			const dir = resolve(out_dir);
 			await mkdir(dir, { recursive: true });
 
 			const maxPages = Math.ceil(limit / 50);
-			const { posts } = await fetchAllPosts(client, username, maxPages);
+			const { posts } = await fetchAllPosts(client, target, maxPages);
 			const targets = posts.slice(0, limit);
-			if (targets.length === 0) return textResult(`@${username} 의 공개 글이 없습니다.`);
+			if (targets.length === 0) return textResult(`@${target} 의 공개 글이 없습니다.`);
 
 			const written: string[] = [];
 			const failed: string[] = [];
@@ -100,14 +105,14 @@ export function registerExportTools(server: McpServer, client: VelogClient): voi
 					// 목록에는 body 가 없으므로 한 편씩 상세를 받는다.
 					const data = await client.request<{ post: VelogPostDetail | null }>(
 						QUERY_POST,
-						{ input: { username, url_slug: summary.url_slug } },
+						{ input: { username: target, url_slug: summary.url_slug } },
 					);
 					if (!data.post) {
 						failed.push(`${summary.title} (본문 조회 실패)`);
 						continue;
 					}
 					const name = safeFileName(summary.url_slug, index + 1);
-					await writeFile(join(dir, name), toMarkdown(data.post, username), 'utf8');
+					await writeFile(join(dir, name), toMarkdown(data.post, target), 'utf8');
 					written.push(name);
 				} catch (error) {
 					const reason = error instanceof Error ? error.message : String(error);

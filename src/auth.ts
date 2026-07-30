@@ -132,25 +132,6 @@ export class TokenStore {
 	}
 }
 
-/**
- * 토큰 문자열이 메시지에 섞여 나가는 것을 막는다.
- *
- * GraphQL 에러 응답이나 fetch 예외를 그대로 던지면 요청 헤더가 함께 실릴 수
- * 있다. 사용자에게 보이는 모든 문자열은 이 함수를 통과시킨다.
- */
-export function maskSecrets(text: string, state: AuthState): string {
-	if (state.kind === 'anonymous') return text;
-
-	let masked = text;
-	const { accessToken, refreshToken } = state.credentials;
-	for (const secret of [accessToken, refreshToken]) {
-		if (secret && secret.length >= 8) {
-			masked = masked.split(secret).join('***REDACTED***');
-		}
-	}
-	return masked.replace(/(access_token|refresh_token)=[^;\s"']+/g, '$1=***REDACTED***');
-}
-
 /** 쓰기 도구가 인증을 요구할 때 쓰는 에러. */
 export class AuthRequiredError extends Error {
 	constructor(toolName: string) {

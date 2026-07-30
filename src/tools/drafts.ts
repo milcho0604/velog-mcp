@@ -14,6 +14,7 @@ import type { VelogClient } from '../client.ts';
 import { QUERY_POSTS } from '../graphql.ts';
 import { formatPostList, textResult } from '../format.ts';
 import { toUrlSlug } from '../slug.ts';
+import { resolveMyUsername } from '../me.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
 
@@ -191,7 +192,10 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			description:
 				'내 임시저장 글 목록. 초안을 이어 쓰거나 수정하기 전에 id 를 여기서 확인한다.',
 			inputSchema: {
-				username: z.string().describe('내 벨로그 username (@ 없이)'),
+				username: z
+					.string()
+					.optional()
+					.describe('생략하면 토큰의 계정을 쓴다. 남의 초안은 어차피 안 보인다'),
 				limit: z.number().int().min(1).max(50).default(20),
 			},
 			annotations: READ_ONLY,
@@ -199,9 +203,13 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 		async ({ username, limit }) => {
 			client.requireAuth('velog_list_drafts');
 
-			const data = await client.request<{ posts: VelogPostSummary[] }>(QUERY_POSTS, {
-				input: { username, limit, temp_only: true },
-			});
+			// 토큰이 있으면 서버가 이미 누군지 안다. 사용자가 매번 칠 이유가 없다.
+			const target = username ?? (await resolveMyUsername(client));
+
+			const data = await client.request<{ posts: VelogPostSummary[] | null }>(
+				QUERY_POSTS,
+				{ input: { username: target, limit, temp_only: true } },
+			);
 			const posts = data.posts ?? [];
 			if (posts.length === 0) return textResult('임시저장된 초안이 없습니다.');
 

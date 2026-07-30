@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import {
 	readAuthFromEnv,
 	buildCookieHeader,
-	maskSecrets,
+	TokenStore,
 	AuthRequiredError,
 	type AuthState,
 } from '../auth.ts';
+
+/** 마스킹 구현은 TokenStore 하나뿐이다. 여기서도 그것을 검사한다. */
+const maskWith = (state: AuthState) => (text: string) => new TokenStore(state).mask(text);
 
 const FAKE_ACCESS = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const FAKE_REFRESH = 'rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr';
@@ -62,29 +65,29 @@ describe('buildCookieHeader', () => {
 	});
 });
 
-describe('maskSecrets — 토큰이 사용자에게 보이는 문자열로 새지 않는다', () => {
+describe('마스킹 — 토큰이 사용자에게 보이는 문자열로 새지 않는다', () => {
 	test('access_token 값을 가린다', () => {
 		const leaked = `요청 실패: Cookie: access_token=${FAKE_ACCESS}`;
-		const masked = maskSecrets(leaked, authed);
+		const masked = maskWith(authed)(leaked);
 		assert.ok(!masked.includes(FAKE_ACCESS), '토큰 원문이 남아있다');
 		assert.ok(masked.includes('REDACTED'));
 	});
 
 	test('refresh_token 값도 가린다', () => {
-		const masked = maskSecrets(`x ${FAKE_REFRESH} y`, authed);
+		const masked = maskWith(authed)(`x ${FAKE_REFRESH} y`);
 		assert.ok(!masked.includes(FAKE_REFRESH));
 	});
 
 	test('토큰 값을 모르는 상황(다른 세션의 헤더 잔재)도 패턴으로 가린다', () => {
 		// 실제 값과 다른 토큰이 에러 본문에 섞여 나오는 경우.
-		const masked = maskSecrets('access_token=SOMEOTHERVALUE123; path=/', authed);
+		const masked = maskWith(authed)('access_token=SOMEOTHERVALUE123; path=/');
 		assert.ok(!masked.includes('SOMEOTHERVALUE123'));
 		assert.ok(masked.includes('access_token=***REDACTED***'));
 	});
 
 	test('anonymous 상태에서는 원문을 그대로 둔다', () => {
 		const text = '평범한 에러 메시지';
-		assert.equal(maskSecrets(text, { kind: 'anonymous' }), text);
+		assert.equal(maskWith({ kind: 'anonymous' })(text), text);
 	});
 
 	test('짧은 값은 치환하지 않는다 — 본문 훼손 방지', () => {
@@ -93,7 +96,7 @@ describe('maskSecrets — 토큰이 사용자에게 보이는 문자열로 새�
 			kind: 'authenticated',
 			credentials: { accessToken: 'abc', refreshToken: undefined },
 		};
-		assert.equal(maskSecrets('abcdef 라는 단어', shortAuth), 'abcdef 라는 단어');
+		assert.equal(maskWith(shortAuth)('abcdef 라는 단어'), 'abcdef 라는 단어');
 	});
 });
 

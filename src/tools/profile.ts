@@ -11,6 +11,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { VelogClient } from '../client.ts';
 import { textResult } from '../format.ts';
 import { READ_ONLY } from './posts.ts';
+import { fetchCurrentUser } from '../me.ts';
 
 const QUERY_USER = `
   query GetUser($input: GetUserInput!) {
@@ -77,6 +78,33 @@ interface UserTagsResult {
 }
 
 export function registerProfileTools(server: McpServer, client: VelogClient): void {
+	server.registerTool(
+		'velog_whoami',
+		{
+			title: '내 계정 확인',
+			description:
+				'현재 토큰으로 인증된 계정을 확인한다. 토큰이 살아있는지 점검하는 용도로도 쓴다. ' +
+				'다른 도구에서 username 을 생략하면 여기서 얻는 계정을 쓴다.',
+			inputSchema: {},
+			annotations: READ_ONLY,
+		},
+		async () => {
+			client.requireAuth('velog_whoami');
+			const me = await fetchCurrentUser(client);
+			return textResult(
+				[
+					`✅ 인증됨 — @${me.username ?? '(username 없음)'}`,
+					'',
+					`- 이름: ${me.profile?.display_name ?? '—'}`,
+					`- 소개: ${me.profile?.short_bio ?? '—'}`,
+					`- 내 블로그: https://velog.io/@${me.username ?? ''}`,
+					'',
+					'이 서버는 초안 작성만 가능하며 발행 기능이 없습니다.',
+				].join('\n'),
+			);
+		},
+	);
+
 	server.registerTool(
 		'velog_get_user',
 		{
