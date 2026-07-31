@@ -1081,3 +1081,55 @@ describe('★ R15 — 초대형 캔버스는 스크린샷 전에 막는다 (크�
 		assert.ok(r.width * r.height < 9_000_000, `상한 근처다: ${r.width}×${r.height}`);
 	});
 });
+
+
+describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)', () => {
+	// ★ 실측이 시켰다. 렌더 1회 = 크롬 9개 · 약 1GB. 동시 2회면 17개 · 1.9GB 로
+	//   선형으로 늘어난다. MCP 클라이언트는 도구를 병렬로 부르므로 그림 다섯 장을
+	//   한 번에 시키면 크롬 45개가 뜬다 — 사용자 기기에서 도는 물건이 그러면 안 된다.
+	test('동시에 3장을 요청해도 크롬은 한 판만 뜬다', async (t) => {
+		if (platform !== 'darwin' && platform !== 'linux') {
+			t.skip('ps 가 있는 환경에서만 확인한다');
+			return;
+		}
+		if (!(await findChrome().then(() => true, () => false))) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+
+		const count = (): number =>
+			Number(
+				execFileSync('bash', [
+					'-c',
+					`ps -axo command= | grep -c "velog[-]mcp-chrome" || true`,
+				])
+					.toString()
+					.trim(),
+			) || 0;
+
+		let peak = 0;
+		const timer = setInterval(() => {
+			const n = count();
+			if (n > peak) peak = n;
+		}, 60);
+
+		const spec = (title: string): Parameters<typeof renderDiagram>[0] => ({
+			title,
+			legend: false,
+			nodes: [
+				{ x: 0, y: 0, title: 'A' },
+				{ x: 300, y: 0, title: 'B' },
+			],
+		});
+		const results = await Promise.all([1, 2, 3].map((i) => renderDiagram(spec(`동시 ${i}`))));
+		clearInterval(timer);
+
+		assert.ok(
+			results.every((r) => r.width > 0),
+			'동시 요청 중 실패한 것이 있다',
+		);
+		// 한 판이 9개다. 앞판 정리와 뒷판 기동이 겹칠 수 있어 여유를 둔다.
+		assert.ok(peak > 0, '크롬 프로세스를 한 번도 못 봤다 — 이 검사는 의미가 없다');
+		assert.ok(peak <= 14, `동시에 크롬이 ${peak}개까지 떴다 — 직렬화가 풀렸다`);
+	});
+});

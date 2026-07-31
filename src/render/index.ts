@@ -21,6 +21,8 @@ import { dumpDom, screenshot } from './chrome.ts';
 import {
 	type AuditReport,
 	type DiagramSpec,
+	MAX_AREA,
+	MAX_DIM,
 	buildDiagramHtml,
 	parseAudit,
 } from './page.ts';
@@ -45,18 +47,27 @@ interface RunArgs {
 }
 
 /**
- * 캔버스 상한.
+ * 렌더는 한 번에 하나만 돈다.
  *
- * 좌표를 ±20000 으로 묶어도 `points=[[-20000,-20000],[20000,20000]]` 하나면
- * 40,000×40,000 캔버스가 나온다. 2배율이면 80,000×80,000 = 64억 픽셀,
- * RGBA 로 약 25GB 다. 요청 한 번으로 기기를 재울 수 있다.
+ * ★ 실측: 렌더 1회가 크롬 프로세스 9개로 최대 약 1GB 를 쓴다. 동시에 2회를 돌리면
+ *   17개·약 1.9GB 로 **선형으로 늘어난다.** MCP 클라이언트는 도구를 병렬로 부르므로
+ *   모델이 그림 다섯 장을 한 번에 요청하면 크롬 45개·6GB 가 된다.
+ *   사용자 기기에서 도는 물건이 그러면 안 된다 — 다른 작업까지 같이 죽는다.
  *
- * 그래서 **스크린샷을 찍기 전에** 크기를 본다. 감사 결과와 무관하게 막아야 한다 —
- * 감사가 깨끗해도 그림이 클 수 있기 때문이다.
- * 블로그에 넣는 그림은 이 상한 근처에도 가지 않는다.
+ * 그림 한 장은 4초면 끝나므로 줄 세워도 체감 손해가 거의 없다.
+ * 얻는 것(메모리 상한이 1GB 로 고정된다)이 훨씬 크다.
  */
-const MAX_DIM = 6000;
-const MAX_AREA = 9_000_000;
+let renderQueue: Promise<unknown> = Promise.resolve();
+
+function serialize<T>(task: () => Promise<T>): Promise<T> {
+	// 앞 작업이 실패해도 줄은 계속 이어져야 한다.
+	const next = renderQueue.then(task, task);
+	renderQueue = next.then(
+		() => undefined,
+		() => undefined,
+	);
+	return next;
+}
 
 const RENDER_PREFIX = 'velog-mcp-render-';
 const PROFILE_PREFIX = 'velog-mcp-chrome-';
@@ -111,12 +122,12 @@ async function render<A extends { w: number; h: number }>(
 		const dom = await dumpDom(fileUrl, { profileDir: profileA });
 		const audit = parse(dom);
 
+		// 2차 방어. 1차는 페이지 안에서 크기를 **설정하기 전에** 거른다(page.ts).
+		// 여기까지 왔다는 건 1차가 뚫렸다는 뜻이므로 그대로 두면 안 된다.
 		if (audit.w > MAX_DIM || audit.h > MAX_DIM || audit.w * audit.h > MAX_AREA) {
 			throw new Error(
 				`그림이 너무 큽니다: ${audit.w}×${audit.h}px ` +
-					`(상한 ${MAX_DIM}px / 면적 ${(MAX_AREA / 1_000_000).toFixed(0)}백만px).\n` +
-					'좌표 간격을 줄이세요 — 캔버스는 내용 bbox 로 자동 계산되므로 ' +
-					'노드를 멀리 떨어뜨릴수록 그대로 커집니다.',
+					`(상한 ${MAX_DIM}px / 면적 ${(MAX_AREA / 1_000_000).toFixed(0)}백만px).`,
 			);
 		}
 
@@ -157,18 +168,22 @@ export function renderDiagram(
 	spec: DiagramSpec,
 	scale = 2,
 ): Promise<RenderResult<AuditReport>> {
-	return render({ html: buildDiagramHtml(spec), basename: 'diagram', scale }, parseAudit);
+	return serialize(() =>
+		render({ html: buildDiagramHtml(spec), basename: 'diagram', scale }, parseAudit),
+	);
 }
 
 export function renderCover(
 	spec: CoverSpec,
 	scale = 2,
 ): Promise<RenderResult<CoverAudit>> {
-	return render({ html: buildCoverHtml(spec), basename: 'cover', scale }, (dom) => {
-		const match = /<title>AUDIT (\{.*?\})<\/title>/s.exec(dom);
-		if (!match?.[1]) throw new Error('표지 렌더 결과를 읽지 못했습니다.');
-		return JSON.parse(match[1]) as CoverAudit;
-	});
+	return serialize(() =>
+		render({ html: buildCoverHtml(spec), basename: 'cover', scale }, (dom) => {
+			const match = /<title>AUDIT (\{.*?\})<\/title>/s.exec(dom);
+			if (!match?.[1]) throw new Error('표지 렌더 결과를 읽지 못했습니다.');
+			return JSON.parse(match[1]) as CoverAudit;
+		}),
+	);
 }
 
 export { type DiagramSpec, type AuditReport, formatAudit } from './page.ts';

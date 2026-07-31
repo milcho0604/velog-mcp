@@ -67,6 +67,13 @@ export interface DiagramSpec {
 	legend?: boolean | undefined;
 }
 
+/**
+ * 캔버스 상한. **페이지 안에서** 강제된다 (page 스크립트 참고).
+ * 바깥에서 검사하면 이미 브라우저가 표면을 잡은 뒤라 늦는다.
+ */
+export const MAX_DIM = 6000;
+export const MAX_AREA = 9_000_000;
+
 export interface AuditReport {
 	w: number;
 	h: number;
@@ -124,6 +131,8 @@ interface ResolvedSpec {
 		labelAnchor: string;
 	}>;
 	icons: Record<string, readonly Prim[]>;
+	maxDim: number;
+	maxArea: number;
 }
 
 function resolve(spec: DiagramSpec): ResolvedSpec {
@@ -191,6 +200,8 @@ function resolve(spec: DiagramSpec): ResolvedSpec {
 		nodes,
 		edges,
 		icons,
+		maxDim: MAX_DIM,
+		maxArea: MAX_AREA,
 	};
 }
 
@@ -630,6 +641,18 @@ var dx = PAD - bb.x, dy = headerBottom + GAP - bb.y;
 content.setAttribute('transform', 'translate(' + dx + ',' + dy + ')');
 var W = Math.ceil(Math.max(bb.width + PAD*2, headerW + PAD*2, 720));
 var H = Math.ceil(headerBottom + GAP + bb.height + PAD);
+
+// ★★ 크기를 **설정하기 전에** 본다. 이 순서가 전부다.
+//   예전엔 여기서 그냥 크기를 박고, 상한 검사는 바깥(render/index.ts)에서 DOM 을
+//   받은 뒤에 했다. 그런데 브라우저는 width/height 를 받는 순간 그만한 레이아웃·
+//   페인트 표면을 잡는다 — 실측으로 40068×40150 을 설정했더니 **0.2초 만에 43GB** 를
+//   잡았다(48GB 기계가 그대로 멈췄다). 바깥에서 아무리 빨리 막아도 이미 늦는다.
+//   그래서 캔버스는 여기서 거르고, 넘으면 크기를 아예 설정하지 않는다.
+if (W > S.maxDim || H > S.maxDim || W * H > S.maxArea) {
+  document.title = 'AUDIT_TOO_BIG ' + JSON.stringify({w:W, h:H, maxDim:S.maxDim, maxArea:S.maxArea});
+  return;
+}
+
 svg.setAttribute('width', W); svg.setAttribute('height', H);
 svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
 document.getElementById('wrap').style.width = W + 'px';
@@ -804,6 +827,16 @@ export function buildDiagramHtml(spec: DiagramSpec): string {
 
 /** `--dump-dom` 출력에서 자가감사 결과만 뽑는다. */
 export function parseAudit(dom: string): AuditReport {
+	const tooBig = /<title>AUDIT_TOO_BIG (\{.*?\})<\/title>/s.exec(dom);
+	if (tooBig?.[1]) {
+		const size = JSON.parse(tooBig[1]) as { w: number; h: number };
+		throw new Error(
+			`그림이 너무 큽니다: ${size.w}×${size.h}px ` +
+				`(상한 ${MAX_DIM}px / 면적 ${(MAX_AREA / 1_000_000).toFixed(0)}백만px).\n` +
+				'좌표 간격을 줄이세요 — 캔버스는 내용 bbox 로 자동 계산되므로 ' +
+				'노드를 멀리 떨어뜨릴수록 그대로 커집니다.',
+		);
+	}
 	const failed = /<title>AUDIT_ERROR (.*?)<\/title>/s.exec(dom);
 	if (failed?.[1]) throw new Error(`그림을 그리다 실패했습니다: ${failed[1]}`);
 	const match = /<title>AUDIT (\{.*?\})<\/title>/s.exec(dom);
