@@ -12,7 +12,7 @@
  *    이 분리를 강제한다.)
  */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -44,12 +44,40 @@ interface RunArgs {
 	scale: number;
 }
 
+const RENDER_PREFIX = 'velog-mcp-render-';
+const PROFILE_PREFIX = 'velog-mcp-chrome-';
+const KEEP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 오래된 렌더 산출물을 치운다.
+ *
+ * 방금 만든 건 지우지 않는다 — 사용자가 HTML 을 열어 손보거나 PNG 를 다시 쓸 수 있어야
+ * 해서 경로를 돌려주기 때문이다. 대신 하루가 지난 건 아무도 안 본다.
+ * 지우는 대상은 **우리가 만든 이름표가 붙은 것**뿐이다. 임시폴더의 남의 파일은 건드리지 않는다.
+ */
+async function sweepOld(): Promise<void> {
+	const base = tmpdir();
+	const cutoff = Date.now() - KEEP_MS;
+	const entries = await readdir(base, { withFileTypes: true }).catch(() => []);
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		if (!entry.name.startsWith(RENDER_PREFIX) && !entry.name.startsWith(PROFILE_PREFIX)) continue;
+		const full = join(base, entry.name);
+		const info = await stat(full).catch(() => null);
+		if (info && info.mtimeMs < cutoff) {
+			await rm(full, { recursive: true, force: true }).catch(() => {});
+		}
+	}
+}
+
 async function render<A extends { w: number; h: number }>(
 	args: RunArgs,
 	parse: (dom: string) => A,
 ): Promise<RenderResult<A>> {
-	const dir = await mkdtemp(join(tmpdir(), 'velog-mcp-render-'));
-	const profileDir = await mkdtemp(join(tmpdir(), 'velog-mcp-chrome-'));
+	// 정리 실패가 렌더를 막으면 안 된다 — 청소는 부수적인 일이다.
+	await sweepOld().catch(() => {});
+	const dir = await mkdtemp(join(tmpdir(), RENDER_PREFIX));
+	const profileDir = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
 	const htmlPath = join(dir, `${args.basename}.html`);
 	const pngPath = join(dir, `${args.basename}.png`);
 
@@ -67,7 +95,6 @@ async function render<A extends { w: number; h: number }>(
 			scale: args.scale,
 		});
 
-		const { stat } = await import('node:fs/promises');
 		const info = await stat(pngPath).catch(() => null);
 		if (!info) {
 			throw new Error(
