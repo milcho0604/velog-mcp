@@ -409,6 +409,33 @@ describe('★ R11 — 자가감사 실동작 (크롬 필요)', () => {
 		assert.deepEqual(r.audit.cross, [], `없는 관통을 만들어냈다: ${JSON.stringify(r.audit)}`);
 	});
 
+	// 같은 두 열 사이를 지나는 선은 중간 꺾임 좌표가 같아서 한 줄로 겹쳤다.
+	// 노드를 규칙적으로 놓을수록(= 보기 좋게 그릴수록) 더 잘 생기는 문제였다.
+	test('나란한 경로들의 중간선이 겹치지 않는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '나란한 경로',
+			nodes: [
+				{ id: 'l1', x: 0, y: 0, title: '왼쪽1' },
+				{ id: 'l2', x: 0, y: 140, title: '왼쪽2' },
+				{ id: 'l3', x: 0, y: 280, title: '왼쪽3' },
+				{ id: 'r1', x: 420, y: 40, title: '오른쪽1' },
+				{ id: 'r2', x: 420, y: 180, title: '오른쪽2' },
+				{ id: 'r3', x: 420, y: 320, title: '오른쪽3' },
+			],
+			edges: [
+				{ from: 'l1', to: 'r1' },
+				{ from: 'l2', to: 'r2' },
+				{ from: 'l3', to: 'r3' },
+			],
+			legend: false,
+		});
+		assert.deepEqual(r.audit.overlap, [], `중간선이 겹쳤다: ${JSON.stringify(r.audit.overlap)}`);
+	});
+
 	// 노드 id 가 '__proto__' 여도 사전 조회가 어긋나면 안 된다.
 	test("id 가 '__proto__' 여도 엣지가 연결된다", async (t) => {
 		if (!(await hasChrome())) {

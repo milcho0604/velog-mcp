@@ -379,20 +379,23 @@ function anchor(n, side, idx, cnt){
   }
   return [cx(n) + laneOffset(idx, cnt, n.w), side === 'top' ? n.y : n.y + n.h];
 }
-function route(a, as, b, bs){
+function isH(side){ return side === 'left' || side === 'right'; }
+// off = 중간 꺾임선을 옆으로 밀어내는 양. 같은 두 열 사이를 지나는 선들이
+// 전부 같은 중간 좌표를 쓰면 한 줄로 겹친다 — 그걸 벌리는 데 쓴다.
+function route(a, as, b, bs, off){
   var ax = a[0], ay = a[1], bx = b[0], by = b[1];
-  var hA = (as === 'left' || as === 'right'), hB = (bs === 'left' || bs === 'right');
-  if (hA && hB) {
+  var d = off || 0;
+  if (isH(as) && isH(bs)) {
     if (Math.abs(ay - by) < 0.6) return [[ax,ay],[bx,by]];
-    var mx = (ax + bx) / 2;
+    var mx = (ax + bx) / 2 + d;
     return [[ax,ay],[mx,ay],[mx,by],[bx,by]];
   }
-  if (!hA && !hB) {
+  if (!isH(as) && !isH(bs)) {
     if (Math.abs(ax - bx) < 0.6) return [[ax,ay],[bx,by]];
-    var my = (ay + by) / 2;
+    var my = (ay + by) / 2 + d;
     return [[ax,ay],[ax,my],[bx,my],[bx,by]];
   }
-  if (hA) return [[ax,ay],[bx,ay],[bx,by]];
+  if (isH(as)) return [[ax,ay],[bx,ay],[bx,by]];
   return [[ax,ay],[ax,by],[bx,by]];
 }
 function rpath(pts, r){
@@ -431,14 +434,46 @@ for (var ei = 0; ei < S.edges.length; ei++) {
   plan.push({e:e, pts:null, a:{n:na, s:as, k:ka}, b:{n:nb, s:bs, k:kb}});
 }
 var seen = Object.create(null);
+var auto = [];
 for (var pj = 0; pj < plan.length; pj++) {
   var it = plan[pj];
   if (it.pts || !it.a) continue;
   seen[it.a.k] = (seen[it.a.k] === undefined) ? 0 : seen[it.a.k] + 1;
   seen[it.b.k] = (seen[it.b.k] === undefined) ? 0 : seen[it.b.k] + 1;
-  var pa = anchor(it.a.n, it.a.s, seen[it.a.k], lanes[it.a.k]);
-  var pb = anchor(it.b.n, it.b.s, seen[it.b.k], lanes[it.b.k]);
-  it.pts = route(pa, it.a.s, pb, it.b.s);
+  it.pa = anchor(it.a.n, it.a.s, seen[it.a.k], lanes[it.a.k]);
+  it.pb = anchor(it.b.n, it.b.s, seen[it.b.k], lanes[it.b.k]);
+  auto.push(it);
+}
+
+// ★ 같은 두 열 사이를 지나는 선들은 중간 꺾임 좌표가 전부 같아서 한 줄로 겹친다.
+//   노드 배치가 규칙적일수록(= 보기 좋게 그릴수록) 더 잘 생긴다.
+//   실제로 11노드 그림에서 세로선 3개가 겹쳤다. 버킷별로 등간격으로 벌린다.
+function midKeyOf(it){
+  var hA = isH(it.a.s), hB = isH(it.b.s);
+  if (hA && hB) {
+    if (Math.abs(it.pa[1] - it.pb[1]) < 0.6) return '';       // 일직선 — 꺾임 없음
+    return 'h' + Math.round(((it.pa[0] + it.pb[0]) / 2) / 8);
+  }
+  if (!hA && !hB) {
+    if (Math.abs(it.pa[0] - it.pb[0]) < 0.6) return '';
+    return 'v' + Math.round(((it.pa[1] + it.pb[1]) / 2) / 8);
+  }
+  return '';                                                  // ㄴ자 — 중간선이 없다
+}
+var midCount = Object.create(null);
+for (var m1 = 0; m1 < auto.length; m1++) {
+  auto[m1].mk = midKeyOf(auto[m1]);
+  if (auto[m1].mk) midCount[auto[m1].mk] = (midCount[auto[m1].mk] || 0) + 1;
+}
+var midSeen = Object.create(null);
+for (var m2 = 0; m2 < auto.length; m2++) {
+  var im = auto[m2];
+  var off = 0;
+  if (im.mk) {
+    midSeen[im.mk] = (midSeen[im.mk] === undefined) ? 0 : midSeen[im.mk] + 1;
+    off = laneOffset(midSeen[im.mk], midCount[im.mk], 200);
+  }
+  im.pts = route(im.pa, im.a.s, im.pb, im.b.s, off);
 }
 
 var badRefs = [];
