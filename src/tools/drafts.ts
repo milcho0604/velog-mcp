@@ -253,7 +253,15 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				);
 			}
 
-			return textResult(draftResult(data.editPost, '수정'));
+			// ★ data.editPost 는 '갱신 전' 객체다(공식 서버가 그렇게 반환한다).
+			//   그걸로 문구를 만들면 제목을 바꿔도 옛 제목이 표시된다.
+			//   이미 재조회했으므로 그 결과를 얹는다.
+			return textResult(
+				draftResult(
+					{ ...data.editPost, title: after.post.title ?? data.editPost.title ?? null },
+					'수정',
+				),
+			);
 		},
 	);
 

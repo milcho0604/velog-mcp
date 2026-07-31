@@ -110,7 +110,13 @@ export function registerProfileEditTools(
 				'★ 이건 **블로그 주인의 프로필**이다 — 글의 요약문(short_description)이 아니다. ' +
 				'생략한 항목은 현재 값을 그대로 유지한다.',
 			inputSchema: {
-				display_name: z.string().max(255).optional().describe('표시 이름. 생략하면 유지'),
+				// 서버가 공백뿐인 이름을 거부하므로 여기서 먼저 막는다.
+				display_name: z
+					.string()
+					.max(255)
+					.refine((v) => v.trim().length > 0, '표시 이름은 공백만으로 둘 수 없습니다')
+					.optional()
+					.describe('표시 이름. 생략하면 유지'),
 				// ★ 서버가 short_bio 를 255자로 **조용히 자른다**(userResolvers 의 slice).
 				//   여기서 안 막으면 "저장했습니다" 라고 해놓고 뒷부분이 사라진다.
 				short_bio: z
@@ -213,11 +219,19 @@ export function registerProfileEditTools(
 				github: z.string().max(100).optional().describe('사용자명 또는 URL'),
 				twitter: z.string().max(100).optional(),
 				facebook: z.string().max(100).optional(),
+				// ★ 벨로그 웹은 'example.com' 처럼 scheme 없는 값을 저장하고 렌더링
+				//   시점에 https:// 를 붙인다(apps/web/src/lib/includeProtocol.ts).
+				//   http(s) 만 받으면 정상 사용을 막는다. 막을 건 javascript:·data:
+				//   같은 위험 스킴뿐이다.
 				url: z
 					.string()
-					.refine((v) => v === '' || isSafeHttpUrl(v), 'http(s) URL 이어야 합니다')
+					.max(255)
+					.refine(
+						(v) => v === '' || isSafeHttpUrl(v) || !/^[a-z][a-z0-9+.-]*:/i.test(v),
+						'javascript:·data: 같은 스킴은 넣을 수 없습니다',
+					)
 					.optional()
-					.describe('홈페이지 (빈 문자열이면 삭제)'),
+					.describe('홈페이지. scheme 없이 example.com 도 됩니다 (빈 문자열이면 삭제)'),
 				email: z
 					.string()
 					.refine((v) => v === '' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), '이메일 형식이 아닙니다')

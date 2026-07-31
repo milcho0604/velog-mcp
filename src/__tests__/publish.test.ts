@@ -56,6 +56,11 @@ async function callTool(
 		post?: typeof EXISTING;
 		/** 서버가 요청과 다르게 저장하는 상황을 만든다 (발행 제한 등) */
 		serverOverride?: Partial<typeof EXISTING>;
+		/**
+		 * mutation 뒤 재조회가 돌려줄 글. `null` 이면 '못 찾음' 상황을 만든다.
+		 * ★ serverOverride 로는 null 을 만들 수 없다(스프레드에서 무시됨).
+		 */
+		postAfterMutation?: typeof EXISTING | null;
 		/** 다른 사람 글로 만든다 */
 		me?: string;
 	} = {},
@@ -88,6 +93,9 @@ async function callTool(
 				sent = body.variables?.input ?? null;
 				return json({ editPost: initial, writePost: initial });
 			}
+			// 재조회가 null 을 주는 상황을 명시적으로 만든다.
+			if (sent && options.postAfterMutation === null) return json({ post: null });
+
 			// post 조회 — mutation 뒤라면 **보낸 내용 전체**를 반영해 돌려준다.
 			// 플래그만 반영하면 새로 켠 내용 검증(제목·본문·태그…)이 전부 실패한다.
 			// 실제 서버도 저장한 값을 돌려주므로 이게 현실에 맞는 목이다.
@@ -365,15 +373,17 @@ describe('★ 사후 검증 — 결과를 확인하지 않으면 검증이 아�
 		assert.match(text, /발행 제한/, '왜 그런지 짚어주지 않는다');
 	});
 
-	test('작업 후 글을 못 찾으면 성공으로 보고하지 않는다', async () => {
+	test('★ 작업 후 글을 못 찾으면 성공으로 보고하지 않는다', async () => {
+		// 종전 이 테스트는 serverOverride:null 을 썼는데, 객체 스프레드에서
+		// 무시돼 **오히려 정상 통과를 단언**하고 있었다. 가짜 테스트였다.
+		// 이제 재조회가 진짜 null 을 주도록 한다.
 		const { isError, text } = await callTool(
 			'velog_update_post',
 			{ id: 'p1', title: 'x' },
-			{ publicPublish: true, serverOverride: null as never },
+			{ publicPublish: true, postAfterMutation: null },
 		);
-		// serverOverride:null 은 스프레드에서 무시되므로 이 케이스는 정상 통과가 맞다.
-		// 여기서는 '정상 흐름이 깨지지 않았는지'만 본다.
-		assert.notEqual(isError, true, text);
+		assert.equal(isError, true, '글이 사라졌는데 성공으로 보고했다');
+		assert.match(text, /다시 찾지 못했습니다/);
 	});
 });
 
@@ -401,7 +411,48 @@ describe('★ 사후검증이 내용까지 본다 (코덱스 4차)', () => {
 			{ publicPublish: true, serverOverride: { body: '' } },
 		);
 		assert.equal(isError, true, '본문이 날아갔는데 성공으로 보고했다');
-		assert.match(text, /본문 길이/);
+		assert.match(text, /본문/);
+	});
+
+	test('★ 길이는 같고 내용만 다르면 — 종전엔 통과했다', async () => {
+		// 길이 비교만 하던 시절엔 이게 성공으로 보고됐다.
+		const { isError, text } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', body: 'AAAAA' },
+			{ publicPublish: true, serverOverride: { body: 'BBBBB' } },
+		);
+		assert.equal(isError, true, '같은 길이의 다른 본문을 통과시켰다');
+		assert.match(text, /본문/);
+	});
+
+	test('meta 의 일부 키만 사라져도 잡는다', async () => {
+		// '비었나'만 보던 시절엔 {cover, short_description} → {cover} 를 놓쳤다.
+		const withMeta = {
+			...EXISTING,
+			meta: { cover: 'c', short_description: '요약' },
+		} as never;
+		const { isError, text } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', title: 'x' },
+			{
+				publicPublish: true,
+				post: withMeta,
+				serverOverride: { meta: { cover: 'c' } } as never,
+			},
+		);
+		assert.equal(isError, true, '부분 손실을 놓쳤다');
+		assert.match(text, /short_description/);
+	});
+
+	test('중복 태그를 보내도 서버가 하나로 줄이면 통과한다', async () => {
+		// 서버는 trim → slice(255) → 중복제거를 한다. 그걸 재현해 비교해야
+		// 정상 저장인데 실패로 보고하는 오탐이 안 난다.
+		const { isError } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', tags: ['a', 'a', ' a '] },
+			{ publicPublish: true, serverOverride: { tags: ['a'] } },
+		);
+		assert.notEqual(isError, true, '중복 제거를 실패로 봤다');
 	});
 
 	test('태그가 저장되지 않으면 실패로 알린다', async () => {

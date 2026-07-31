@@ -442,9 +442,25 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 		return names;
 	}
 
+	/**
+	 * 도구마다 '시리즈 검사에 도달하는' 상태가 다르다.
+	 *
+	 * ★ 이걸 안 맞추면 테스트가 헛돈다 — update_post 는 초안이면 시리즈 검사
+	 *   전에 거부되므로, 목이 늘 is_temp:true 를 주면 시리즈 가드를 지워도
+	 *   통과한다. 코덱스 5차가 이 구멍을 잡아줬다.
+	 */
+	const STATE_FOR: Record<string, { is_temp: boolean; is_private: boolean }> = {
+		velog_update_post: { is_temp: false, is_private: true }, // 발행글이어야 진행
+		velog_publish_draft: { is_temp: true, is_private: true }, // 초안이어야 진행
+		velog_update_draft: { is_temp: true, is_private: true },
+		velog_create_draft: { is_temp: true, is_private: true },
+		velog_publish_post: { is_temp: true, is_private: true },
+	};
+
 	/** 남의 시리즈 id 를 주는 서버. 내 시리즈 목록에는 그 id 가 없다. */
 	async function callWithOthersSeries(tool: string) {
 		let mutated = false;
+		const state = STATE_FOR[tool] ?? { is_temp: true, is_private: true };
 		const client = new VelogClient({
 			auth: {
 				kind: 'authenticated',
@@ -475,10 +491,10 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 						title: 't',
 						body: 'b',
 						url_slug: 's',
-						is_temp: true,
-						is_private: true,
 						tags: [],
+						meta: {},
 						user: { username: 'me' },
+						...state,
 					},
 				});
 			}) as unknown as typeof fetch,
@@ -492,7 +508,8 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 			arguments: { id: 'p1', title: 't', body: 'b', series_id: 'others-1' },
 		});
 		await mcp.close();
-		return { isError: result.isError === true, mutated };
+		const text = (result.content as Array<{ text?: string }>)[0]?.text ?? '';
+		return { isError: result.isError === true, mutated, text };
 	}
 
 	test('series_id 를 받는 도구가 실제로 존재한다 — 없으면 이 테스트가 무의미하다', async () => {
@@ -502,12 +519,19 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 
 	test('★ series_id 를 받는 모든 도구가 남의 시리즈를 거부한다', async () => {
 		for (const tool of await toolsTakingSeriesId()) {
-			const { isError, mutated } = await callWithOthersSeries(tool);
+			const { isError, mutated, text } = await callWithOthersSeries(tool);
 			assert.equal(isError, true, `${tool} 이 남의 시리즈 id 를 통과시켰다`);
 			assert.equal(
 				mutated,
 				false,
 				`${tool} 이 mutation 을 실제로 보냈다 — 남의 시리즈가 변경된다`,
+			);
+			// ★ '어떤 이유로든 거부'가 아니라 '시리즈 소유권 때문에 거부'여야 한다.
+			//   안 그러면 다른 사전검사가 대신 막아주는 걸 통과로 착각한다.
+			assert.match(
+				text,
+				/시리즈가 아닙니다/,
+				`${tool} 이 다른 이유로 거부했다 — 시리즈 가드가 동작했는지 알 수 없다: ${text.slice(0, 90)}`,
 			);
 		}
 	});
