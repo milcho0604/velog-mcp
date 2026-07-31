@@ -236,6 +236,12 @@ from primitive shapes. Nothing is fetched — the renderer runs with DNS disable
 automatically on macOS/Linux/Windows; set `VELOG_CHROME_PATH` if yours lives elsewhere.
 Only these three tools need it — the other 18 work without a browser.
 
+**Cost, measured:** one diagram is ~1 GB peak across 9–11 Chrome processes for 3–4
+seconds, then back to zero. That's Chrome's floor, not our content. Renders are
+**serialized** — MCP clients call tools in parallel, and without that a five-diagram
+request would mean 45 Chrome processes and 6 GB. Serialized, four concurrent requests
+still peak at one render's worth. Ten renders in a row show no accumulation.
+
 ### Profile editing — `VELOG_ALLOW_PROFILE=1`
 
 Five more tools appear: `velog_update_profile` (display name, bio),
