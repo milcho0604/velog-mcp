@@ -260,7 +260,7 @@ function boxesOverlap(a, b){
 }
 
 var defs = el('defs', {});
-var PLANE = {};
+var PLANE = Object.create(null);
 for (var pi = 0; pi < S.planes.length; pi++) {
   var pl = S.planes[pi];
   PLANE[pl.key] = pl;
@@ -299,7 +299,7 @@ if (S.legend && S.planes.length) {
 var content = el('g', {});
 
 // ── 노드 크기 확정 (폭·높이를 안 준 것은 글자 실측으로 정한다) ──
-var NMAP = {};
+var NMAP = Object.create(null);
 for (var ni = 0; ni < S.nodes.length; ni++) {
   var n = S.nodes[ni];
   var tw = measure(n.title, 'n-title');
@@ -411,8 +411,11 @@ function rpath(pts, r){
   return d;
 }
 
-// 같은 노드의 같은 면에서 여러 선이 나가면 등간격으로 벌린다 (팬아웃 버스)
-var lanes = {};
+// 같은 노드의 같은 면에서 여러 선이 나가면 등간격으로 벌린다 (팬아웃 버스).
+// ★ 키가 사용자(모델)가 준 노드 id 라서 사전은 전부 Object.create(null) 로 만든다.
+//   보통 객체면 id 가 '__proto__' 일 때 대입이 키가 아니라 프로토타입을 바꿔
+//   조회가 통째로 어긋난다.
+var lanes = Object.create(null);
 var plan = [];
 for (var ei = 0; ei < S.edges.length; ei++) {
   var e = S.edges[ei];
@@ -427,7 +430,7 @@ for (var ei = 0; ei < S.edges.length; ei++) {
   lanes[kb] = (lanes[kb] || 0) + 1;
   plan.push({e:e, pts:null, a:{n:na, s:as, k:ka}, b:{n:nb, s:bs, k:kb}});
 }
-var seen = {};
+var seen = Object.create(null);
 for (var pj = 0; pj < plan.length; pj++) {
   var it = plan[pj];
   if (it.pts || !it.a) continue;
@@ -603,17 +606,25 @@ function segs(pts){
   for (var i = 0; i < pts.length - 1; i++) out.push([pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]]);
   return out;
 }
+// ★ 처음엔 직각 선분만 검사했다. 그러면 points 로 직접 준 **대각선**이 노드를
+//   그대로 지나가도 감사를 통과한다. 선분-사각형 교차를 일반적으로 푼다
+//   (Liang-Barsky). 가장자리에 붙어 지나가는 건 문제가 아니므로 3px 안쪽으로 좁힌다.
 function hitsRect(s, r){
   var M = 3;
-  if (Math.abs(s[1] - s[3]) < 0.6) {
-    if (s[1] <= r.y + M || s[1] >= r.y + r.h - M) return false;
-    return Math.max(s[0], s[2]) > r.x + M && Math.min(s[0], s[2]) < r.x + r.w - M;
+  var minX = r.x + M, maxX = r.x + r.w - M;
+  var minY = r.y + M, maxY = r.y + r.h - M;
+  if (maxX <= minX || maxY <= minY) return false;
+  var dx = s[2] - s[0], dy = s[3] - s[1];
+  var p = [-dx, dx, -dy, dy];
+  var q = [s[0] - minX, maxX - s[0], s[1] - minY, maxY - s[1]];
+  var t0 = 0, t1 = 1;
+  for (var i = 0; i < 4; i++) {
+    if (Math.abs(p[i]) < 1e-9) { if (q[i] < 0) return false; continue; }
+    var t = q[i] / p[i];
+    if (p[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
   }
-  if (Math.abs(s[0] - s[2]) < 0.6) {
-    if (s[0] <= r.x + M || s[0] >= r.x + r.w - M) return false;
-    return Math.max(s[1], s[3]) > r.y + M && Math.min(s[1], s[3]) < r.y + r.h - M;
-  }
-  return false;
+  return t0 < t1;
 }
 var cross = [];
 for (var ci = 0; ci < plan.length; ci++) {

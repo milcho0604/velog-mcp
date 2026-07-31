@@ -147,10 +147,19 @@ const edgeSchema = z.object({
 });
 
 const planeSchema = z.object({
-	key: z.string().min(1),
+	// ★ key 는 SVG marker 의 id 가 되고 `url(#arr-<key>)` 로 참조된다.
+	//   자유 문자열이면 그 참조식이 깨지거나 다른 걸 가리키게 만들 수 있다.
+	key: z
+		.string()
+		.regex(/^[A-Za-z0-9_-]{1,16}$/, '영숫자·밑줄·하이픈 1~16자만 (SVG id 가 된다)'),
 	name: z.string().min(1),
 	color: z.string().refine(isHexColor, '#rrggbb 형식만 받습니다'),
-	dash: z.string().optional().describe('점선 (예: "6 4")'),
+	// stroke-dasharray 는 길이 목록이다. 숫자·공백·쉼표 외에는 받지 않는다.
+	dash: z
+		.string()
+		.regex(/^[\d.\s,]+$/, '숫자와 공백·쉼표만 (예: "6 4")')
+		.optional()
+		.describe('점선 (예: "6 4")'),
 });
 
 function markdown(alt: string, url: string): string {

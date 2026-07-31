@@ -28,6 +28,8 @@ import { buildCoverHtml } from '../render/cover.ts';
 import { ICONS } from '../render/icons.ts';
 import { isHexColor, TONES } from '../render/tones.ts';
 import { sniffImage, registerImageTools } from '../tools/images.ts';
+import { findChrome } from '../render/chrome.ts';
+import { renderDiagram } from '../render/index.ts';
 import { VelogClient, VELOG_UPLOAD_ENDPOINT } from '../client.ts';
 
 /**
@@ -320,5 +322,112 @@ describe('R9 — 그림 도구는 인증 없이는 올리지 않는다', () => {
 		// 올리지도 못할 그림을 몇 초씩 그리게 된다.
 		assert.match(String((r.content as Array<{ text: string }>)[0]?.text), /인증|토큰/);
 		await client.close();
+	});
+});
+
+
+describe('★ R10 — 도형 이름·평면 key 는 좁혀져 있다', () => {
+	async function tools(): Promise<Client> {
+		const server = new McpServer({ name: 't', version: '0' });
+		registerImageTools(server, new VelogClient({ auth: { kind: 'anonymous' } }));
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: 'render-test', version: '0' });
+		await Promise.all([client.connect(a), server.connect(b)]);
+		return client;
+	}
+
+	// plane.key 는 SVG marker 의 id 가 되고 url(#arr-<key>) 로 참조된다.
+	// dash 는 stroke-dasharray 로 들어간다. 둘 다 자유 문자열이면 안 된다.
+	test('이상한 plane key / dash 는 스키마에서 막힌다', async () => {
+		const client = await tools();
+		for (const planes of [
+			[{ key: 'x) url(http://evil/', name: 'n', color: '#000' }],
+			[{ key: 'a b', name: 'n', color: '#000' }],
+			[{ key: 'r', name: 'n', color: '#000', dash: 'url(#x)' }],
+			[{ key: 'r', name: 'n', color: 'red' }],
+		]) {
+			const r = await client.callTool({
+				name: 'velog_render_diagram',
+				arguments: { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], planes, upload: false },
+			});
+			assert.equal(r.isError, true, `막았어야 한다: ${JSON.stringify(planes)}`);
+		}
+		await client.close();
+	});
+
+	test('없는 아이콘·톤 이름도 막힌다', async () => {
+		const client = await tools();
+		for (const bad of [{ icon: 'nope' }, { icon_tone: 'neon' }, { tag_tone: '#fff' }]) {
+			const r = await client.callTool({
+				name: 'velog_render_diagram',
+				arguments: { title: 't', nodes: [{ x: 0, y: 0, title: 'A', ...bad }], upload: false },
+			});
+			assert.equal(r.isError, true, `막았어야 한다: ${JSON.stringify(bad)}`);
+		}
+		await client.close();
+	});
+});
+
+describe('★ R11 — 자가감사 실동작 (크롬 필요)', () => {
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+
+	// 처음엔 직각 선분만 검사해서, points 로 준 대각선이 노드를 관통해도 통과했다.
+	test('노드를 가로지르는 대각선을 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '대각선 관통',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, w: 140, h: 60, title: 'A' },
+				{ id: 'mid', x: 200, y: 120, w: 160, h: 80, title: '가운데' },
+				{ id: 'b', x: 460, y: 300, w: 140, h: 60, title: 'B' },
+			],
+			edges: [{ points: [[70, 60], [530, 300]] }], // mid 를 관통하는 대각선
+			legend: false,
+		});
+		assert.ok(r.audit.cross.length > 0, `관통을 못 잡았다: ${JSON.stringify(r.audit)}`);
+	});
+
+	// 양성만 보면 '무조건 걸린다'도 통과한다. 안 걸리는 경우도 확인한다.
+	test('비껴가는 대각선은 잡지 않는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '대각선 비껴감',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, w: 140, h: 60, title: 'A' },
+				{ id: 'mid', x: 200, y: 400, w: 160, h: 80, title: '가운데' },
+				{ id: 'b', x: 460, y: 0, w: 140, h: 60, title: 'B' },
+			],
+			edges: [{ points: [[140, 30], [460, 30]] }],
+			legend: false,
+		});
+		assert.deepEqual(r.audit.cross, [], `없는 관통을 만들어냈다: ${JSON.stringify(r.audit)}`);
+	});
+
+	// 노드 id 가 '__proto__' 여도 사전 조회가 어긋나면 안 된다.
+	test("id 가 '__proto__' 여도 엣지가 연결된다", async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '프로토타입 키',
+			nodes: [
+				{ id: '__proto__', x: 0, y: 0, title: '첫번째' },
+				{ id: 'constructor', x: 320, y: 0, title: '두번째' },
+			],
+			edges: [{ from: '__proto__', to: 'constructor', label: '연결' }],
+			legend: false,
+		});
+		assert.deepEqual(
+			r.audit.over.filter((v) => v.includes('없는 노드')),
+			[],
+			`노드를 못 찾았다: ${JSON.stringify(r.audit.over)}`,
+		);
 	});
 });
