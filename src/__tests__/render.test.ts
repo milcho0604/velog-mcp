@@ -1418,3 +1418,98 @@ describe('★ R18 — 업로드 실패 문구가 결과 불명을 알린다', ()
 		);
 	});
 });
+
+
+describe('★ R20 — 실제 형식 변형을 잘못 거부하지 않는다', () => {
+	// ★ 검사를 조일수록 위험해지는 건 '정상 파일을 거부하는 것'이다.
+	//   실제 도구(sips·cwebp)로 만든 PNG·JPEG·GIF·WebP 4종과, 규격상 정상인
+	//   변형들(확장 WebP·APNG·메타데이터 선행 청크·홀수 패딩)을 모두 통과시켜야 한다.
+	//   실측 참고: 우리 렌더 산출물 PNG 는 IDAT 청크가 103개다.
+	const A = (v: string): number[] => {
+		const out: number[] = [];
+		for (let i = 0; i < v.length; i++) out.push(v.charCodeAt(i));
+		return out;
+	};
+	const le = (n: number): number[] => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
+	const be = (n: number): number[] => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+	const wch = (t: string, d: number[]): number[] => [
+		...A(t), ...le(d.length), ...d, ...(d.length % 2 ? [0] : []),
+	];
+	// RIFF 크기 필드 = 파일크기 - 8. 손으로 적다가 두 번 틀렸으므로 계산해서 넣는다.
+	const webp = (...cs: number[][]): Uint8Array => {
+		const body = cs.flat();
+		return new Uint8Array([...A('RIFF'), ...le(4 + body.length), ...A('WEBP'), ...body]);
+	};
+	const pch = (t: string, d: number[] = []): number[] => [...be(d.length), ...A(t), ...d, 0, 0, 0, 0];
+	const png = (...cs: number[][]): Uint8Array =>
+		new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...cs.flat()]);
+	const ihdr = (): number[] => pch('IHDR', new Array(13).fill(0));
+
+	test('규격상 정상인 변형은 전부 통과한다', () => {
+		const ok: Array<[string, Uint8Array]> = [
+			['확장 WebP (VP8X+ALPH+VP8)', webp(wch('VP8X', new Array(10).fill(0)), wch('ALPH', [1, 2, 3]), wch('VP8 ', [9, 9, 9, 9]))],
+			['메타데이터 선행 (ICCP+VP8)', webp(wch('ICCP', [1, 2, 3, 4, 5]), wch('VP8 ', [9, 9, 9, 9]))],
+			['홀수 길이 청크 패딩', webp(wch('ICCP', [1, 2, 3]), wch('VP8 ', [9, 9, 9, 9]))],
+			['APNG (acTL+fcTL+IDAT+fdAT)', png(ihdr(), pch('acTL', new Array(8).fill(0)), pch('fcTL', new Array(26).fill(0)), pch('IDAT', [1, 2]), pch('fdAT', [3, 4]), pch('IEND'))],
+			['tEXt 가 섞인 PNG', png(ihdr(), pch('tEXt', A('Comment')), pch('IDAT', [1]), pch('IEND'))],
+			['IDAT 이 여러 개', png(ihdr(), pch('IDAT', [1]), pch('IDAT', [2]), pch('IDAT', [3]), pch('IEND'))],
+		];
+		for (const [name, v] of ok) {
+			assert.notEqual(sniffImage(v), null, `정상 파일을 거부했다: ${name}`);
+		}
+	});
+
+	test('구조가 어긋난 것은 거부한다 (음성 경로)', () => {
+		const ng: Array<[string, Uint8Array]> = [
+			['프레임 없이 메타만 있는 WebP', webp(wch('ICCP', [1, 2, 3, 4]), wch('EXIF', [5, 6, 7, 8]))],
+			['IDAT 없이 fdAT 만', png(ihdr(), pch('fdAT', [1, 2]), pch('IEND'))],
+			['길이 필드가 파일을 넘어감', png(ihdr(), [...be(999999), ...A('IDAT'), 1, 2, 0, 0, 0, 0], pch('IEND'))],
+			['IHDR 이 첫 청크가 아님', png(pch('tEXt', A('x')), ihdr(), pch('IDAT', [1]), pch('IEND'))],
+		];
+		for (const [name, v] of ng) {
+			assert.equal(sniffImage(v), null, `비정상 파일이 통과했다: ${name}`);
+		}
+	});
+});
+
+describe('★ R21 — 글자 길이 상한', () => {
+	// 좌표만 묶고 글자를 열어두면 제목 하나로 HTML·SVG·getBBox·stdout 을 동시에 부풀린다.
+	test('상한을 넘는 문자열은 스키마에서 막힌다', async () => {
+		const server = new McpServer({ name: 't', version: '0' });
+		registerImageTools(server, new VelogClient({ auth: { kind: 'anonymous' } }));
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: 'len-test', version: '0' });
+		await Promise.all([client.connect(a), server.connect(b)]);
+
+		const big = 'ㄱ'.repeat(5000);
+		const cases: Array<[string, Record<string, unknown>]> = [
+			['제목', { title: big, nodes: [{ x: 0, y: 0, title: 'A' }] }],
+			['부제', { title: 't', subtitle: big, nodes: [{ x: 0, y: 0, title: 'A' }] }],
+			['노드 제목', { title: 't', nodes: [{ x: 0, y: 0, title: big }] }],
+			['노드 부제', { title: 't', nodes: [{ x: 0, y: 0, title: 'A', sub: big }] }],
+			['노드 id', { title: 't', nodes: [{ id: big, x: 0, y: 0, title: 'A' }] }],
+			['태그', { title: 't', nodes: [{ x: 0, y: 0, title: 'A', tag: big }] }],
+			['엣지 라벨', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], edges: [{ points: [[0, 0], [10, 0]], label: big }] }],
+			['그룹 이름', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: big }] }],
+			['members 항목', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: 'g', members: [big] }] }],
+			['alt', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], alt: big }],
+		];
+		for (const [why, args] of cases) {
+			const r = await client.callTool({
+				name: 'velog_render_diagram',
+				arguments: { upload: false, ...args },
+			});
+			assert.equal(r.isError, true, `막았어야 한다: ${why}`);
+		}
+
+		// 표지도 같다
+		for (const field of ['title', 'subtitle', 'kicker', 'footer']) {
+			const r = await client.callTool({
+				name: 'velog_render_cover',
+				arguments: { title: 't', upload: false, [field]: big },
+			});
+			assert.equal(r.isError, true, `표지 ${field} 를 막았어야 한다`);
+		}
+		await client.close();
+	});
+});
