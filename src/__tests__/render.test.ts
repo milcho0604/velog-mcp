@@ -34,7 +34,7 @@ import { ICONS } from '../render/icons.ts';
 import { isHexColor, TONES } from '../render/tones.ts';
 import { sniffImage, registerImageTools } from '../tools/images.ts';
 import { findChrome } from '../render/chrome.ts';
-import { renderDiagram } from '../render/index.ts';
+import { renderCover, renderDiagram } from '../render/index.ts';
 import { VelogClient, VELOG_UPLOAD_ENDPOINT } from '../client.ts';
 
 /**
@@ -238,19 +238,29 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 	const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 	// 규격상 첫 chunk 는 IHDR 이다 (8~11=길이, 12~15=타입). 끝만 보면 머리에 아무거나
 	// 붙여도 통과하므로 fixture 도 구조를 갖춘 것으로 쓴다.
+	// 규격상 첫 chunk 는 **길이 13** 짜리 IHDR 이고, 화소 데이터(IDAT)가 있어야 한다.
+	// 글자만 맞춘 fixture 는 '이미지처럼 생긴 파일'이지 이미지가 아니다.
 	const PNG_IHDR = [0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52];
+	const PNG_IDAT = [0, 0, 0, 1, 0x49, 0x44, 0x41, 0x54, 0x78];
 	const PNG_END = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
 
 	// ★ 예전엔 '머리 8바이트짜리 PNG' 를 통과해야 하는 사례로 고정하고 있었다.
 	//   그건 이미지가 아니라 이미지처럼 시작하는 파일이다 — 그래서 시작 시그니처와
 	//   끝맺음을 함께 본다. 이 테스트도 온전한 파일로 바꿨다.
 	test('머리와 끝맺음이 모두 있어야 통과한다', () => {
-		assert.equal(sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, 1, 2, 3, ...PNG_END))?.mime, 'image/png');
+		assert.equal(
+			sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, ...PNG_IDAT, ...PNG_END))?.mime,
+			'image/png',
+		);
 		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 0xff, 0xd9))?.mime, 'image/jpeg');
 		assert.equal(sniffImage(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 0x3b))?.mime, 'image/gif');
 		assert.equal(
+			// RIFF 크기 필드 = 파일크기 - 8. chunk 도 길이와 payload 를 갖춰야 한다.
 			sniffImage(
-				bytes(0x52, 0x49, 0x46, 0x46, 12, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20, 1, 2, 3, 4),
+				bytes(
+					0x52, 0x49, 0x46, 0x46, 16, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
+					0x56, 0x50, 0x38, 0x20, 4, 0, 0, 0, 1, 2, 3, 4,
+				),
 			)?.mime,
 			'image/webp',
 		);
@@ -262,7 +272,23 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(bytes(...PNG_HEAD)), null, '잘린 PNG');
 		// IEND 뒤에 데이터를 덧붙인 것도 정상 PNG 가 아니다 (polyglot 이 숨는 자리)
 		assert.equal(
-			sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, ...PNG_END, ...new Array(100).fill(65))),
+			sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, ...PNG_IDAT, ...PNG_END, ...new Array(100).fill(65))),
+			null,
+		);
+		// 글자만 맞춘 껍데기 — IDAT 도 IHDR 길이도 없다
+		assert.equal(
+			sniffImage(bytes(...PNG_HEAD, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 1, 2, 3, ...PNG_END)),
+			null,
+			'IDAT 없는 껍데기',
+		);
+		assert.equal(
+			sniffImage(bytes(...PNG_HEAD, 0, 0, 0, 99, 0x49, 0x48, 0x44, 0x52, ...PNG_IDAT, ...PNG_END)),
+			null,
+			'IHDR 길이가 13 이 아님',
+		);
+		// FourCC 만 있고 payload 가 없는 WebP
+		assert.equal(
+			sniffImage(bytes(0x52, 0x49, 0x46, 0x46, 8, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58)),
 			null,
 		);
 		// 머리와 끝은 맞는데 첫 chunk 가 IHDR 이 아닌 것
@@ -279,7 +305,7 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(asBytes('{"a":1}')), null);
 		assert.equal(sniffImage(new Uint8Array(0)), null);
 		// 시그니처가 한 칸 밀린 것도 통과하면 안 된다
-		assert.equal(sniffImage(bytes(0x00, ...PNG_HEAD, ...PNG_IHDR, ...PNG_END)), null);
+		assert.equal(sniffImage(bytes(0x00, ...PNG_HEAD, ...PNG_IHDR, ...PNG_IDAT, ...PNG_END)), null);
 	});
 });
 
@@ -1131,5 +1157,161 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 		// 한 판이 9개다. 앞판 정리와 뒷판 기동이 겹칠 수 있어 여유를 둔다.
 		assert.ok(peak > 0, '크롬 프로세스를 한 번도 못 봤다 — 이 검사는 의미가 없다');
 		assert.ok(peak <= 14, `동시에 크롬이 ${peak}개까지 떴다 — 직렬화가 풀렸다`);
+	});
+});
+
+
+describe('★ R17 — 코덱스가 "변이가 통과한다"고 지목한 자리들', () => {
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+
+	// ① 배지 경계 감사: 배지가 있는 fixture 자체가 없어서 감사를 지워도 통과했다.
+	test('좁은 카드에서 배지가 밖으로 나가면 잡는다', async (t) => {
+		if (!(await hasChrome())) { t.skip('크롬이 없어 건너뜀'); return; }
+		const r = await renderDiagram({
+			title: '배지 경계',
+			nodes: [{ x: 0, y: 0, w: 60, h: 54, title: 'A', tag: 'XXXXXXXXXXXXXXXXXXXXXXXX' }],
+			legend: false,
+		});
+		assert.ok(
+			r.audit.collide.some((v) => v.includes('배지')),
+			`배지가 카드를 벗어난 걸 못 잡았다: ${JSON.stringify(r.audit.collide)}`,
+		);
+	});
+
+	test('정상 배지는 잡지 않는다 (양성 경로)', async (t) => {
+		if (!(await hasChrome())) { t.skip('크롬이 없어 건너뜀'); return; }
+		const r = await renderDiagram({
+			title: '정상 배지',
+			nodes: [{ x: 0, y: 0, title: '노드', sub: '부제', icon: 'server', tag: ':6820' }],
+			legend: false,
+		});
+		assert.deepEqual(r.audit.collide, [], `없는 문제를 만들어냈다: ${JSON.stringify(r.audit.collide)}`);
+	});
+
+	// ② 표지 kicker/footer: 도구가 표지로 넘기는 걸 지워도 통과했다.
+	test('표지의 상단 라벨·서명이 길면 잡는다', async (t) => {
+		if (!(await hasChrome())) { t.skip('크롬이 없어 건너뜀'); return; }
+		const r = await renderCover({
+			title: '짧은 제목',
+			kicker: 'K'.repeat(60),
+			footer: 'F'.repeat(60),
+		});
+		assert.ok(
+			r.audit.truncated.some((v) => v.includes('상단 라벨')),
+			`겹침을 못 잡았다: ${JSON.stringify(r.audit.truncated)}`,
+		);
+	});
+
+	// ③ MAX_DIM / MAX_AREA
+	//    ⓐ 기존 fixture 가 두 조건을 동시에 넘어서 한쪽만 지워도 다른 쪽이 잡았다
+	//       → 각각 하나만 넘기는 입력을 쓴다.
+	//    ⓑ 그래도 바깥 2차 방어(index.ts)가 대신 잡아 페이지 쪽 변이가 가려졌다
+	//       → **페이지가 낸 오류인지**를 문구로 가린다. 페이지 경로만
+	//         '좌표 간격을 줄이세요' 를 덧붙인다(바깥 경로는 안 붙인다).
+	test('가로만 상한을 넘는 경우도 막힌다 (MAX_DIM 단독)', async (t) => {
+		if (!(await hasChrome())) { t.skip('크롬이 없어 건너뜀'); return; }
+		// 7000×170 → 면적 119만(상한 900만 이하)이라 MAX_DIM 만 걸린다
+		await assert.rejects(
+			() =>
+				renderDiagram({
+					title: '가로만 초과',
+					nodes: [
+						{ id: 'a', x: 0, y: 0, title: 'A' },
+						{ id: 'b', x: 6900, y: 0, title: 'B' },
+					],
+					legend: false,
+				}),
+			/좌표 간격을 줄이세요/,
+		);
+	});
+
+	test('면적만 상한을 넘는 경우도 막힌다 (MAX_AREA 단독)', async (t) => {
+		if (!(await hasChrome())) { t.skip('크롬이 없어 건너뜀'); return; }
+		// 5000×3000 → 각 변은 6000 이하지만 면적 1,500만으로 상한 초과
+		await assert.rejects(
+			() =>
+				renderDiagram({
+					title: '면적만 초과',
+					nodes: [
+						{ id: 'a', x: 0, y: 0, title: 'A' },
+						{ id: 'b', x: 4900, y: 0, title: 'B' },
+						{ id: 'c', x: 0, y: 2800, title: 'C' },
+					],
+					legend: false,
+				}),
+			/좌표 간격을 줄이세요/,
+		);
+	});
+
+	// ④ 노드 id 가 ':side' 문법과 충돌하면 엉뚱한 데로 연결된다.
+	//    ★ '없는 노드 참조' 로는 못 잡는다 — 잘못 해석해도 그 노드(svc)는 실재해서
+	//      오류가 안 난다. 그래서 **잘못 연결되면 관통이 생기도록** 배치했다.
+	//      맞게 연결되면 아래쪽을 수평으로 지나가고, 'svc' 로 잘못 붙으면 위쪽
+	//      가로막이를 뚫고 간다.
+	test("id 에 ':right' 가 들어가도 그 노드로 연결된다", async (t) => {
+		if (!(await hasChrome())) { t.skip('크롬이 없어 건너뜀'); return; }
+		const r = await renderDiagram({
+			title: '콜론 id',
+			nodes: [
+				{ id: 'svc', x: 0, y: 0, w: 140, h: 60, title: '위' },
+				{ id: 'svc:right', x: 0, y: 300, w: 140, h: 60, title: '아래' },
+				{ id: 'blocker', x: 250, y: 0, w: 200, h: 60, title: '가로막이' },
+				{ id: 'dst', x: 600, y: 300, w: 140, h: 60, title: '목적지' },
+			],
+			edges: [{ from: 'svc:right', to: 'dst' }],
+			legend: false,
+		});
+		assert.deepEqual(
+			r.audit.over.filter((v) => v.includes('없는 노드')),
+			[],
+			`노드를 못 찾았다: ${JSON.stringify(r.audit.over)}`,
+		);
+		assert.deepEqual(
+			r.audit.cross,
+			[],
+			`'svc' 로 잘못 연결돼 가로막이를 뚫었다: ${JSON.stringify(r.audit.cross)}`,
+		);
+	});
+});
+
+describe('★ R18 — 업로드 실패 문구가 결과 불명을 알린다', () => {
+	const auth = {
+		kind: 'authenticated' as const,
+		credentials: { accessToken: 'a.b.c', refreshToken: undefined },
+	};
+
+	// 5xx 는 서버가 저장한 뒤 실패했을 수도 있다. '실패 확정'처럼 보이면
+	// 사용자가 그대로 다시 올려 중복이 생긴다 (삭제 API 가 없다).
+	test('5xx 에는 중복 위험 경고가 붙는다', async () => {
+		const client = new VelogClient({
+			auth,
+			fetchImpl: (async () =>
+				new Response('oops', { status: 500 })) as unknown as typeof fetch,
+		});
+		await assert.rejects(
+			() =>
+				client.uploadImage(new Uint8Array([1]), 'a.png', {
+					type: 'post',
+					contentType: 'image/png',
+				}),
+			/중복/,
+		);
+	});
+
+	test('통신 단절도 결과 불명으로 알린다', async () => {
+		const client = new VelogClient({
+			auth,
+			fetchImpl: (() => {
+				throw new Error('socket hang up');
+			}) as unknown as typeof fetch,
+		});
+		await assert.rejects(
+			() =>
+				client.uploadImage(new Uint8Array([1]), 'a.png', {
+					type: 'post',
+					contentType: 'image/png',
+				}),
+			/알 수 없습니다/,
+		);
 	});
 });

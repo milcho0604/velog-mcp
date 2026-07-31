@@ -20,8 +20,8 @@
  * velcdn 도메인에서 서빙되면 그 자체가 문제가 된다.
  */
 
-import { readFile, stat } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { readFile, realpath, stat } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -55,6 +55,19 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
  */
 const rejectedRenders = new Set<string>();
 
+/**
+ * 거부 목록에 걸리는지 본다. 경로 표기가 달라도 같은 파일이면 같게 취급한다.
+ *
+ * ★ 이건 **완전한 차단이 아니다.** 파일을 다른 데로 복사하거나 서버를 다시 띄우면
+ *   풀린다. 목적은 "방금 감사에서 떨어진 그림을 그대로 다시 올리는 실수"를 막는 것이지
+ *   사용자를 가두는 것이 아니다. 그 이상으로 설명하면 과장이다.
+ */
+async function isRejected(path: string): Promise<boolean> {
+	if (rejectedRenders.has(resolve(path))) return true;
+	const real = await realpath(path).catch(() => null);
+	return real !== null && rejectedRenders.has(real);
+}
+
 interface Sniffed {
 	readonly mime: string;
 	readonly ext: string;
@@ -85,10 +98,30 @@ function looksComplete(bytes: Uint8Array, ext: string): boolean {
 	const at = (offset: number, ...sig: number[]): boolean =>
 		sig.every((b, j) => bytes[offset + j] === b);
 
+	/** 파일 전체에서 이 바이트열을 찾는다 (chunk 존재 확인용) */
+	const contains = (...sig: number[]): boolean => {
+		for (let i = 0; i <= len - sig.length; i++) {
+			let ok = true;
+			for (let j = 0; j < sig.length; j++) {
+				if (bytes[i + j] !== sig[j]) { ok = false; break; }
+			}
+			if (ok) return true;
+		}
+		return false;
+	};
+
 	if (ext === 'png') {
-		// 규격상 IHDR 이 첫 chunk 이고 IEND 가 마지막이다. 끝만 보면 머리에 아무거나
-		// 붙여도 통과하므로 **첫 chunk 도 확인**한다. (8~11=길이, 12~15=타입)
-		return at(12, 0x49, 0x48, 0x44, 0x52) && has(0x49, 0x45, 0x4e, 0x44);
+		// 규격: 첫 chunk 는 길이 13 짜리 IHDR, 화소 데이터는 IDAT, 끝은 IEND.
+		// 'IHDR'·'IEND' 글자만 보면 23바이트짜리 껍데기도 통과한다 — 실제로 통과했다.
+		// 길이 필드와 IDAT 존재까지 봐야 '이미지처럼 생긴 파일'을 걸러낸다.
+		const ihdrLen =
+			((bytes[8] ?? 0) << 24) | ((bytes[9] ?? 0) << 16) | ((bytes[10] ?? 0) << 8) | (bytes[11] ?? 0);
+		return (
+			ihdrLen === 13 &&
+			at(12, 0x49, 0x48, 0x44, 0x52) && // IHDR
+			contains(0x49, 0x44, 0x41, 0x54) && // IDAT (화소 데이터)
+			has(0x49, 0x45, 0x4e, 0x44) // IEND
+		);
 	}
 	if (ext === 'jpg') return has(0xff, 0xd9); // EOI
 	if (ext === 'gif') return has(0x3b); // trailer
@@ -100,11 +133,15 @@ function looksComplete(bytes: Uint8Array, ext: string): boolean {
 		const size =
 			(bytes[4] ?? 0) | ((bytes[5] ?? 0) << 8) | ((bytes[6] ?? 0) << 16) | ((bytes[7] ?? 0) << 24);
 		if (size <= 0 || size + 8 > len) return false;
-		return (
+		const isVp8 =
 			at(12, 0x56, 0x50, 0x38, 0x20) || // 'VP8 '
 			at(12, 0x56, 0x50, 0x38, 0x4c) || // 'VP8L'
-			at(12, 0x56, 0x50, 0x38, 0x58) //   'VP8X'
-		);
+			at(12, 0x56, 0x50, 0x38, 0x58); //  'VP8X'
+		if (!isVp8) return false;
+		// chunk 는 FourCC 만으로 성립하지 않는다. 길이 필드와 그만한 payload 가 있어야 한다.
+		const chunkLen =
+			(bytes[16] ?? 0) | ((bytes[17] ?? 0) << 8) | ((bytes[18] ?? 0) << 16) | ((bytes[19] ?? 0) << 24);
+		return chunkLen > 0 && 20 + chunkLen <= len;
 	}
 	return true;
 }
@@ -260,6 +297,14 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 		what: string;
 	}): Promise<string[]> {
 		const lines: string[] = [];
+		// ★ upload 여부와 무관하게, 감사에 걸린 산출물은 거부 목록에 올린다.
+		//   예전엔 upload:true 로 막힌 경우에만 넣었는데, 그러면 upload:false 로 그린 뒤
+		//   그 경로를 velog_upload_image 에 주는 우회가 그대로 남는다.
+		if (!args.clean) {
+			rejectedRenders.add(resolve(args.pngPath));
+			const real = await realpath(args.pngPath).catch(() => null);
+			if (real) rejectedRenders.add(real);
+		}
 		const px = `${args.width * args.scale}×${args.height * args.scale}px`;
 		lines.push(`${args.what} 완성 — ${px} (${(args.bytes / 1024).toFixed(0)}KB)`);
 		lines.push('');
@@ -282,7 +327,6 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			lines.push('올리지 않았습니다 — 위 문제를 고쳐 다시 그리세요.');
 			lines.push('아래 PNG 는 이 서버로 올릴 수 없습니다 (감사에 걸린 산출물).');
 			lines.push('');
-			rejectedRenders.add(args.pngPath);
 			lines.push(`- 로컬 PNG: ${args.pngPath}`);
 			lines.push(`- 편집용 HTML: ${args.htmlPath}`);
 			return lines;
@@ -319,8 +363,8 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'구성도·흐름도를 그려 PNG 로 만들고 벨로그에 올린다. 본문에 붙일 마크다운을 돌려준다.\n' +
 				'좌표만 주면 나머지는 렌더러가 맞춘다 — 노드 폭·캔버스 크기·선 꺾임·라벨 위치는 ' +
 				'브라우저 실측으로 정해지고, 글자 삐져나옴/선 관통/겹침은 자가감사가 잡는다.\n' +
-				'감사에 걸리면 **올리지 않고** 무엇이 문제인지 알려준다. 이 판단은 끌 수 없다 — ' +
-				'그래도 올려야 하면 upload:false 로 그린 뒤 PNG 를 확인하고 velog_upload_image 를 쓴다.\n' +
+				'감사에 걸리면 **올리지 않고** 무엇이 문제인지 알려준다. 이 판단은 끌 수 없고, ' +
+				'감사에 걸린 산출물은 velog_upload_image 로도 받지 않는다. 고쳐서 다시 그릴 것.\n' +
 				`아이콘: ${ICON_NAMES.join(' ')}\n톤: ${TONE_NAMES.join(' ')}`,
 			inputSchema: {
 				title: z.string().min(1).describe('그림 제목 (좌상단)'),
@@ -475,7 +519,9 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 		},
 		async (args) => {
 			client.requireAuth('velog_upload_image');
-			if (rejectedRenders.has(args.path)) {
+			// ★ 문자열 그대로 비교하면 `/tmp/x/./a.png` 하나로 빠져나간다.
+			//   경로를 정규화하고, 심볼릭 링크까지 푼 형태로도 본다.
+			if (await isRejected(args.path)) {
 				throw new Error(
 					'이 PNG 는 이 서버의 자가감사에서 떨어진 산출물입니다 — 올릴 수 없습니다.\n' +
 						'그림을 고쳐 다시 그리세요 (velog_render_diagram).',

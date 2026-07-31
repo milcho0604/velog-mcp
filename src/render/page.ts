@@ -361,6 +361,10 @@ for (var gi = 0; gi < S.groups.length; gi++) {
 function cx(n){ return n.x + n.w / 2; }
 function cy(n){ return n.y + n.h / 2; }
 function parseEnd(ref){
+  // ★ 그 이름의 노드가 실제로 있으면 그게 우선이다.
+  //   'svc:right' 라는 id 를 가진 노드가 있는데 이걸 'svc' 의 오른쪽 면으로 읽으면
+  //   감사도 깨끗한 채로 **엉뚱한 데 연결된 그림**이 나간다.
+  if (NMAP[ref]) return {id:ref, side:''};
   var i = ref.lastIndexOf(':');
   var side = '';
   var id = ref;
@@ -716,7 +720,12 @@ for (var ci = 0; ci < plan.length; ci++) {
 // ★ 처음엔 수평-수평, 수직-수직만 비교했다. 그러면 똑같은 **대각선** 두 개가
 //   완전히 포개져도 통과한다. 각도에 상관없이 '평행하고 같은 직선 위이며 구간이
 //   겹치는가'로 본다.
+// ★ 한쪽 방향만 재면 '짧은 선을 기준으로 보면 겹침, 긴 선을 기준으로 보면 아님'
+//   같은 일이 생긴다(엣지 순서에 따라 답이 달라진다). 양방향으로 본다.
 function collinearOverlap(A, B){
+  return collinearOverlapOneWay(A, B) || collinearOverlapOneWay(B, A);
+}
+function collinearOverlapOneWay(A, B){
   var ax = A[2]-A[0], ay = A[3]-A[1];
   var bx = B[2]-B[0], by = B[3]-B[1];
   var la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
