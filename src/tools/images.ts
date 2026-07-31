@@ -20,7 +20,7 @@
  * velcdn 도메인에서 서빙되면 그 자체가 문제가 된다.
  */
 
-import { open, readFile, realpath } from 'node:fs/promises';
+import { constants, open, readFile, realpath } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -126,9 +126,14 @@ function pngStructureOk(bytes: Uint8Array): boolean {
 		if (len > bytes.length || next > bytes.length) return false;
 		if (first) {
 			if (type !== 'IHDR' || len !== 13) return false;
+			// ★ 폭·높이 0 은 규격상 무효다. 길이만 맞춘 껍데기를 한 겹 더 거른다.
+			const w = readU32BE(bytes, at + 8);
+			const h = readU32BE(bytes, at + 12);
+			if (w === 0 || h === 0) return false;
 			first = false;
 		}
-		if (type === 'IDAT') sawIdat = true;
+		// 빈 IDAT 은 화소가 없다는 뜻이다.
+		if (type === 'IDAT' && len > 0) sawIdat = true;
 		// ★ IEND 는 규격상 **마지막** 청크다. 뒤에 뭔가 더 있으면 정상 PNG 가 아니고,
 		//   거기가 바로 polyglot 이 숨는 자리다. 파일 끝과 일치하는지까지 본다.
 		if (type === 'IEND') return len === 0 && sawIdat && next === bytes.length;
@@ -143,16 +148,25 @@ function webpStructureOk(bytes: Uint8Array): boolean {
 	if (riffSize + 8 > bytes.length) return false;
 	let at = 12;
 	const endAt = Math.min(bytes.length, riffSize + 8);
+	let sawFrame = false;
 	while (at + 8 <= endAt) {
 		const type = fourCC(bytes, at);
 		const len = readU32LE(bytes, at + 4);
 		const next = at + 8 + len + (len % 2); // 홀수면 1바이트 패딩
 		if (next > endAt) return false;
 		// 실제 화소가 든 청크. VP8X(확장 헤더)만 있는 건 이미지가 아니다.
-		if (type === 'VP8 ' || type === 'VP8L' || type === 'ANMF') return len > 0;
+		// ★ ANMF 는 16바이트 프레임 헤더 뒤에 실제 비트스트림이 온다 — len>0 만으로는
+		//   1바이트짜리도 통과한다.
+		if (type === 'VP8 ' || type === 'VP8L') {
+			if (len > 0) sawFrame = true;
+		} else if (type === 'ANMF') {
+			if (len > 16) sawFrame = true;
+		}
 		at = next;
 	}
-	return false;
+	// ★ 첫 프레임에서 바로 반환하면 그 뒤 청크 경계가 깨져 있어도 모른다.
+	//   끝까지 걸어 경계가 맞는지 확인한 뒤에 판정한다.
+	return sawFrame && at === endAt;
 }
 
 function looksComplete(bytes: Uint8Array, ext: string): boolean {
@@ -213,19 +227,30 @@ export function sniffImage(bytes: Uint8Array): Sniffed | null {
  *   보고 그대로 읽어 그 틈을 없앤다.
  */
 async function readImageFile(path: string): Promise<{ bytes: Uint8Array; kind: Sniffed }> {
-	const handle = await open(path, 'r').catch(() => null);
+	// ★ O_NONBLOCK 으로 연다. 그냥 열면 **FIFO 에서 open 자체가 writer 를 기다리며
+	//   멈춘다** — 요청이 몇 개만 겹쳐도 Node 의 파일 I/O 스레드풀이 고갈된다.
+	const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => null);
 	if (!handle) throw new Error(`파일을 찾지 못했습니다: ${path}`);
 	let bytes: Uint8Array;
 	try {
 		const info = await handle.stat();
 		if (!info.isFile()) throw new Error(`파일이 아닙니다: ${path}`);
-		if (info.size > MAX_UPLOAD_BYTES) {
+
+		// ★ 크기 판정은 **실제로 읽은 바이트** 하나로만 한다.
+		//   예전엔 stat 으로 한 번 보고 read 에서 또 봤는데, 두 가지가 문제였다:
+		//   ① readFile() 은 내부에서 크기를 다시 재므로 stat 이후 파일이 커지면
+		//      상한을 넘겨 읽는다 (검사가 무의미해진다)
+		//   ② 검사가 둘이면 하나를 지워도 다른 하나가 가려서 **테스트가 못 잡는다**
+		//      (실제로 변이가 통과했다)
+		//   상한+1 만큼만 읽고, 그 이상이면 거부한다. 10MB 버퍼는 유한하고 예측 가능하다.
+		const buf = Buffer.alloc(MAX_UPLOAD_BYTES + 1);
+		const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+		if (bytesRead > MAX_UPLOAD_BYTES) {
 			throw new Error(
-				`파일이 너무 큽니다 (${(info.size / 1024 / 1024).toFixed(1)}MB). ` +
-					`이 도구의 상한은 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB 입니다.`,
+				`파일이 너무 큽니다 — 이 도구의 상한은 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB 입니다.`,
 			);
 		}
-		bytes = new Uint8Array(await handle.readFile());
+		bytes = new Uint8Array(buf.subarray(0, bytesRead));
 	} finally {
 		await handle.close().catch(() => {});
 	}
@@ -313,8 +338,12 @@ const planeSchema = z.object({
 	name: z.string().min(1).max(40),
 	color: z.string().refine(isHexColor, '#rrggbb 형식만 받습니다'),
 	// stroke-dasharray 는 길이 목록이다. 숫자·공백·쉼표 외에는 받지 않는다.
+	// ★ 문자 종류만 좁히고 길이를 안 뒀다. 이 값은 엣지 120개의 stroke-dasharray 로
+	//   전부 복제되고 DOM 출력에도 그만큼 반복된다 — 1MB 입력 하나가 100MB 넘는
+	//   DOM 이 된다. 점선 패턴은 원래 짧다.
 	dash: z
 		.string()
+		.max(40)
 		.regex(/^[\d.\s,]+$/, '숫자와 공백·쉼표만 (예: "6 4")')
 		.optional()
 		.describe('점선 (예: "6 4")'),
@@ -448,6 +477,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				upload: z.boolean().default(true),
 				post_id: z
 					.string()
+					.max(64)
 					.optional()
 					.describe('붙일 글 id. 주면 벨로그가 내 글인지 확인한 뒤 받는다'),
 			},
@@ -510,7 +540,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				tone: toneField.optional(),
 				footer: z.string().max(60).optional().describe("우상단 서명 (예: '@milcho0604')"),
 				upload: z.boolean().default(true),
-				post_id: z.string().optional(),
+				post_id: z.string().max(64).optional(),
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
@@ -553,13 +583,13 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'⚠️ 올라간 주소는 공개다 — 주소를 아는 사람은 누구나 볼 수 있고, 벨로그에는 ' +
 				'이미지 삭제 API 가 없다. 올리기 전에 무슨 파일인지 확인하라.',
 			inputSchema: {
-				path: z.string().min(1).describe('로컬 파일 경로'),
+				path: z.string().min(1).max(4096).describe('로컬 파일 경로'),
 				alt: z.string().max(300).optional(),
 				type: z
 					.enum(['post', 'profile'])
 					.default('post')
 					.describe("profile 은 프로필 사진용 분류일 뿐 — 사진 교체는 velog_update_profile_image"),
-				post_id: z.string().optional().describe('붙일 글 id (서버가 소유권을 확인한다)'),
+				post_id: z.string().max(64).optional().describe('붙일 글 id (서버가 소유권을 확인한다)'),
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},

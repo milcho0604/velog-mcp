@@ -163,6 +163,16 @@ const BASE_FLAGS: readonly string[] = [
 interface RunOptions {
 	readonly profileDir: string;
 	readonly timeoutMs?: number;
+	/**
+	 * 프로세스 생성기. **테스트에서만** 바꾼다.
+	 *
+	 * 실제 크롬으로는 '결과가 늦게 도착하는 종료' 같은 타이밍을 안정적으로 만들 수
+	 * 없어서, 그 불변식(‘exit’ 이 아니라 ‘close’ 를 본다)이 오래 안 묶여 있었다.
+	 * 가짜 자식 프로세스를 넣으면 벽시계 대기 없이 정확히 재현된다.
+	 */
+	readonly spawnImpl?: typeof spawn;
+	/** 테스트에서 작은 값으로 낮춰 stdout 상한 동작을 확인한다. */
+	readonly maxStdoutBytes?: number;
 }
 
 /** 산출물이 다 나왔는지 판정한다. true 가 되는 순간 크롬을 끝낸다. */
@@ -170,6 +180,15 @@ type Ready = (stdout: string) => boolean | Promise<boolean>;
 
 function tail(text: string, lines = 4): string {
 	return text.trim().split('\n').slice(-lines).join('\n');
+}
+
+export function runForTest(
+	chrome: string,
+	args: readonly string[],
+	options: RunOptions,
+	ready: Ready,
+): Promise<string> {
+	return run(chrome, args, options, ready);
 }
 
 function run(
@@ -183,7 +202,9 @@ function run(
 
 	return new Promise((resolve, reject) => {
 		hookProcessExit();
-		const child = spawn(chrome, full, { stdio: ['ignore', 'pipe', 'pipe'] });
+		const child = (options.spawnImpl ?? spawn)(chrome, full, {
+			stdio: ['ignore', 'pipe', 'pipe'],
+		});
 		live.add(child);
 		let out = '';
 		let err = '';
@@ -191,11 +212,18 @@ function run(
 
 		// ★ stdout 을 무제한으로 모으면 페이지가 큰 문자열을 뱉을 때 그대로 따라 커진다.
 		//   DOM 은 우리가 만든 것이라 정상이면 수백 KB 다. 상한을 넘으면 비정상이다.
-		const MAX_STDOUT = 32 * 1024 * 1024;
+		// ★ 붙이기 **전에** 검사하면 마지막 청크는 상한을 넘긴 채로 들어간다.
+		//   그리고 문자열 길이는 UTF-16 단위라 바이트가 아니다. 바이트로 세고,
+		//   더한 뒤에 판정한다.
+		const MAX_STDOUT = options.maxStdoutBytes ?? 32 * 1024 * 1024;
+		let outBytes = 0;
 		child.stdout.on('data', (chunk: Buffer) => {
-			if (out.length > MAX_STDOUT) {
+			outBytes += chunk.length;
+			if (outBytes > MAX_STDOUT) {
 				finish(() => {
-					reject(new Error(`크롬 출력이 ${MAX_STDOUT / 1024 / 1024}MB 를 넘었습니다 — 입력이 비정상입니다.`));
+					reject(
+						new Error(`크롬 출력이 ${MAX_STDOUT / 1024 / 1024}MB 를 넘었습니다 — 입력이 비정상입니다.`),
+					);
 				});
 				return;
 			}

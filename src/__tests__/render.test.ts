@@ -16,7 +16,9 @@
 
 import { test, describe } from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { platform } from 'node:process';
@@ -34,7 +36,7 @@ import { buildCoverHtml } from '../render/cover.ts';
 import { ICONS } from '../render/icons.ts';
 import { isHexColor, TONES } from '../render/tones.ts';
 import { sniffImage, registerImageTools } from '../tools/images.ts';
-import { dumpDom, findChrome } from '../render/chrome.ts';
+import { dumpDom, findChrome, runForTest } from '../render/chrome.ts';
 import { renderCover, renderDiagram } from '../render/index.ts';
 import { VelogClient, VELOG_UPLOAD_ENDPOINT } from '../client.ts';
 
@@ -245,6 +247,13 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		return out;
 	};
 
+	/**
+	 * IHDR 데이터 13바이트: 폭4·높이4·비트깊이·컬러타입·압축·필터·인터레이스.
+	 * ★ 예전엔 전부 0 으로 뒀는데, 폭·높이 0 은 규격상 무효다.
+	 *   '정상 fixture' 가 사실은 무효인 파일이었다 (코덱스 5차 지적).
+	 */
+	const IHDR_DATA = [0, 0, 0, 8, 0, 0, 0, 8, 8, 6, 0, 0, 0]; // 8×8, RGBA
+
 	/** PNG 청크: [길이4 BE][타입4][데이터][CRC4]. CRC 값은 검사하지 않으므로 0 으로 둔다. */
 	const png = (type: string, data: number[] = []): number[] => [
 		(data.length >>> 24) & 255,
@@ -282,7 +291,7 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 	//   지금은 청크 구조를 실제로 걸어간다.
 	test('구조를 갖춘 이미지만 통과한다', () => {
 		assert.equal(
-			sniffImage(bytes(...PNG_SIG, ...png('IHDR', new Array(13).fill(0)), ...png('IDAT', [1, 2, 3]), ...png('IEND')))?.mime,
+			sniffImage(bytes(...PNG_SIG, ...png('IHDR', IHDR_DATA), ...png('IDAT', [1, 2, 3]), ...png('IEND')))?.mime,
 			'image/png',
 		);
 		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 0xff, 0xd9))?.mime, 'image/jpeg');
@@ -290,7 +299,7 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(webp(wchunk('VP8 ', [1, 2, 3, 4])))?.mime, 'image/webp');
 		// 확장·애니메이션 WebP: VP8X 뒤에 실제 프레임이 있으면 정상이다
 		assert.equal(
-			sniffImage(webp(wchunk('VP8X', new Array(10).fill(0)), wchunk('ANMF', [1, 2])))?.mime,
+			sniffImage(webp(wchunk('VP8X', new Array(10).fill(0)), wchunk('ANMF', new Array(24).fill(1))))?.mime,
 			'image/webp',
 		);
 	});
@@ -307,7 +316,7 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(bytes(...PNG_SIG, ...asBytes('BEGIN PRIVATE KEY'))), null);
 		assert.equal(sniffImage(bytes(...PNG_SIG)), null, '잘린 PNG');
 		assert.equal(
-			sniffImage(bytes(...PNG_SIG, ...png('IHDR', new Array(13).fill(0)), ...png('IDAT', [1]), ...png('IEND'), ...new Array(100).fill(65))),
+			sniffImage(bytes(...PNG_SIG, ...png('IHDR', IHDR_DATA), ...png('IDAT', [1]), ...png('IEND'), ...new Array(100).fill(65))),
 			null,
 			'IEND 뒤에 데이터를 덧붙인 것',
 		);
@@ -327,7 +336,7 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(new Uint8Array(0)), null);
 		// 시그니처가 한 칸 밀린 것도 통과하면 안 된다
 		assert.equal(
-			sniffImage(bytes(0x00, ...PNG_SIG, ...png('IHDR', new Array(13).fill(0)), ...png('IDAT', [1]), ...png('IEND'))),
+			sniffImage(bytes(0x00, ...PNG_SIG, ...png('IHDR', IHDR_DATA), ...png('IDAT', [1]), ...png('IEND'))),
 			null,
 		);
 	});
@@ -1248,17 +1257,18 @@ describe('★ R19 — 모서리 라운딩이 원래 선을 벗어나지 않는�
 		// 우리가 준 좌표로 그려진 path 를 찾는다
 		const drawn = [...dom.matchAll(/\sd="(M7,103[^"]*)"/g)].map((m) => m[1] ?? '');
 		assert.ok(drawn.length > 0, `그려진 경로를 못 찾았다`);
-		const ys = [...(drawn[0] ?? '').matchAll(/[ML]\s*-?[\d.]+,(-?[\d.]+)/g)].map((m) =>
-			Number(m[1]),
-		);
-		assert.ok(ys.length >= 2, `좌표를 못 읽었다: ${drawn[0] ?? ''}`);
+		// ★ 처음엔 M·L 만 읽었다. 그러면 Q 의 제어점·끝점이 벗어나도 못 잡는다
+		//   (코덱스 5차: 나가는 쪽만 망가진 경로가 통과한다). d 안의 **모든 좌표쌍**을 본다.
+		const path = drawn[0] ?? '';
+		const ys = [...path.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[2]));
+		assert.ok(ys.length >= 4, `좌표를 못 읽었다: ${path}`);
 		// 원래 선은 y 가 103~105 다. 정상 라운딩이면 그 근처에 머문다.
 		// 축별 sign 방식이면 y 가 95 아래·113 위까지 벌어진다.
 		const lo = Math.min(...ys);
 		const hi = Math.max(...ys);
 		assert.ok(
 			lo >= 99 && hi <= 109,
-			`라운딩이 원래 선(103~105)을 벗어났다: ${lo}~${hi} · ${drawn[0] ?? ''}`,
+			`라운딩이 원래 선(103~105)을 벗어났다: ${lo}~${hi} · ${path}`,
 		);
 	});
 });
@@ -1443,7 +1453,8 @@ describe('★ R20 — 실제 형식 변형을 잘못 거부하지 않는다', ()
 	const pch = (t: string, d: number[] = []): number[] => [...be(d.length), ...A(t), ...d, 0, 0, 0, 0];
 	const png = (...cs: number[][]): Uint8Array =>
 		new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...cs.flat()]);
-	const ihdr = (): number[] => pch('IHDR', new Array(13).fill(0));
+	// 폭·높이 0 은 규격상 무효다. 실제 크기를 넣는다 (8×8 RGBA).
+	const ihdr = (): number[] => pch('IHDR', [0, 0, 0, 8, 0, 0, 0, 8, 8, 6, 0, 0, 0]);
 
 	test('규격상 정상인 변형은 전부 통과한다', () => {
 		const ok: Array<[string, Uint8Array]> = [
@@ -1465,6 +1476,17 @@ describe('★ R20 — 실제 형식 변형을 잘못 거부하지 않는다', ()
 			['IDAT 없이 fdAT 만', png(ihdr(), pch('fdAT', [1, 2]), pch('IEND'))],
 			['길이 필드가 파일을 넘어감', png(ihdr(), [...be(999999), ...A('IDAT'), 1, 2, 0, 0, 0, 0], pch('IEND'))],
 			['IHDR 이 첫 청크가 아님', png(pch('tEXt', A('x')), ihdr(), pch('IDAT', [1]), pch('IEND'))],
+			// 폭·높이 0 (규격상 무효)
+			['0×0 PNG', png(pch('IHDR', new Array(13).fill(0)), pch('IDAT', [1]), pch('IEND'))],
+			// 화소가 없는 빈 IDAT
+			['빈 IDAT', png(ihdr(), pch('IDAT', []), pch('IEND'))],
+			// ANMF 가 프레임 헤더도 못 채움
+			['ANMF 가 너무 짧음', webp(wch('VP8X', new Array(10).fill(0)), wch('ANMF', [1, 2]))],
+			// 정상 프레임 뒤에 경계가 깨진 청크
+			['프레임 뒤 깨진 청크', webp(wch('VP8 ', [1, 2, 3, 4]), [...A('EXIF'), ...le(9999), 1, 2])],
+			// ★ 청크가 되지 못하는 자투리(8바이트 미만)가 남는 경우.
+			//   루프 안 경계 검사로는 못 잡고 '끝까지 걸었는가' 로만 잡힌다.
+			['프레임 뒤 자투리 4바이트', webp(wch('VP8 ', [1, 2, 3, 4]), [1, 2, 3, 4])],
 		];
 		for (const [name, v] of ng) {
 			assert.equal(sniffImage(v), null, `비정상 파일이 통과했다: ${name}`);
@@ -1481,18 +1503,31 @@ describe('★ R21 — 글자 길이 상한', () => {
 		const client = new Client({ name: 'len-test', version: '0' });
 		await Promise.all([client.connect(a), server.connect(b)]);
 
-		const big = 'ㄱ'.repeat(5000);
+		// ★ 5,000자로만 시험하면 `.max(120)` 을 `.max(4999)` 로 완화하는 변이가 통과한다
+		//   (코덱스 5차). **상한 바로 위** 값으로 시험해야 상한 자체가 묶인다.
+		const over = (limit: number): string => 'ㄱ'.repeat(limit + 1);
 		const cases: Array<[string, Record<string, unknown>]> = [
-			['제목', { title: big, nodes: [{ x: 0, y: 0, title: 'A' }] }],
-			['부제', { title: 't', subtitle: big, nodes: [{ x: 0, y: 0, title: 'A' }] }],
-			['노드 제목', { title: 't', nodes: [{ x: 0, y: 0, title: big }] }],
-			['노드 부제', { title: 't', nodes: [{ x: 0, y: 0, title: 'A', sub: big }] }],
-			['노드 id', { title: 't', nodes: [{ id: big, x: 0, y: 0, title: 'A' }] }],
-			['태그', { title: 't', nodes: [{ x: 0, y: 0, title: 'A', tag: big }] }],
-			['엣지 라벨', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], edges: [{ points: [[0, 0], [10, 0]], label: big }] }],
-			['그룹 이름', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: big }] }],
-			['members 항목', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: 'g', members: [big] }] }],
-			['alt', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], alt: big }],
+			['제목(200)', { title: over(200), nodes: [{ x: 0, y: 0, title: 'A' }] }],
+			['부제(300)', { title: 't', subtitle: over(300), nodes: [{ x: 0, y: 0, title: 'A' }] }],
+			['노드 제목(120)', { title: 't', nodes: [{ x: 0, y: 0, title: over(120) }] }],
+			['노드 부제(120)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A', sub: over(120) }] }],
+			['노드 id(64)', { title: 't', nodes: [{ id: over(64), x: 0, y: 0, title: 'A' }] }],
+			['태그(40)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A', tag: over(40) }] }],
+			['엣지 라벨(120)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], edges: [{ points: [[0, 0], [10, 0]], label: over(120) }] }],
+			['엣지 from(80)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], edges: [{ from: over(80), to: 'x' }] }],
+			['그룹 이름(80)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: over(80) }] }],
+			['그룹 부제(80)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: 'g', sub: over(80) }] }],
+			['members 항목(64)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: 'g', members: [over(64)] }] }],
+			['plane 이름(40)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], planes: [{ key: 'r', name: over(40), color: '#000000' }] }],
+			['plane dash(40)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], planes: [{ key: 'r', name: 'n', color: '#000000', dash: '6 '.repeat(30) }] }],
+			['alt(300)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], alt: over(300) }],
+			['post_id(64)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], post_id: over(64) }],
+			// 배열 개수 상한도 함께 (코덱스: 개수 상한 제거 변이가 통과한다)
+			['노드 개수(60)', { title: 't', nodes: Array.from({ length: 61 }, (_, i) => ({ x: i, y: 0, title: `A${String(i)}` })) }],
+			['그룹 개수(12)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: Array.from({ length: 13 }, (_, i) => ({ name: `g${String(i)}` })) }],
+			['엣지 개수(120)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], edges: Array.from({ length: 121 }, () => ({ points: [[0, 0], [10, 0]] })) }],
+			['plane 개수(6)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], planes: Array.from({ length: 7 }, (_, i) => ({ key: `k${String(i)}`, name: 'n', color: '#000000' })) }],
+			['members 개수(60)', { title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: 'g', members: Array.from({ length: 61 }, (_, i) => `m${String(i)}`) }] }],
 		];
 		for (const [why, args] of cases) {
 			const r = await client.callTool({
@@ -1503,13 +1538,158 @@ describe('★ R21 — 글자 길이 상한', () => {
 		}
 
 		// 표지도 같다
-		for (const field of ['title', 'subtitle', 'kicker', 'footer']) {
+		for (const [field, limit] of [
+			['title', 200], ['subtitle', 300], ['kicker', 60], ['footer', 60],
+		] as Array<[string, number]>) {
 			const r = await client.callTool({
 				name: 'velog_render_cover',
-				arguments: { title: 't', upload: false, [field]: big },
+				arguments: { title: 't', upload: false, [field]: over(limit) },
 			});
 			assert.equal(r.isError, true, `표지 ${field} 를 막았어야 한다`);
 		}
+		// 태그 개수·길이
+		for (const tags of [Array.from({ length: 7 }, () => 'x'), [over(40)]]) {
+			const r = await client.callTool({
+				name: 'velog_render_cover',
+				arguments: { title: 't', upload: false, tags },
+			});
+			assert.equal(r.isError, true, '표지 태그 상한을 막았어야 한다');
+		}
+		// 업로드 경로 상한
+		const up = await client.callTool({
+			name: 'velog_upload_image',
+			arguments: { path: over(4096) },
+		});
+		assert.equal(up.isError, true, '업로드 경로 상한을 막았어야 한다');
 		await client.close();
+	});
+});
+
+
+describe("★★ R22 — 'exit' 이 아니라 'close' 를 본다 (가짜 자식 프로세스)", () => {
+	// ★ Node 는 'exit' 시점에 stdio 가 아직 열려 있을 수 있다고 명시한다.
+	//   마지막 출력이 그 뒤에 도착하면 멀쩡한 결과를 실패로 처리하게 된다.
+	//   실제 크롬으로는 이 타이밍을 안정적으로 못 만들어 오래 안 묶여 있었는데,
+	//   가짜 자식을 넣으면 벽시계 대기 없이 정확히 재현된다 (코덱스 5차 제안).
+	function fakeChild(): {
+		child: EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill: () => boolean };
+		stdout: PassThrough;
+	} {
+		const stdout = new PassThrough();
+		const stderr = new PassThrough();
+		const child = Object.assign(new EventEmitter(), {
+			stdout,
+			stderr,
+			kill: (): boolean => true,
+		});
+		return { child, stdout };
+	}
+
+	const spawnFake = (child: unknown): typeof spawn =>
+		(() => child) as unknown as typeof spawn;
+
+	test('exit 뒤에 도착한 마지막 출력도 성공으로 받는다', async () => {
+		const { child, stdout } = fakeChild();
+		const promise = runForTest(
+			'/fake/chrome',
+			[],
+			{ profileDir: '/tmp/none', spawnImpl: spawnFake(child), timeoutMs: 5000 },
+			(out) => out.includes('</html>'),
+		);
+
+		// 프로세스는 먼저 끝나고…
+		child.emit('exit', 0);
+		await new Promise<void>((r) => setImmediate(r));
+		// …마지막 출력이 그 뒤에 도착한다
+		stdout.write('<html>ok</html>');
+		await new Promise<void>((r) => setImmediate(r));
+		child.emit('close', 0);
+
+		assert.match(await promise, /<\/html>/);
+	});
+
+	test('출력 없이 끝나면 실패로 처리한다 (음성 경로)', async () => {
+		const { child } = fakeChild();
+		const promise = runForTest(
+			'/fake/chrome',
+			[],
+			{ profileDir: '/tmp/none', spawnImpl: spawnFake(child), timeoutMs: 5000 },
+			(out) => out.includes('</html>'),
+		);
+		child.emit('exit', 1);
+		await new Promise<void>((r) => setImmediate(r));
+		child.emit('close', 1);
+		await assert.rejects(() => promise, /결과 없이 종료/);
+	});
+
+	test('stdout 상한을 넘으면 끊는다', async () => {
+		const { child, stdout } = fakeChild();
+		const promise = runForTest(
+			'/fake/chrome',
+			[],
+			{ profileDir: '/tmp/none', spawnImpl: spawnFake(child), timeoutMs: 5000, maxStdoutBytes: 64 },
+			(out) => out.includes('</html>'),
+		);
+		stdout.write('x'.repeat(65));
+		await assert.rejects(() => promise, /넘었습니다/);
+	});
+});
+
+
+describe('★ R23 — 상한을 넘는 파일은 읽는 단계에서 거부한다', () => {
+	// ★ 예전엔 stat 로 한 번, read 에서 또 봤다. 검사가 둘이면 하나를 지워도 다른
+	//   하나가 가려서 테스트가 못 잡는다(실제로 변이가 통과했다). 지금은 '실제로 읽은
+	//   바이트' 하나로만 판정하므로 이 테스트가 그 검사를 직접 묶는다.
+	test('11MB 파일은 너무 큰 파일로 거부된다', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'velog-mcp-big-upload-'));
+		const big = join(dir, 'big.png');
+		// PNG 시그니처로 시작하지만 상한(10MB)을 넘는다
+		const buf = Buffer.alloc(11 * 1024 * 1024);
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf);
+		await writeFile(big, buf);
+
+		const server = new McpServer({ name: 't', version: '0' });
+		registerImageTools(
+			server,
+			new VelogClient({
+				auth: {
+					kind: 'authenticated',
+					credentials: { accessToken: 'a.b.c', refreshToken: undefined },
+				},
+				fetchImpl: (() => {
+					throw new Error('업로드까지 가면 안 된다');
+				}) as unknown as typeof fetch,
+			}),
+		);
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: 'big-test', version: '0' });
+		await Promise.all([client.connect(a), server.connect(b)]);
+
+		const r = await client.callTool({ name: 'velog_upload_image', arguments: { path: big } });
+		assert.equal(r.isError, true, '상한을 넘는 파일이 통과했다');
+		assert.match(String((r.content as Array<{ text: string }>)[0]?.text), /너무 큽니다/);
+
+		await client.close();
+		await rm(dir, { recursive: true, force: true }).catch(() => {});
+	});
+
+	test('상한 이하 파일은 크기 때문에 막히지 않는다 (양성 경로)', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'velog-mcp-big-upload-'));
+		const small = join(dir, 'small.png');
+		await writeFile(small, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+
+		const server = new McpServer({ name: 't', version: '0' });
+		registerImageTools(server, new VelogClient({ auth: { kind: 'anonymous' } }));
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: 'big-test', version: '0' });
+		await Promise.all([client.connect(a), server.connect(b)]);
+
+		const r = await client.callTool({ name: 'velog_upload_image', arguments: { path: small } });
+		// 인증이 없어 어차피 실패하지만, **크기 때문**은 아니어야 한다
+		const text = String((r.content as Array<{ text: string }>)[0]?.text);
+		assert.ok(!/너무 큽니다/.test(text), `크기로 막혔다: ${text}`);
+
+		await client.close();
+		await rm(dir, { recursive: true, force: true }).catch(() => {});
 	});
 });
