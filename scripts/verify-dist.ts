@@ -20,10 +20,12 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, symlink, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { findLeaks, looksTextual } from './shipping-checks.ts';
+import { scanFiles } from './shipping-checks.ts';
 import { SERVER_NAME, CHROME_TOOLS } from '../src/index.ts';
 
 const ROOT = new URL('../', import.meta.url);
@@ -43,9 +45,15 @@ interface Outcome {
 	readonly died: string | null;
 }
 
-async function handshake(): Promise<Outcome> {
-	// ⚠️ `ENTRY.pathname` 은 공백을 `%20` 으로 남긴다(실측). 경로에 공백이 있으면 깨진다.
-	const child = spawn(process.execPath, [fileURLToPath(ENTRY)], {
+async function handshake(binLink: string): Promise<Outcome> {
+	// ★★ **npm 이 실제로 쓰는 모양으로 띄운다 — 심볼릭 링크.**
+	//   `npx`·`npm i -g` 는 `node_modules/.bin/velog-mcp` 링크를 만들어 실행한다.
+	//   정규화된 실제 경로로만 검증하면 **링크에서만 죽는 버그를 못 본다.**
+	//   실제로 그런 버그가 있었다(argv[1] 이 링크라 `isDirectRun()` 이 false →
+	//   출력 0줄·코드 0). 관문이 실물과 다른 모양을 보고 있었던 것이다.
+	//
+	// ⚠️ `ENTRY.pathname` 은 공백을 `%20` 으로 남긴다(실측) → `fileURLToPath`.
+	const child = spawn(process.execPath, [binLink], {
 		stdio: ['pipe', 'pipe', 'pipe'],
 		// 토큰 없이 띄운다. 발행 검증이 실제 계정을 건드릴 이유가 없다.
 		env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
@@ -99,9 +107,18 @@ async function handshake(): Promise<Outcome> {
 			buffer = lines.pop() ?? '';
 			for (const line of lines) {
 				if (!line.trim()) continue;
+				// ⚠️ JSON 이면 무조건 MCP 응답으로 인정했었다. 그러면 JSON 로거 한 줄이
+				//    섞여도 "stdout 순수"라고 판정한다 — 실제 프로토콜은 이미 오염됐는데.
+				//    형태(`jsonrpc: '2.0'` + id 또는 method)까지 본다.
+				let parsed: Record<string, unknown> | null;
 				try {
-					responses.push(JSON.parse(line) as Record<string, unknown>);
+					parsed = JSON.parse(line) as Record<string, unknown>;
 				} catch {
+					parsed = null;
+				}
+				if (parsed && parsed['jsonrpc'] === '2.0' && ('id' in parsed || 'method' in parsed)) {
+					responses.push(parsed);
+				} else {
 					junk.push(line);
 				}
 			}
@@ -109,6 +126,9 @@ async function handshake(): Promise<Outcome> {
 			// 보려면 잠깐 살려둬야 한다 — 즉시 죽이면 둘 다 못 본다(코덱스 지적).
 			if (responses.length >= 2) {
 				clearTimeout(watchTimer);
+				// 응답이 늦게 오면 hard timer 가 감시창을 잘라 "2초 지켜봤다"가 거짓이 된다.
+				// 감시창을 확보하도록 hard timer 를 미룬다.
+				hardTimer.refresh?.();
 				watchTimer = setTimeout(finish, WATCH_MS);
 			}
 		});
@@ -131,7 +151,17 @@ const pkg = JSON.parse(await readFile(new URL('package.json', ROOT), 'utf8')) as
 	version: string;
 };
 
-const { responses, junk, stderr, died } = await handshake();
+/**
+ * npm 이 만드는 것과 같은 모양의 링크를 임시로 만든다.
+ * 이걸 안 하면 "링크에서만 죽는" 버그를 관문이 영원히 못 본다.
+ */
+const linkDir = await mkdtemp(join(tmpdir(), 'velog-mcp-verify-'));
+const binLink = join(linkDir, 'velog-mcp');
+await symlink(fileURLToPath(ENTRY), binLink);
+
+const { responses, junk, stderr, died } = await handshake(binLink).finally(async () => {
+	await rm(linkDir, { recursive: true, force: true });
+});
 
 if (died) {
 	fail(
@@ -201,30 +231,37 @@ for (const name of ['package.json', 'README.md', 'README.ko.md', 'LICENSE', 'npm
 	shipped.push([name, new URL(name, ROOT)]);
 }
 
-const leaks = [];
-for (const [label, url] of shipped) {
-	const bytes = await readFile(url);
-	if (!looksTextual(bytes)) continue;
-	leaks.push(...findLeaks(label, bytes.toString('utf8')));
-}
+const loaded: Array<[string, Uint8Array]> = [];
+for (const [label, url] of shipped) loaded.push([label, await readFile(url)]);
+
+const { leaks, skipped } = scanFiles(loaded);
 if (leaks.length > 0) {
 	fail(
 		`발행물에 나가면 안 되는 것이 있습니다(${leaks.length}건):\n` +
 			leaks.map((leak) => `   ${leak.file}: ${leak.kind} ${leak.value}`).join('\n'),
 	);
 }
+// ⚠️ 검사하지 못한 파일을 조용히 넘기면 그게 구멍이다. 지금 발행물에 바이너리는 없다.
+if (skipped.length > 0) {
+	fail(
+		`텍스트로 못 읽어 **검사하지 못한** 발행물이 있습니다(${skipped.length}개): ` +
+			`${skipped.join(', ')}\n   눈으로 확인하고 예외로 넣든지 빼든지 정하세요.`,
+	);
+}
 
-// 삭제된 소스의 낡은 산출물이 남았는지 — dist 의 .js 는 src 에 짝이 있어야 한다.
+// 삭제된 소스의 낡은 산출물이 남았는지.
+// ⚠️ 처음엔 `.js` 만 봤다. `.d.ts`·`.js.map` 만 남기면 그냥 통과한다(실측) —
+//    낡은 타입 정의와 소스맵이 그대로 발행된다. 확장자를 벗겨 짝을 본다.
 const sources = new Set(
 	(await walk(new URL('src/', ROOT)))
 		.filter((f) => f.endsWith('.ts') && !f.startsWith('__tests__/'))
-		.map((f) => f.replace(/\.ts$/, '.js')),
+		.map((f) => f.replace(/\.ts$/, '')),
 );
 const orphans = shipped
 	.map(([label]) => label)
-	.filter((label) => label.startsWith('dist/') && label.endsWith('.js'))
+	.filter((label) => label.startsWith('dist/'))
 	.map((label) => label.slice('dist/'.length))
-	.filter((relative) => !sources.has(relative));
+	.filter((relative) => !sources.has(relative.replace(/\.(d\.ts|js\.map|js|mjs|cjs|map)$/, '')));
 if (orphans.length > 0) {
 	fail(
 		`dist 에 소스가 없는 산출물이 남아 있습니다(${orphans.length}개): ${orphans.join(', ')}\n` +
@@ -234,5 +271,5 @@ if (orphans.length > 0) {
 
 process.stdout.write(
 	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · ` +
-		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존 · 발행물 ${shipped.length}개 개인정보 0건\n`,
+		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존(심볼릭 링크 실행) · 발행물 ${shipped.length}개 개인정보 0건\n`,
 );

@@ -7,7 +7,8 @@
  * 설계 근거: docs/PRD.md, docs/security.md
  */
 
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -129,17 +130,36 @@ async function describeRenderReadiness(): Promise<string> {
 	}
 }
 
-// 직접 실행될 때만 기동한다. 테스트에서 import 할 때는 돌지 않아야 한다.
-//
-// basename 비교(`endsWith('index.js')`)는 다른 디렉터리의 동명 파일에도 참이 된다.
-// 경로를 URL 로 정규화해 정확히 대조한다.
+/**
+ * 직접 실행될 때만 기동한다. 테스트에서 import 할 때는 돌지 않아야 한다.
+ *
+ * ★★ 여기서 서버가 통째로 안 뜬 적이 있다 — npm 이 만드는 심볼릭 링크 때문이다
+ *
+ *   basename 비교(`endsWith('index.js')`)는 다른 디렉터리의 동명 파일에도 참이 되니
+ *   URL 로 정규화해 대조하도록 고쳤었다. 그런데 그것도 부족했다.
+ *
+ *   `npx` 나 `npm i -g` 는 `node_modules/.bin/velog-mcp` **링크**를 만들어 실행한다.
+ *   그때 `process.argv[1]` 은 **링크 경로**이고 `import.meta.url` 은 **실제 파일**이라
+ *   문자열이 다르다 → 이 함수가 false → `main()` 이 안 돌고 **출력 하나 없이 코드 0
+ *   으로 끝난다.** 증상은 "플러그인은 깔렸는데 도구가 하나도 없음"이다.
+ *
+ *   실측(2026-08-01): `dist/index.js` 로 심볼릭 링크를 만들어 실행하니 출력 0줄·코드 0.
+ *   같은 파일을 실제 경로로 실행하면 정상 기동. 발행 전에 잡아서 다행이다.
+ *
+ *   그래서 **양쪽을 realpath 로 풀어** 대조한다. 링크·상대경로·`..` 를 다 흡수한다.
+ *   realpath 가 실패하는 경우(경로가 사라졌다든지)는 옛 방식으로 물러선다.
+ */
 function isDirectRun(): boolean {
 	const entry = process.argv[1];
 	if (!entry) return false;
 	try {
-		return import.meta.url === pathToFileURL(entry).href;
+		return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry);
 	} catch {
-		return false;
+		try {
+			return import.meta.url === pathToFileURL(entry).href;
+		} catch {
+			return false;
+		}
 	}
 }
 

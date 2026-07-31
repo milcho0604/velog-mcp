@@ -42,7 +42,7 @@ export function findPersonalEmails(text: string): string[] {
 export const LOCAL_PATH_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
 	['macOS', /\/Users\/(?!\.\.\.|<)[^\s/'")\]]+/],
 	['리눅스', /\/home\/(?!\.\.\.|<|user\b)[^\s/'")\]]+/],
-	['윈도우', /[A-Z]:[\\/]Users[\\/](?!<)[^\s\\/'")\]]+/],
+	['윈도우', /[A-Za-z]:[\\/]Users[\\/](?!<)[^\s\\/'")\]]+/],
 ];
 
 export interface Leak {
@@ -74,4 +74,33 @@ export function findLeaks(file: string, text: string): Leak[] {
 export function looksTextual(bytes: Uint8Array): boolean {
 	const head = bytes.subarray(0, 8192);
 	return !head.includes(0);
+}
+
+export interface ScanResult {
+	readonly leaks: Leak[];
+	/** 텍스트로 못 읽어 **검사하지 못한** 파일. 조용히 넘기면 그게 구멍이다. */
+	readonly skipped: string[];
+}
+
+/**
+ * 파일 묶음을 훑는다.
+ *
+ * ★ 건너뛴 것을 반드시 돌려준다
+ *   `looksTextual` 은 UTF-16 이나 앞부분에 NUL 이 든 텍스트를 바이너리로 오판한다
+ *   (실측: UTF-16LE 이메일 버퍼 → false). 그걸 `continue` 로 조용히 넘기면
+ *   **검사받지 않은 파일이 그대로 발행된다.** 넘긴 목록을 내보내 호출부가 판단하게 한다.
+ */
+export function scanFiles(
+	files: ReadonlyArray<readonly [string, Uint8Array]>,
+): ScanResult {
+	const leaks: Leak[] = [];
+	const skipped: string[] = [];
+	for (const [label, bytes] of files) {
+		if (!looksTextual(bytes)) {
+			skipped.push(label);
+			continue;
+		}
+		leaks.push(...findLeaks(label, Buffer.from(bytes).toString('utf8')));
+	}
+	return { leaks, skipped };
 }

@@ -17,7 +17,9 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, access, readdir } from 'node:fs/promises';
+import { readFile, access, readdir, mkdtemp, symlink, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { constants } from 'node:fs';
 import { spawn, execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -36,8 +38,7 @@ import { SERVER_VERSION, CHROME_TOOLS } from '../index.ts';
 import {
 	findPersonalEmails,
 	LOCAL_PATH_PATTERNS,
-	findLeaks,
-	looksTextual,
+	scanFiles,
 } from '../../scripts/shipping-checks.ts';
 
 const execFile = promisify(execFileCb);
@@ -63,8 +64,10 @@ async function json(url: URL): Promise<Record<string, unknown>> {
 async function rpc(
 	requests: readonly Record<string, unknown>[],
 	env: NodeJS.ProcessEnv = {},
+	/** 기본은 실제 소스 경로. P25 는 **심볼릭 링크**를 넘겨 npm 방식을 흉내낸다. */
+	entryOverride?: string,
 ): Promise<{ responses: Array<Record<string, unknown>>; junk: string[] }> {
-	const entry = fileURLToPath(new URL('index.ts', new URL('../', import.meta.url)));
+	const entry = entryOverride ?? fileURLToPath(new URL('index.ts', new URL('../', import.meta.url)));
 	const child = spawn(process.execPath, [entry], {
 		stdio: ['pipe', 'pipe', 'ignore'],
 		env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '', ...env },
@@ -462,6 +465,56 @@ describe('★ P13 — 걸러내는 코드가 실제 기동 경로에 연결돼 �
 	});
 });
 
+describe('★ P25 — 심볼릭 링크로 실행해도 기동한다 (npm 이 하는 방식)', () => {
+	/**
+	 * ★★ 이것 때문에 서버가 통째로 안 뜬 적이 있다.
+	 *
+	 * `npx` 와 `npm i -g` 는 `node_modules/.bin/velog-mcp` **링크**를 만들어 실행한다.
+	 * 그때 `process.argv[1]` 은 링크 경로, `import.meta.url` 은 실제 파일이라
+	 * 문자열 비교가 어긋나 `main()` 이 아예 안 돌았다 — **출력 0줄, 종료코드 0.**
+	 * 증상은 "플러그인은 깔렸는데 도구가 하나도 없음"이고, 실제 경로로 실행하는
+	 * 테스트는 전부 통과하므로 아무도 못 본다.
+	 *
+	 * 발행 관문(verify-dist)도 같은 모양으로 띄우지만, 그건 발행할 때만 돈다.
+	 * 여기서 소스 단계에 못 박아 둔다.
+	 */
+	test('링크를 통해 띄워도 MCP 로 응답한다', async () => {
+		const linkDir = await mkdtemp(join(tmpdir(), 'velog-mcp-link-'));
+		const link = join(linkDir, 'velog-mcp');
+		const real = fileURLToPath(new URL('index.ts', new URL('../', import.meta.url)));
+		try {
+			await symlink(real, link);
+
+			const { responses, junk } = await rpc(
+				[
+					{
+						jsonrpc: '2.0',
+						id: 1,
+						method: 'initialize',
+						params: {
+							protocolVersion: '2024-11-05',
+							capabilities: {},
+							clientInfo: { name: 'link-test', version: '0' },
+						},
+					},
+				],
+				{},
+				link,
+			);
+
+			const init = responses.find((r) => r['id'] === 1);
+			assert.ok(
+				init,
+				`링크로 실행하면 응답이 없다 — isDirectRun 이 링크를 못 알아본다. junk=${JSON.stringify(junk)}`,
+			);
+			const info = (init['result'] as { serverInfo?: { name?: string } })?.serverInfo;
+			assert.equal(info?.name, 'velog-mcp');
+		} finally {
+			await rm(linkDir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe('★ P19 — 디렉터리를 크롬 실행 파일로 오인하지 않는다', () => {
 	/**
 	 * 크롬 경로 설정이 `file` 타입이라 macOS 파일 선택기가 `.app` **번들 자체**를
@@ -752,17 +805,18 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			);
 		}
 
-		const leaks = [];
-		for (const relative of shipped) {
-			const bytes = await readFile(new URL(relative, ROOT));
-			if (!looksTextual(bytes)) continue; // 바이너리는 이 규칙으로 못 본다
-			leaks.push(...findLeaks(relative, bytes.toString('utf8')));
-		}
+		const loaded: Array<[string, Uint8Array]> = [];
+		for (const relative of shipped) loaded.push([relative, await readFile(new URL(relative, ROOT))]);
+
+		const { leaks, skipped } = scanFiles(loaded);
 		assert.deepEqual(
 			leaks,
 			[],
 			`나가면 안 되는 것이 있다:\n${leaks.map((l) => `  ${l.file}: ${l.kind} ${l.value}`).join('\n')}`,
 		);
+		// ⚠️ 텍스트로 못 읽어 **검사하지 못한** 파일을 조용히 넘기면 그게 구멍이다.
+		//    `looksTextual` 은 UTF-16 을 바이너리로 오판한다(실측). 지금은 그런 파일이 없다.
+		assert.deepEqual(skipped, [], '검사하지 못한 추적 파일이 있다 — 눈으로 확인할 것');
 	});
 
 	test('P21b — 그 걸러내는 규칙 자체를 시험한다', () => {
@@ -812,8 +866,27 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		assert.notEqual(windows[1].exec(win), null, '윈도우 홈 경로를 놓쳤다');
 
 		// 문서에 흔한 자리표시자·일반명은 실제 경로가 아니다.
+		// 도구에 따라 드라이브 문자가 소문자로 나온다 — 그것도 사용자명이 새는 건 같다.
+		// 드라이브 문자만 소문자인 경우다 — `Users` 는 그대로다.
+		assert.notEqual(windows[1].exec(`c${win.slice(1)}`), null, '소문자 드라이브를 놓쳤다');
+
 		assert.equal(macos[1].exec(['', 'Users', '<your-name>', 'dev'].join('/')), null, '자리표시자를 잘못 잡았다');
 		assert.equal(linux[1].exec(['', 'home', 'user', 'dev'].join('/')), null, '문서용 일반명을 잘못 잡았다');
+	});
+
+	test('P21c — 검사하지 못한 파일은 조용히 넘기지 않고 보고한다', () => {
+		// `looksTextual` 은 UTF-16 이나 앞부분에 NUL 이 든 텍스트를 바이너리로 오판한다.
+		// 그걸 `continue` 로 넘기면 **검사받지 않은 파일이 그대로 발행된다.**
+		// 지금 저장소엔 그런 파일이 없어서, 규칙에 직접 먹여야만 이 동작을 시험할 수 있다.
+		const binary = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]);
+		const text = new TextEncoder().encode('아무 문제 없는 본문');
+
+		const result = scanFiles([
+			['image.png', binary],
+			['fine.md', text],
+		]);
+		assert.deepEqual(result.skipped, ['image.png'], '못 읽은 파일을 보고하지 않는다');
+		assert.deepEqual(result.leaks, []);
 	});
 
 	test('P22 — 크롬이 필요한 도구를 개수가 아니라 이름으로 안내한다', async () => {
@@ -831,25 +904,40 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			assert.ok(log.includes(tool), `기동 안내가 ${tool} 을 말하지 않는다:\n${log}`);
 		}
 
-		// ⚠️ 처음엔 '렌더 호출 지점 수'만 셌다. 코덱스가 반례를 냈다 —
-		//    CHROME_TOOLS 를 ['velog_render_diagram', 'velog_upload_image'] 로 바꿔도
-		//    둘 다 등록된 도구이고 개수도 2라 통과한다(실제로 통과시켜 확인했다).
-		//    그러면 크롬 없는 사용자에게 **엉뚱한 도구를 안내하고 진짜 실패할 도구는
-		//    빠진다.** 그래서 "어느 도구가 렌더를 부르는가"를 구조로 본다.
-		const images = await readFile(
-			new URL('tools/images.ts', new URL('../', import.meta.url)),
-			'utf8',
-		);
+		// ⚠️ 두 번 약했다.
+		//    ① 처음엔 '렌더 호출 지점 수'만 셌다 → CHROME_TOOLS 를
+		//       [render_diagram, upload_image] 로 바꿔도 이름·개수가 맞아 통과했다.
+		//    ② 그다음엔 `images.ts` 한 파일에서 `renderDiagram(`·`renderCover(` 글자만
+		//       찾았다 → `renderCover as makeCover` 로 별칭을 주거나 다른 파일에 렌더를
+		//       넣으면 안내가 조용히 낡는다(코덱스 5차).
+		//    지금은 **도구 파일 전부**를 보고, 렌더 모듈에서 들여온 **지역 이름**을 추적한다.
+		const toolsDir = new URL('tools/', new URL('../', import.meta.url));
+		const rendering: string[] = [];
+		let blocks: string[] = [];
 
-		// `server.registerTool(` 로 잘라 각 조각의 도구 이름과 렌더 호출 여부를 본다.
-		const blocks = images.split(/\bserver\.registerTool\(/).slice(1);
-		const rendering = blocks
-			.map((block) => ({
-				name: /^\s*'([a-z_]+)'/.exec(block)?.[1],
-				usesChrome: /\brender(?:Diagram|Cover)\s*\(/.test(block),
-			}))
-			.filter((tool) => tool.usesChrome)
-			.map((tool) => tool.name);
+		for (const file of await readdir(toolsDir)) {
+			if (!file.endsWith('.ts')) continue;
+			const code = await readFile(new URL(file, toolsDir), 'utf8');
+
+			// `import { renderCover as makeCover, renderDiagram } from '../render/index.ts'`
+			// 에서 **지역 이름**(makeCover·renderDiagram)을 뽑는다.
+			const importBlock = /import\s*\{([^}]*)\}\s*from\s*'[^']*render\/index\.ts'/s.exec(code);
+			const localNames = (importBlock?.[1] ?? '')
+				.split(',')
+				.map((part) => part.trim())
+				.filter((part) => /^render(?:Diagram|Cover)\b/.test(part))
+				.map((part) => (part.split(/\s+as\s+/)[1] ?? part).trim())
+				.filter((name) => name.length > 0);
+			if (localNames.length === 0) continue;
+
+			const called = new RegExp(`\\b(?:${localNames.join('|')})\\s*\\(`);
+			const fileBlocks = code.split(/\bserver\.registerTool\(/).slice(1);
+			blocks = blocks.concat(fileBlocks);
+			for (const block of fileBlocks) {
+				const name = /^\s*'([a-z_]+)'/.exec(block)?.[1];
+				if (name && called.test(block)) rendering.push(name);
+			}
+		}
 
 		assert.ok(blocks.length >= 3, `registerTool 블록을 못 찾았다: ${blocks.length}`);
 		assert.deepEqual(
@@ -879,10 +967,12 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			'앞이 실패하면 멈춰야 한다 — `;` 나 `|| true` 는 관문이 아니다',
 		);
 
-		assert.match(
-			scripts['verify:dist'] ?? '',
-			/scripts\/verify-dist\.ts/,
-			'verify:dist 가 검증 스크립트를 가리키지 않는다',
+		// ⚠️ 정규식이면 `node scripts/verify-dist.ts || true` 나 `echo scripts/verify-dist.ts`
+		//    도 통과한다(코덱스 5차 반례). 한 단계 안쪽에 우회가 남아 있었다.
+		assert.equal(
+			scripts['verify:dist'],
+			'node scripts/verify-dist.ts',
+			'`|| true` 나 echo 로 바꿔치기할 수 없게 정확히 고정한다',
 		);
 		await access(new URL('scripts/verify-dist.ts', ROOT), constants.R_OK);
 	});
@@ -911,21 +1001,32 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		// 루트 버전은 두 곳에 있다. 하나만 맞으면 도구마다 다르게 읽는다.
 		assert.equal(packages['']?.version, pkg['version'], 'shrinkwrap 의 packages[""] 버전이 다르다');
 
-		// ⚠️ 처음엔 '운영 항목 수 > 50' 만 봤다. 코덱스 반례 — zod 항목을 통째로 지워도
-		//    92개라 통과한다. 개수가 아니라 **직접 의존성이 실제로 고정됐는지**를 본다.
-		for (const name of Object.keys(pkg['dependencies'] as Record<string, string>)) {
-			const entry = packages[`node_modules/${name}`];
-			assert.ok(entry, `${name} 이 shrinkwrap 에 없다 — 고정되지 않았다`);
-			assert.match(
-				entry.version ?? '',
-				/^\d+\.\d+\.\d+/,
-				`${name} 의 버전이 정확하지 않다: ${String(entry.version)}`,
-			);
-			assert.ok(entry.integrity, `${name} 에 integrity 가 없다 — 내용이 고정되지 않았다`);
-		}
+		// 루트가 선언한 의존성과 shrinkwrap 이 아는 의존성이 같아야 한다.
+		assert.deepEqual(
+			(packages['']as { dependencies?: Record<string, string> }).dependencies,
+			pkg['dependencies'],
+			'shrinkwrap 이 아는 루트 의존성이 package.json 과 다르다',
+		);
 
-		const production = Object.keys(packages).filter((k) => k && !packages[k]?.dev);
+		// ⚠️ 처음엔 '운영 항목 수 > 50' 만 봤다(zod 를 지워도 92개라 통과).
+		//    그다음엔 직접 의존성만 봤다 — 그것도 부족했다. **전이 의존성까지 전부**
+		//    정확한 버전과 integrity 를 가져야 "트리를 고정했다"고 말할 수 있다.
+		const production = Object.keys(packages).filter((key) => key && !packages[key]?.dev);
 		assert.ok(production.length > 50, `고정된 운영 의존성이 너무 적다: ${production.length}`);
+
+		const broken = production.filter((key) => {
+			const entry = packages[key];
+			// 정확한 버전만 인정한다 — 끝을 고정하지 않으면 `9.9.9-not-real` 도 통과한다.
+			if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(entry?.version ?? '')) return true;
+			// 내용 고정은 integrity 가 한다. sha512 형식까지 본다.
+			return !/^sha(?:512|1)-[A-Za-z0-9+/=]+$/.test(entry?.integrity ?? '');
+		});
+		assert.deepEqual(broken, [], `버전이나 integrity 가 온전치 않은 항목이 있다`);
+
+		// 직접 의존성은 이름으로도 한 번 더 확인한다 — 통째로 사라지는 경우를 잡는다.
+		for (const name of Object.keys(pkg['dependencies'] as Record<string, string>)) {
+			assert.ok(packages[`node_modules/${name}`], `${name} 이 shrinkwrap 에 없다`);
+		}
 	});
 
 	test('P12 — .mcp.json 의 env 에는 실제 값이 들어갈 수 없다', async () => {
