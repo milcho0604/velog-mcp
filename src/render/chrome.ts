@@ -42,7 +42,7 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { access, constants, readFile } from 'node:fs/promises';
+import { access, constants, readFile, stat } from 'node:fs/promises';
 import { platform } from 'node:process';
 
 const CANDIDATES: Record<string, readonly string[]> = {
@@ -80,26 +80,62 @@ export class ChromeNotFoundError extends Error {
 
 let cached: string | undefined;
 
+/**
+ * 실행할 수 있는 **일반 파일**인지 본다.
+ *
+ * ★ `access(X_OK)` 만으로는 부족하다 — 디렉터리도 통과한다
+ *   POSIX 에서 디렉터리의 `X_OK` 는 '실행 가능'이 아니라 '탐색 가능'이라는 뜻이다.
+ *   실측: `/Applications/Google Chrome.app` 은 `X_OK` 를 통과하지만 `isFile()` 은
+ *   false 다. 플러그인 설정의 크롬 경로가 `file` 타입이라 macOS 파일 선택기가
+ *   앱 번들 자체를 돌려주면 딱 이 경우가 된다 — 기동 로그는 "사용 가능"이라
+ *   말해놓고 정작 그리려 할 때 `spawn` 이 실패한다.
+ */
+async function isExecutableFile(path: string): Promise<boolean> {
+	const info = await stat(path).catch(() => null);
+	if (!info?.isFile()) return false;
+	return await access(path, constants.X_OK).then(
+		() => true,
+		() => false,
+	);
+}
+
+/**
+ * macOS 앱 번들을 지정했으면 안쪽 실행 파일로 바꿔준다.
+ *
+ * 번들을 고르는 건 사용자 실수가 아니라 파일 선택기의 자연스러운 결과다.
+ * 고칠 수 있는 실수는 고쳐주고, 못 고치면 그때 분명히 말한다.
+ */
+async function resolveAppBundle(path: string): Promise<string | undefined> {
+	if (!path.endsWith('.app')) return undefined;
+	const name = path.slice(path.lastIndexOf('/') + 1, -'.app'.length);
+	const inner = `${path}/Contents/MacOS/${name}`;
+	return (await isExecutableFile(inner)) ? inner : undefined;
+}
+
 /** 크롬 실행 파일을 찾는다. 결과는 프로세스 수명 동안 재사용한다. */
 export async function findChrome(): Promise<string> {
 	if (cached) return cached;
 
 	const override = process.env['VELOG_CHROME_PATH'];
 	if (override) {
-		// 지정했는데 없으면 조용히 다른 걸 쓰지 않는다 — 의도한 브라우저로 그려야 한다.
-		await access(override, constants.X_OK).catch(() => {
-			throw new Error(`VELOG_CHROME_PATH 로 지정한 파일을 실행할 수 없습니다: ${override}`);
-		});
-		cached = override;
-		return override;
+		// 지정했는데 못 쓰면 조용히 다른 걸 쓰지 않는다 — 의도한 브라우저로 그려야 한다.
+		const resolved = (await isExecutableFile(override))
+			? override
+			: await resolveAppBundle(override);
+
+		if (!resolved) {
+			throw new Error(
+				`VELOG_CHROME_PATH 로 지정한 파일을 실행할 수 없습니다: ${override}\n` +
+					'실행 파일 자체를 지정해야 합니다. macOS 앱 번들(.app)을 골랐다면 그 안쪽 경로입니다.\n' +
+					'예) /Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+			);
+		}
+		cached = resolved;
+		return resolved;
 	}
 
 	for (const path of CANDIDATES[platform] ?? []) {
-		const ok = await access(path, constants.X_OK).then(
-			() => true,
-			() => false,
-		);
-		if (ok) {
+		if (await isExecutableFile(path)) {
 			cached = path;
 			return path;
 		}

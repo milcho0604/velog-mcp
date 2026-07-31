@@ -17,7 +17,7 @@
 		"refresh_token": {
 			"type": "string",
 			"title": "Velog refresh token",
-			"description": "velog.io 로그인 → F12 → Application → Cookies → refresh_token 값. 벨로그에 공개 쓰기 API 가 없어서 이 방법뿐입니다. 이 값은 벨로그(velog.io) 외의 어디로도 나가지 않으며, 그 사실은 저장소 테스트(A6)가 강제합니다. 없이 설치하면 읽기 전용으로 동작합니다.",
+			"description": "velog.io 로그인 → F12 → Application → Cookies → refresh_token 값. 벨로그에 공개 쓰기 API 가 없어서 이 방법뿐입니다. 이 서버가 이 값을 싣는 목적지는 velog.io 뿐이고 저장소 테스트(A6)가 그걸 강제합니다 — 다만 값은 서버를 실행하는 npx/npm 프로세스의 환경에도 놓입니다(README 참고). 없이 설치하면 읽기 전용으로 동작합니다.",
 			"sensitive": true
 		},
 		"allow_public": {

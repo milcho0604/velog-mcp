@@ -7,7 +7,8 @@
 				"VELOG_REFRESH_TOKEN": "${user_config.refresh_token}",
 				"VELOG_ALLOW_PUBLIC": "${user_config.allow_public}",
 				"VELOG_ALLOW_PROFILE": "${user_config.allow_profile}",
-				"VELOG_CHROME_PATH": "${user_config.chrome_path}"
+				"VELOG_CHROME_PATH": "${user_config.chrome_path}",
+				"npm_config_ignore_scripts": "true"
 			}
 		}
 	}

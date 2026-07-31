@@ -336,9 +336,12 @@ describe('★ P13 — 걸러내는 코드가 실제 기동 경로에 연결돼 �
 	});
 
 	test('P14 — 그림 도구가 지금 되는지 기동할 때 말한다', async () => {
-		const log = await startupLog({}, [/그림 도구/]);
-		assert.match(log, /그림 도구/);
+		// ⚠️ 처음엔 `/그림 도구/` 가 보이는 즉시 자식을 죽였다. 코덱스가 짚었다 —
+		//    파이프가 문장 중간에서 청크를 나누면 뒷부분을 못 읽고 죽여서 깜빡인다.
+		//    그래서 **판정에 쓸 문구까지** 기다린 뒤에 죽인다.
+		const log = await startupLog({}, [/그림 도구.*(사용 가능|안 됩니다)/s]);
 
+		assert.match(log, /그림 도구/);
 		// 크롬이 있으면 경로를, 없으면 어떻게 고치는지를 말해야 한다.
 		// 어느 쪽이든 "말은 한다"가 불변식이다.
 		const said = /사용 가능/.test(log) || /크롬을 설치하거나/.test(log);
@@ -346,17 +349,165 @@ describe('★ P13 — 걸러내는 코드가 실제 기동 경로에 연결돼 �
 	});
 });
 
+describe('★ P19 — 디렉터리를 크롬 실행 파일로 오인하지 않는다', () => {
+	/**
+	 * 크롬 경로 설정이 `file` 타입이라 macOS 파일 선택기가 `.app` **번들 자체**를
+	 * 돌려줄 수 있다. 번들은 디렉터리이고, POSIX 에서 디렉터리의 `X_OK` 는
+	 * '실행 가능'이 아니라 '탐색 가능'이라 `access(X_OK)` 를 통과한다(실측).
+	 * 그러면 기동 로그는 "사용 가능"이라 해놓고 정작 그릴 때 `spawn` 이 실패한다.
+	 */
+	async function withChromePath<T>(value: string, run: () => Promise<T>): Promise<T> {
+		const saved = process.env['VELOG_CHROME_PATH'];
+		process.env['VELOG_CHROME_PATH'] = value;
+		resetChromeCache();
+		try {
+			return await run();
+		} finally {
+			if (saved === undefined) delete process.env['VELOG_CHROME_PATH'];
+			else process.env['VELOG_CHROME_PATH'] = saved;
+			resetChromeCache();
+		}
+	}
+
+	test('평범한 디렉터리를 주면 거부한다', async () => {
+		const dir = fileURLToPath(ROOT); // 저장소 루트 — 확실히 디렉터리다
+		await access(dir, constants.X_OK); // 전제 확인: 이 디렉터리는 X_OK 를 통과한다
+
+		await withChromePath(dir, async () => {
+			const outcome = await findChrome().then(
+				(path) => ({ ok: true as const, path }),
+				(error: unknown) => ({ ok: false as const, message: String(error) }),
+			);
+			assert.equal(outcome.ok, false, `디렉터리를 실행 파일로 받아들였다: ${JSON.stringify(outcome)}`);
+		});
+	});
+
+	test('macOS 앱 번들을 주면 안쪽 실행 파일로 바꿔준다', async (t) => {
+		const bundle = '/Applications/Google Chrome.app';
+		const present = await access(bundle, constants.X_OK).then(
+			() => true,
+			() => false,
+		);
+		if (!present) {
+			t.skip('이 기계에 크롬이 없다');
+			return;
+		}
+
+		await withChromePath(bundle, async () => {
+			const path = await findChrome();
+			assert.notEqual(path, bundle, '번들 경로를 그대로 돌려주면 spawn 이 실패한다');
+			assert.equal(path, `${bundle}/Contents/MacOS/Google Chrome`);
+		});
+	});
+});
+
+describe('★ P18 — 기동 로그만 내는 게 아니라 실제로 MCP 로 붙는다', () => {
+	/**
+	 * 코덱스가 짚은 구멍이다: `server.connect()` 를 통째로 지워도 기동 로그는 먼저
+	 * 나오므로 P13/P14 가 전부 통과한다. 즉 "말은 하는데 서버가 아닌" 상태를 못 잡는다.
+	 * 그래서 진짜 JSON-RPC 를 던지고 응답을 받는다.
+	 */
+	async function rpc(
+		requests: readonly Record<string, unknown>[],
+		env: NodeJS.ProcessEnv = {},
+	): Promise<Array<Record<string, unknown>>> {
+		const entry = fileURLToPath(new URL('index.ts', new URL('../', import.meta.url)));
+		const child = spawn(process.execPath, [entry], {
+			stdio: ['pipe', 'pipe', 'ignore'],
+			env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '', ...env },
+		});
+
+		for (const request of requests) child.stdin.write(`${JSON.stringify(request)}\n`);
+
+		// 알림(`id` 없음)에는 응답이 오지 않는다. 요청 수로 세면 영원히 안 차서
+		// 매번 제한시간을 다 쓴다 — 실제로 그렇게 만들었다가 15초씩 걸렸다.
+		const expected = requests.filter((request) => 'id' in request).length;
+
+		let buffer = '';
+		const received: Array<Record<string, unknown>> = [];
+		return await new Promise((resolve) => {
+			const done = (): void => {
+				clearTimeout(timer);
+				child.kill('SIGKILL');
+				resolve(received);
+			};
+			const timer = setTimeout(done, 15_000);
+			child.stdout.on('data', (chunk: Buffer) => {
+				buffer += chunk.toString('utf8');
+				const lines = buffer.split('\n');
+				buffer = lines.pop() ?? '';
+				for (const line of lines) {
+					if (!line.trim()) continue;
+					try {
+						received.push(JSON.parse(line) as Record<string, unknown>);
+					} catch {
+						// 프로토콜 밖의 줄은 무시한다. stdout 은 MCP 전용이라 없어야 정상이다.
+					}
+				}
+				if (received.length >= expected) done();
+			});
+			child.on('error', done);
+			child.on('close', done);
+		});
+	}
+
+	test('initialize 에 응답하고 도구 목록을 돌려준다', async () => {
+		const responses = await rpc([
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'initialize',
+				params: {
+					protocolVersion: '2024-11-05',
+					capabilities: {},
+					clientInfo: { name: 'plugin-test', version: '0' },
+				},
+			},
+			{ jsonrpc: '2.0', method: 'notifications/initialized' },
+			{ jsonrpc: '2.0', id: 2, method: 'tools/list' },
+		]);
+
+		const init = responses.find((r) => r['id'] === 1);
+		assert.ok(init, `initialize 응답이 없다: ${JSON.stringify(responses)}`);
+		const serverInfo = (init['result'] as { serverInfo?: { name?: string; version?: string } })
+			?.serverInfo;
+		assert.equal(serverInfo?.name, 'velog-mcp');
+		// 실제로 붙은 서버가 우리가 배포하려는 그 버전인지까지 확인한다.
+		assert.equal(serverInfo?.version, SERVER_VERSION);
+
+		const list = responses.find((r) => r['id'] === 2);
+		assert.ok(list, `tools/list 응답이 없다: ${JSON.stringify(responses)}`);
+		const tools = (list['result'] as { tools?: unknown[] })?.tools ?? [];
+		assert.ok(tools.length >= 20, `도구가 너무 적다: ${tools.length}`);
+	});
+});
+
 describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
-	test('P6 — .mcp.json 이 참조하는 설정 키와 plugin.json 이 묻는 키가 정확히 같다', async () => {
+	test('P6 — 설정 키가 어느 환경변수로 가는지까지 정확히 고정한다', async () => {
+		// ⚠️ 처음엔 '집합이 같은가'만 봤다. 코덱스가 반례를 냈다 —
+		//    allow_public 과 allow_profile 을 **서로 바꿔도** 집합은 같다.
+		//    그러면 사용자가 프로필 수정만 켰는데 공개 발행이 열린다.
+		//    토큰과 크롬 경로를 바꿔도 통과했고, 그 경우 토큰이 크롬 오류 메시지에
+		//    실려 stderr 로 나갈 수 있다. 그래서 매핑 전체를 그대로 못 박는다.
 		const manifest = await json(new URL('.claude-plugin/plugin.json', PLUGIN));
 		const mcp = await json(new URL('.mcp.json', PLUGIN));
-
-		const declared = Object.keys(manifest['userConfig'] as Record<string, unknown>).sort();
 
 		const env = (mcp['mcpServers'] as Record<string, { env?: Record<string, string> }>)['velog']
 			?.env;
 		assert.ok(env, '.mcp.json 에 velog 서버의 env 가 있어야 한다');
 
+		assert.deepEqual(
+			Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith('VELOG_'))),
+			{
+				VELOG_REFRESH_TOKEN: '${user_config.refresh_token}',
+				VELOG_ALLOW_PUBLIC: '${user_config.allow_public}',
+				VELOG_ALLOW_PROFILE: '${user_config.allow_profile}',
+				VELOG_CHROME_PATH: '${user_config.chrome_path}',
+			},
+		);
+
+		// 묻기만 하고 안 쓰는 설정이 없어야 한다 — 사용자가 넣은 값이 버려진다.
+		const declared = Object.keys(manifest['userConfig'] as Record<string, unknown>).sort();
 		const referenced = [
 			...new Set(
 				Object.values(env).flatMap((value) =>
@@ -366,11 +517,33 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 				),
 			),
 		].sort();
-
-		// 한쪽만 있으면 조용히 안 되는 기능이 생긴다.
-		// 묻기만 하고 안 쓰면 → 사용자가 넣은 값이 버려진다.
-		// 쓰기만 하고 안 물으면 → 영원히 자리표시자로 남는다.
 		assert.deepEqual(referenced, declared);
+	});
+
+	test('P16 — 무엇을 어떻게 실행하는지 고정한다', async () => {
+		// `npxx` 같은 오타는 패키지 이름·버전 정규식(P8/P11)을 그대로 통과한다.
+		// 증상은 "플러그인은 깔렸는데 서버가 안 뜸"이다.
+		const mcp = await json(new URL('.mcp.json', PLUGIN));
+		const server = (mcp['mcpServers'] as Record<string, Record<string, unknown>>)['velog'];
+		assert.ok(server);
+
+		const pkg = await json(new URL('package.json', ROOT));
+		assert.deepEqual(
+			{ command: server['command'], args: server['args'] },
+			{ command: 'npx', args: ['-y', `${String(pkg['name'])}@${String(pkg['version'])}`] },
+		);
+	});
+
+	test('P17 — npx 가 설치 스크립트를 못 돌리게 막아둔다', async () => {
+		// 코덱스 지적: `.mcp.json` 의 env 는 최종 서버만이 아니라 **먼저 실행되는
+		// npx/npm 프로세스에도** 들어간다. 즉 30일짜리 토큰이 npm 이 읽는 환경에 놓인다.
+		// 실측으로 지금 운영 의존성 트리에는 install/postinstall 이 하나도 없지만,
+		// 전이 의존성이 나중에 추가할 수 있다. 이 스위치가 그걸 원천 차단한다.
+		// (`npm_config_ignore_scripts=true` 가 실제로 먹히는 것은 실행해서 확인했다.)
+		const mcp = await json(new URL('.mcp.json', PLUGIN));
+		const env = (mcp['mcpServers'] as Record<string, { env?: Record<string, string> }>)['velog']
+			?.env;
+		assert.equal(env?.['npm_config_ignore_scripts'], 'true');
 	});
 
 	test('P7 — 토큰은 반드시 민감값으로 선언한다 (키체인 저장의 유일한 조건)', async () => {
@@ -463,7 +636,7 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		);
 		assert.ok(consumed.size >= 3, `환경변수 소비 지점을 못 찾았다 — 정규식을 확인하라`);
 
-		for (const key of Object.keys(env)) {
+		for (const key of Object.keys(env).filter((k) => k.startsWith('VELOG_'))) {
 			assert.ok(
 				consumed.has(key),
 				`.mcp.json 이 ${key} 를 넘기는데 코드에서 읽는 곳이 없다 (오타이거나 죽은 설정)`,
@@ -479,7 +652,11 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 
 		// 이 파일은 공개 저장소에 있다. 값을 직접 적는 순간 그게 그대로 공개된다.
 		// 형태를 강제해두면 실수로 넣을 수가 없다.
+		//
+		// `VELOG_*` 만 본다 — 사용자 값이 들어오는 자리는 그것뿐이다.
+		// `npm_config_*` 같은 동작 스위치(P17)는 값이 리터럴이어야 의미가 있다.
 		for (const [key, value] of Object.entries(env)) {
+			if (!key.startsWith('VELOG_')) continue;
 			assert.match(
 				value,
 				/^\$\{user_config\.[A-Za-z_][A-Za-z0-9_]*\}$/,
