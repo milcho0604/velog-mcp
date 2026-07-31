@@ -483,6 +483,87 @@ describe('★ R10 — 도형 이름·평면 key 는 좁혀져 있다', () => {
 		await client.close();
 	});
 
+	// 중복 id 는 관통 감사를 통째로 피할 수 있는 구멍이었다 —
+	// NMAP 은 마지막 것만 남기는데 '자기 노드 제외' 집합은 id 문자열로 전부 뺀다.
+	test('중복 노드 id 는 막힌다 (자동 부여되는 n0 과의 충돌 포함)', async () => {
+		const client = await tools();
+		const cases: Array<[string, unknown]> = [
+			[
+				'명시 id 끼리 중복',
+				[
+					{ id: 'dup', x: 0, y: 0, title: 'A' },
+					{ id: 'dup', x: 200, y: 0, title: 'B' },
+				],
+			],
+			[
+				'자동 id(n1) 와 명시 id 충돌',
+				[
+					{ id: 'n1', x: 0, y: 0, title: 'A' },
+					{ x: 200, y: 0, title: 'B' },
+				],
+			],
+		];
+		for (const [why, nodes] of cases) {
+			const r = await client.callTool({
+				name: 'velog_render_diagram',
+				arguments: { title: 't', nodes, upload: false },
+			});
+			assert.equal(r.isError, true, `막았어야 한다: ${why}`);
+		}
+		// 겹치지 않으면 통과해야 한다 — '무조건 거부' 가 아님을 확인한다.
+		const ok = await client.callTool({
+			name: 'velog_render_diagram',
+			arguments: {
+				title: 't',
+				nodes: [
+					{ id: 'a', x: 0, y: 0, title: 'A' },
+					{ x: 200, y: 0, title: 'B' },
+				],
+				upload: false,
+			},
+		});
+		assert.notEqual(ok.isError, true, '정상 입력까지 막혔다');
+		await client.close();
+	});
+
+	// 좌표 상한이 없으면 요청 하나로 수억 픽셀 캔버스를 요구할 수 있다.
+	test('좌표·점 개수 상한을 넘으면 막힌다', async () => {
+		const client = await tools();
+		const cases: Array<[string, Record<string, unknown>]> = [
+			['노드 좌표', { nodes: [{ x: 999999, y: 0, title: 'A' }] }],
+			[
+				'points 좌표',
+				{
+					nodes: [{ x: 0, y: 0, title: 'A' }],
+					edges: [{ points: [[-999999, 0], [10, 10]] }],
+				},
+			],
+			[
+				'points 개수',
+				{
+					nodes: [{ x: 0, y: 0, title: 'A' }],
+					edges: [{ points: Array.from({ length: 60 }, (_, i) => [i, i]) }],
+				},
+			],
+			['그룹 좌표', { nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: 'g', x: 999999 }] }],
+			[
+				'label_at',
+				{
+					nodes: [{ x: 0, y: 0, title: 'A' }],
+					edges: [{ points: [[0, 0], [10, 0]], label: 'x', label_at: [999999, 0] }],
+				},
+			],
+		];
+		for (const [why, extra] of cases) {
+			const r = await client.callTool({
+				name: 'velog_render_diagram',
+				arguments: { title: 't', upload: false, ...extra },
+			});
+			assert.equal(r.isError, true, `막았어야 한다: ${why}`);
+		}
+		await client.close();
+	});
+
 	test('없는 아이콘·톤 이름도 막힌다', async () => {
 		const client = await tools();
 		for (const bad of [{ icon: 'nope' }, { icon_tone: 'neon' }, { tag_tone: '#fff' }]) {
@@ -818,6 +899,46 @@ describe('★★ R14 — 감사에 걸린 그림은 실제로 업로드까지 �
 		await client.close();
 	});
 
+	// ★ force_upload 를 없앴더니 "감사 실패 → 그 PNG 경로를 velog_upload_image 로"
+	//   라는 두 단계 우회가 남았다. 같은 인증으로 바로 되므로 사실상 차단이 아니었다.
+	//   그래서 이 서버가 떨어뜨린 산출물은 이 서버로 못 올린다.
+	test('감사에서 떨어진 PNG 는 velog_upload_image 로도 못 올린다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const { client, uploads } = await harness();
+		const r = await client.callTool({
+			name: 'velog_render_diagram',
+			arguments: {
+				title: '일부러 겹치게',
+				nodes: [
+					{ id: 'x', x: 0, y: 0, w: 200, h: 90, title: '노드 하나' },
+					{ id: 'y', x: 100, y: 40, w: 200, h: 90, title: '겹치는 노드' },
+				],
+				upload: true,
+			},
+		});
+		const text = String((r.content as Array<{ text: string }>)[0]?.text);
+		const png = /- 로컬 PNG: (.+)/.exec(text)?.[1]?.trim();
+		assert.ok(png, `PNG 경로를 못 찾았다: ${text.slice(0, 200)}`);
+		assert.equal(uploads(), 0, '감사에 걸렸는데 업로드가 나갔다');
+
+		// 안내문이 우회 방법을 알려주면 안 된다
+		assert.ok(
+			!text.includes('velog_upload_image'),
+			'차단 안내문이 우회 방법을 그대로 알려준다',
+		);
+
+		const retry = await client.callTool({
+			name: 'velog_upload_image',
+			arguments: { path: png },
+		});
+		assert.equal(retry.isError, true, '떨어진 산출물이 그대로 올라갔다');
+		assert.equal(uploads(), 0, '거부했다면서 요청은 나갔다');
+		await client.close();
+	});
+
 	// 모델이 스스로 차단을 풀 수 있으면 방어가 아니다 (ADR 0004 와 같은 이유).
 	test('force_upload 같은 우회 파라미터가 존재하지 않는다', async () => {
 		const server = new McpServer({ name: 't', version: '0' });
@@ -917,5 +1038,46 @@ describe('★ R15 — 자원·우회 가드 (크롬 필요)', () => {
 		assert.equal(retry.isError, true, '감사에 걸린 산출물이 다른 도구로 올라갔다');
 		assert.equal(uploads, 0, '우회 경로로 업로드 요청이 나갔다');
 		await client.close();
+	});
+});
+
+
+describe('★ R15 — 초대형 캔버스는 스크린샷 전에 막는다 (크롬 필요)', () => {
+	// 좌표를 ±20000 으로 묶어도 points 하나로 40,000×40,000 캔버스가 나온다.
+	// 2배율이면 64억 픽셀·RGBA 약 25GB — 요청 한 번으로 기기를 재울 수 있다.
+	// 감사 결과와 무관하게, 그리고 **찍기 전에** 막아야 한다.
+	test('좌표를 멀리 벌리면 렌더가 거부된다', async (t) => {
+		if (!(await findChrome().then(() => true, () => false))) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		await assert.rejects(
+			() =>
+				renderDiagram({
+					title: '초대형',
+					nodes: [{ x: 0, y: 0, title: 'A' }],
+					edges: [{ points: [[-20000, -20000], [20000, 20000]] }],
+					legend: false,
+				}),
+			/너무 큽니다/,
+		);
+	});
+
+	test('평범한 크기는 그대로 통과한다 (양성 경로)', async (t) => {
+		if (!(await findChrome().then(() => true, () => false))) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '평범한 크기',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, title: 'A' },
+				{ id: 'b', x: 400, y: 200, title: 'B' },
+			],
+			edges: [{ from: 'a', to: 'b' }],
+			legend: false,
+		});
+		assert.ok(r.width > 0 && r.height > 0);
+		assert.ok(r.width * r.height < 9_000_000, `상한 근처다: ${r.width}×${r.height}`);
 	});
 });
