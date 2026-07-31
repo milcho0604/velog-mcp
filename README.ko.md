@@ -34,6 +34,29 @@ HTTP·테스트 러너·타입스크립트 실행은 전부 Node 24 내장을 �
 
 **Node.js 24 이상**이 필요하다.
 
+### Claude Code 플러그인으로 (권장)
+
+```bash
+/plugin marketplace add milcho0604/velog-mcp
+/plugin install velog@milcho-plugins
+```
+
+설치할 때 값 네 개를 묻는다. **하나도 안 넣어도 설치되고, 읽기 전용으로 동작한다.**
+
+| 물어보는 것 | 안 넣으면 |
+| --- | --- |
+| Velog refresh token | 읽기 전용 (조회·검색·통계는 그대로) |
+| 공개 발행 허용 | 초안과 비공개 발행까지만 |
+| 프로필 수정 허용 | 프로필 도구가 꺼짐 |
+| 크롬 경로 | 표준 위치에서 자동으로 찾는다 |
+
+**토큰이 macOS 키체인에 들어간다.** 설정 파일에 평문으로 남지 않는다 —
+`sensitive: true` 로 선언한 값만 키체인으로 가고, 그건 테스트가 강제한다(P7).
+
+값을 나중에 바꾸려면 `/plugin manage`.
+
+### 직접 빌드해서
+
 ```bash
 git clone https://github.com/milcho0604/velog-mcp.git
 cd velog-mcp

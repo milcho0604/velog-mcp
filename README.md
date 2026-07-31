@@ -37,6 +37,31 @@ runner, and TypeScript execution all come from Node 24 itself.
 
 Requires **Node.js 24 or newer**.
 
+### As a Claude Code plugin (recommended)
+
+```bash
+/plugin marketplace add milcho0604/velog-mcp
+/plugin install velog@milcho-plugins
+```
+
+Installation asks for four values. **Leave them all blank and it still installs,
+running read-only.**
+
+| Prompt | If left blank |
+| --- | --- |
+| Velog refresh token | Read-only (browse, search, stats still work) |
+| Allow public publishing | Drafts and private publishing only |
+| Allow profile edits | Profile tools stay off |
+| Chrome path | Found automatically in standard locations |
+
+**The token goes into the macOS Keychain**, not into a settings file in plaintext.
+Only values declared `sensitive: true` reach the Keychain, and a test enforces
+that declaration (P7).
+
+Change values later with `/plugin manage`.
+
+### From source
+
 ```bash
 git clone https://github.com/milcho0604/velog-mcp.git
 cd velog-mcp

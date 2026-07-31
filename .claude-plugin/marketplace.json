@@ -1,0 +1,18 @@
+{
+	"$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+	"name": "milcho-plugins",
+	"description": "밀초가 만든 Claude Code 플러그인.",
+	"owner": {
+		"name": "Changhyun Kim",
+		"email": "milcho0604@gmail.com",
+		"url": "https://github.com/milcho0604"
+	},
+	"plugins": [
+		{
+			"name": "velog",
+			"source": "./plugins/velog",
+			"category": "productivity",
+			"tags": ["blog", "velog", "writing", "korean"]
+		}
+	]
+}

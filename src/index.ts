@@ -14,6 +14,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { readAuthFromEnv } from './auth.ts';
 import { readCapabilities, describeCapabilities, type Capabilities } from './capabilities.ts';
+import { normalizePluginEnv, describeAnomalies } from './plugin-env.ts';
+import { findChrome } from './render/chrome.ts';
 import { PublishRateLimiter } from './ratelimit.ts';
 import { VelogClient } from './client.ts';
 import { registerPostTools } from './tools/posts.ts';
@@ -27,7 +29,9 @@ import { registerProfileEditTools } from './tools/profile-edit.ts';
 import { registerImageTools } from './tools/images.ts';
 
 export const SERVER_NAME = 'velog-mcp';
-export const SERVER_VERSION = '0.3.0';
+// ⚠️ 이 값은 네 곳이 함께 움직인다 — package.json / plugin.json / .mcp.json 의
+// npx 핀 / 여기. 어긋나면 P8 테스트가 잡는다. 손으로 맞추지 말고 테스트를 믿을 것.
+export const SERVER_VERSION = '0.4.0';
 
 export function createServer(
 	client: VelogClient,
@@ -62,6 +66,11 @@ export function createServer(
 }
 
 async function main(): Promise<void> {
+	// 읽기 전에 치운다. 플러그인은 설정하지 않은 값을 **빈 문자열로** 넘긴다(실측).
+	// 빈 값을 '없음'으로 굳혀두면 소비 지점 셋이 각자 falsy 검사에 기대지 않아도 된다.
+	// 실측표와 이유는 plugin-env.ts 머리말에.
+	const anomalies = normalizePluginEnv(process.env);
+
 	const auth = readAuthFromEnv();
 	const capabilities = readCapabilities();
 	const client = new VelogClient({ auth });
@@ -69,14 +78,43 @@ async function main(): Promise<void> {
 
 	// stdout 은 MCP 프로토콜 전용이다. 로그는 반드시 stderr 로 낸다.
 	process.stderr.write(
-		`[${SERVER_NAME} ${SERVER_VERSION}] ` +
+		describeAnomalies(anomalies) +
+			`[${SERVER_NAME} ${SERVER_VERSION}] ` +
 			(client.isAuthenticated
 				? `인증됨 — ${describeCapabilities(capabilities)}\n`
 				: '무인증 — 읽기 전용 ' +
 					'(VELOG_REFRESH_TOKEN 만 넣어도 동작합니다)\n'),
 	);
 
+	process.stderr.write(await describeRenderReadiness());
+
 	await server.connect(new StdioServerTransport());
+}
+
+/**
+ * 그림 도구 3종이 지금 쓸 수 있는 상태인지 기동할 때 말한다.
+ *
+ * 왜 기동 때인가 — 크롬이 없으면 `velog_render_diagram` 을 처음 부르는 순간에야
+ * 알게 된다. 그 시점은 대개 글을 쓰다가 그림이 필요해진 때라, 거기서 설치를
+ * 하러 가면 흐름이 끊긴다. 설치 직후에 알면 그때 해결할 수 있다.
+ *
+ * 도구를 숨기지는 않는다. 없는 도구는 아무 말도 못 하지만, 있는 도구는 왜 안
+ * 되는지(`ChromeNotFoundError`) 알려줄 수 있다. 나중에 크롬을 깔았을 때
+ * 재기동 없이 바로 되는 것도 이쪽이다.
+ */
+async function describeRenderReadiness(): Promise<string> {
+	try {
+		const path = await findChrome();
+		return `[${SERVER_NAME}] 그림 도구 3종: 사용 가능 (${path})\n`;
+	} catch (error: unknown) {
+		const why = error instanceof Error ? error.message.split('\n')[0] : String(error);
+		return (
+			`[${SERVER_NAME}] ⚠️ 그림 도구 3종(다이어그램·표지·이미지 업로드 중 렌더)이 ` +
+			`지금은 안 됩니다 — ${why}\n` +
+			'   크롬을 설치하거나, 이미 있다면 `/plugin manage` 에서 크롬 경로를 지정하세요. ' +
+			'나머지 도구는 정상 동작합니다.\n'
+		);
+	}
 }
 
 // 직접 실행될 때만 기동한다. 테스트에서 import 할 때는 돌지 않아야 한다.

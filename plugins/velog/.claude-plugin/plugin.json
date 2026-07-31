@@ -1,0 +1,41 @@
+{
+	"$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+	"name": "velog",
+	"displayName": "Velog",
+	"version": "0.4.0",
+	"description": "벨로그(velog.io) 블로그를 읽고 쓴다. 조회·검색·통계는 인증 없이, 쓰기는 초안과 비공개 발행이 기본. 공개 발행은 설치할 때 따로 켜야 한다. 글에 넣을 다이어그램·표지 이미지도 그려서 올린다(로컬 크롬 필요).",
+	"author": {
+		"name": "Changhyun Kim",
+		"email": "milcho0604@gmail.com",
+		"url": "https://github.com/milcho0604"
+	},
+	"homepage": "https://github.com/milcho0604/velog-mcp#readme",
+	"repository": "https://github.com/milcho0604/velog-mcp",
+	"license": "MIT",
+	"keywords": ["velog", "blog", "writing", "korean", "diagram"],
+	"userConfig": {
+		"refresh_token": {
+			"type": "string",
+			"title": "Velog refresh token",
+			"description": "velog.io 로그인 → F12 → Application → Cookies → refresh_token 값. 벨로그에 공개 쓰기 API 가 없어서 이 방법뿐입니다. 이 값은 벨로그(velog.io) 외의 어디로도 나가지 않으며, 그 사실은 저장소 테스트(A6)가 강제합니다. 없이 설치하면 읽기 전용으로 동작합니다.",
+			"sensitive": true
+		},
+		"allow_public": {
+			"type": "boolean",
+			"title": "공개 발행 허용",
+			"description": "끄면 초안과 비공개 발행까지만 됩니다. 공개 발행은 RSS·검색·구독메일로 나간 뒤에는 지워도 회수가 안 되므로 기본은 꺼짐입니다.",
+			"default": false
+		},
+		"allow_profile": {
+			"type": "boolean",
+			"title": "프로필 수정 허용",
+			"description": "이름·한줄소개·블로그 제목 등을 고칠 수 있게 합니다. 위험해서가 아니라 헷갈려서 막아둡니다 — 프로필의 '소개'와 글의 '요약'은 이름이 비슷해서, 꺼두면 잘못 짚어도 사고가 안 납니다.",
+			"default": false
+		},
+		"chrome_path": {
+			"type": "file",
+			"title": "크롬 실행 파일 경로 (선택)",
+			"description": "다이어그램·표지 그리기에 로컬 크롬이 필요합니다. 표준 위치에 설치돼 있으면 비워두세요 — 자동으로 찾습니다. 지정하면 자동 탐색을 하지 않고 이 파일만 씁니다."
+		}
+	}
+}
