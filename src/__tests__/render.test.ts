@@ -20,6 +20,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { platform } from 'node:process';
+import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Script } from 'node:vm';
@@ -33,7 +34,7 @@ import { buildCoverHtml } from '../render/cover.ts';
 import { ICONS } from '../render/icons.ts';
 import { isHexColor, TONES } from '../render/tones.ts';
 import { sniffImage, registerImageTools } from '../tools/images.ts';
-import { findChrome } from '../render/chrome.ts';
+import { dumpDom, findChrome } from '../render/chrome.ts';
 import { renderCover, renderDiagram } from '../render/index.ts';
 import { VelogClient, VELOG_UPLOAD_ENDPOINT } from '../client.ts';
 
@@ -235,67 +236,87 @@ describe('★ R4 — 색은 입력 단계에서 좁혀져 있다', () => {
 describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 	const bytes = (...v: number[]): Uint8Array => new Uint8Array(v);
 	const asBytes = (v: string): Uint8Array => new TextEncoder().encode(v);
-	const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-	// 규격상 첫 chunk 는 IHDR 이다 (8~11=길이, 12~15=타입). 끝만 보면 머리에 아무거나
-	// 붙여도 통과하므로 fixture 도 구조를 갖춘 것으로 쓴다.
-	// 규격상 첫 chunk 는 **길이 13** 짜리 IHDR 이고, 화소 데이터(IDAT)가 있어야 한다.
-	// 글자만 맞춘 fixture 는 '이미지처럼 생긴 파일'이지 이미지가 아니다.
-	const PNG_IHDR = [0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52];
-	const PNG_IDAT = [0, 0, 0, 1, 0x49, 0x44, 0x41, 0x54, 0x78];
-	const PNG_END = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+	const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+	// 문자열 spread 는 lint 가 막는다(이모지·결합문자 문제). 여기 값은 ASCII 뿐이지만
+	// 규칙을 우회하지 않고 인덱스로 순회한다.
+	const ascii = (v: string): number[] => {
+		const out: number[] = [];
+		for (let i = 0; i < v.length; i++) out.push(v.charCodeAt(i));
+		return out;
+	};
 
-	// ★ 예전엔 '머리 8바이트짜리 PNG' 를 통과해야 하는 사례로 고정하고 있었다.
-	//   그건 이미지가 아니라 이미지처럼 시작하는 파일이다 — 그래서 시작 시그니처와
-	//   끝맺음을 함께 본다. 이 테스트도 온전한 파일로 바꿨다.
-	test('머리와 끝맺음이 모두 있어야 통과한다', () => {
+	/** PNG 청크: [길이4 BE][타입4][데이터][CRC4]. CRC 값은 검사하지 않으므로 0 으로 둔다. */
+	const png = (type: string, data: number[] = []): number[] => [
+		(data.length >>> 24) & 255,
+		(data.length >>> 16) & 255,
+		(data.length >>> 8) & 255,
+		data.length & 255,
+		...ascii(type),
+		...data,
+		0, 0, 0, 0,
+	];
+
+	/**
+	 * WebP 컨테이너. ★ RIFF 크기 필드는 **파일 크기 - 8** 이다.
+	 *   이걸 손으로 적다가 두 번 틀렸다(정상 파일을 거부로 착각했다). 계산해서 넣는다.
+	 */
+	const webp = (...chunks: number[][]): Uint8Array => {
+		const body = chunks.flat();
+		const size = 4 + body.length; // 'WEBP' + 청크들
+		return new Uint8Array([
+			...ascii('RIFF'),
+			size & 255, (size >>> 8) & 255, (size >>> 16) & 255, (size >>> 24) & 255,
+			...ascii('WEBP'),
+			...body,
+		]);
+	};
+	const wchunk = (type: string, data: number[]): number[] => [
+		...ascii(type),
+		data.length & 255, (data.length >>> 8) & 255, (data.length >>> 16) & 255, (data.length >>> 24) & 255,
+		...data,
+		...(data.length % 2 ? [0] : []),
+	];
+
+	// ★ 시그니처만, 그다음엔 끝맺음까지 봤는데도 부족했다. IDAT 을 **파일 전체에서
+	//   바이트열로** 찾았더니 'IHDR 의 payload 안에 IDAT 이라는 글자' 가 통과했다.
+	//   지금은 청크 구조를 실제로 걸어간다.
+	test('구조를 갖춘 이미지만 통과한다', () => {
 		assert.equal(
-			sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, ...PNG_IDAT, ...PNG_END))?.mime,
+			sniffImage(bytes(...PNG_SIG, ...png('IHDR', new Array(13).fill(0)), ...png('IDAT', [1, 2, 3]), ...png('IEND')))?.mime,
 			'image/png',
 		);
 		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 0xff, 0xd9))?.mime, 'image/jpeg');
 		assert.equal(sniffImage(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 0x3b))?.mime, 'image/gif');
+		assert.equal(sniffImage(webp(wchunk('VP8 ', [1, 2, 3, 4])))?.mime, 'image/webp');
+		// 확장·애니메이션 WebP: VP8X 뒤에 실제 프레임이 있으면 정상이다
 		assert.equal(
-			// RIFF 크기 필드 = 파일크기 - 8. chunk 도 길이와 payload 를 갖춰야 한다.
-			sniffImage(
-				bytes(
-					0x52, 0x49, 0x46, 0x46, 16, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
-					0x56, 0x50, 0x38, 0x20, 4, 0, 0, 0, 1, 2, 3, 4,
-				),
-			)?.mime,
+			sniffImage(webp(wchunk('VP8X', new Array(10).fill(0)), wchunk('ANMF', [1, 2])))?.mime,
 			'image/webp',
 		);
 	});
 
-	test('머리만 베껴 붙인 파일은 막힌다', () => {
-		// 코덱스가 지적한 그대로의 재현: PNG 머리 + 아무 텍스트
-		assert.equal(sniffImage(bytes(...PNG_HEAD, ...asBytes('BEGIN PRIVATE KEY'))), null);
-		assert.equal(sniffImage(bytes(...PNG_HEAD)), null, '잘린 PNG');
-		// IEND 뒤에 데이터를 덧붙인 것도 정상 PNG 가 아니다 (polyglot 이 숨는 자리)
+	test('이미지처럼 생기기만 한 파일은 막힌다', () => {
+		// ★ 코덱스 4차 재현: IHDR payload 안에 'IDAT' 글자를 심은 것
 		assert.equal(
-			sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, ...PNG_IDAT, ...PNG_END, ...new Array(100).fill(65))),
+			sniffImage(bytes(...PNG_SIG, ...png('IHDR', [...ascii('IDAT'), ...new Array(9).fill(0)]), ...png('IEND'))),
 			null,
+			'IDAT 청크가 없는데 글자만 있는 PNG',
 		);
-		// 글자만 맞춘 껍데기 — IDAT 도 IHDR 길이도 없다
+		// ★ 코덱스 4차 재현: 화소 청크 없이 VP8X 만 있는 WebP
+		assert.equal(sniffImage(webp(wchunk('VP8X', new Array(10).fill(0)))), null, '프레임 없는 WebP');
+		assert.equal(sniffImage(bytes(...PNG_SIG, ...asBytes('BEGIN PRIVATE KEY'))), null);
+		assert.equal(sniffImage(bytes(...PNG_SIG)), null, '잘린 PNG');
 		assert.equal(
-			sniffImage(bytes(...PNG_HEAD, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 1, 2, 3, ...PNG_END)),
+			sniffImage(bytes(...PNG_SIG, ...png('IHDR', new Array(13).fill(0)), ...png('IDAT', [1]), ...png('IEND'), ...new Array(100).fill(65))),
 			null,
-			'IDAT 없는 껍데기',
+			'IEND 뒤에 데이터를 덧붙인 것',
 		);
 		assert.equal(
-			sniffImage(bytes(...PNG_HEAD, 0, 0, 0, 99, 0x49, 0x48, 0x44, 0x52, ...PNG_IDAT, ...PNG_END)),
+			sniffImage(bytes(...PNG_SIG, ...png('IHDR', new Array(99).fill(0)), ...png('IDAT', [1]), ...png('IEND'))),
 			null,
 			'IHDR 길이가 13 이 아님',
 		);
-		// FourCC 만 있고 payload 가 없는 WebP
-		assert.equal(
-			sniffImage(bytes(0x52, 0x49, 0x46, 0x46, 8, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58)),
-			null,
-		);
-		// 머리와 끝은 맞는데 첫 chunk 가 IHDR 이 아닌 것
-		assert.equal(sniffImage(bytes(...PNG_HEAD, 0, 0, 0, 13, 65, 65, 65, 65, ...PNG_END)), null);
 		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 3)), null, '끝나지 않은 JPEG');
-		// 이미지 chunk 없는 빈 RIFF 껍데기
-		assert.equal(sniffImage(bytes(0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 0x57, 0x45, 0x42, 0x50)), null);
 	});
 
 	test('비밀키·텍스트·SVG·빈 파일은 막힌다', () => {
@@ -305,7 +326,10 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(asBytes('{"a":1}')), null);
 		assert.equal(sniffImage(new Uint8Array(0)), null);
 		// 시그니처가 한 칸 밀린 것도 통과하면 안 된다
-		assert.equal(sniffImage(bytes(0x00, ...PNG_HEAD, ...PNG_IHDR, ...PNG_IDAT, ...PNG_END)), null);
+		assert.equal(
+			sniffImage(bytes(0x00, ...PNG_SIG, ...png('IHDR', new Array(13).fill(0)), ...png('IDAT', [1]), ...png('IEND'))),
+			null,
+		);
 	});
 });
 
@@ -1147,7 +1171,13 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 				{ x: 300, y: 0, title: 'B' },
 			],
 		});
-		const results = await Promise.all([1, 2, 3].map((i) => renderDiagram(spec(`동시 ${i}`))));
+		// ★ 다이어그램만 3장 돌리면 '표지가 큐를 우회하는' 변이를 못 잡는다(코덱스 4차).
+		//   두 도구를 섞어서 같은 큐를 쓰는지 본다.
+		const results = await Promise.all([
+			renderDiagram(spec('동시 1')),
+			renderCover({ title: '동시 표지' }),
+			renderDiagram(spec('동시 3')),
+		]);
 		clearInterval(timer);
 
 		assert.ok(
@@ -1157,6 +1187,79 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 		// 한 판이 9개다. 앞판 정리와 뒷판 기동이 겹칠 수 있어 여유를 둔다.
 		assert.ok(peak > 0, '크롬 프로세스를 한 번도 못 봤다 — 이 검사는 의미가 없다');
 		assert.ok(peak <= 14, `동시에 크롬이 ${peak}개까지 떴다 — 직렬화가 풀렸다`);
+	});
+
+	// 줄을 세우면 '앞 작업이 실패했을 때 줄이 끊기는' 실수를 하기 쉽다.
+	test('앞 렌더가 실패해도 다음 렌더가 이어진다', async (t) => {
+		if (!(await findChrome().then(() => true, () => false))) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 일부러 상한을 넘겨 실패시킨다
+		await assert.rejects(
+			() =>
+				renderDiagram({
+					title: '실패할 것',
+					nodes: [
+						{ id: 'a', x: 0, y: 0, title: 'A' },
+						{ id: 'b', x: 6900, y: 0, title: 'B' },
+					],
+					legend: false,
+				}),
+			/너무 큽니다/,
+		);
+		// 큐가 끊겼다면 여기서 영원히 안 끝난다
+		const after = await renderDiagram({
+			title: '그 다음',
+			nodes: [{ x: 0, y: 0, title: 'A' }],
+			legend: false,
+		});
+		assert.ok(after.width > 0, '실패 뒤 큐가 멈췄다');
+	});
+});
+
+describe('★ R19 — 모서리 라운딩이 원래 선을 벗어나지 않는다 (크롬 필요)', () => {
+	// ★ rpath 는 여태 어떤 테스트에도 안 묶여 있었다(코덱스 2·3·4차 연속 지적).
+	//   감사가 원본 points 를 보기 때문에, 그려진 path 가 선을 벗어나도 아무도 모른다.
+	//   실제로 축별 Math.sign 방식일 때 거의 수평인 대각선이 y 로 ±9 벌어졌다.
+	//   렌더된 HTML 을 다시 열어 **그려진 d 속성**을 직접 본다.
+	test('대각선에서도 그려진 경로가 원래 선 근처에 머문다', async (t) => {
+		if (!(await findChrome().then(() => true, () => false))) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '라운딩 검사',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, title: 'A' },
+				{ id: 'b', x: 400, y: 200, title: 'B' },
+			],
+			// 거의 수평인 대각선 — 축별 sign 으로 물리면 여기서 크게 벌어진다.
+			// ★ 시작 좌표를 0,0 으로 두면 화살촉 마커 path(M0,0 L10,5 L0,10 z)가 먼저
+			//   걸린다. 겹치지 않는 좌표를 쓴다.
+			edges: [{ points: [[7, 103], [107, 104], [207, 105]] }],
+			legend: false,
+		});
+
+		const profileDir = await mkdtemp(join(tmpdir(), 'velog-mcp-rpath-test-'));
+		const dom = await dumpDom(pathToFileURL(r.htmlPath).href, { profileDir });
+		await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+
+		// 우리가 준 좌표로 그려진 path 를 찾는다
+		const drawn = [...dom.matchAll(/\sd="(M7,103[^"]*)"/g)].map((m) => m[1] ?? '');
+		assert.ok(drawn.length > 0, `그려진 경로를 못 찾았다`);
+		const ys = [...(drawn[0] ?? '').matchAll(/[ML]\s*-?[\d.]+,(-?[\d.]+)/g)].map((m) =>
+			Number(m[1]),
+		);
+		assert.ok(ys.length >= 2, `좌표를 못 읽었다: ${drawn[0] ?? ''}`);
+		// 원래 선은 y 가 103~105 다. 정상 라운딩이면 그 근처에 머문다.
+		// 축별 sign 방식이면 y 가 95 아래·113 위까지 벌어진다.
+		const lo = Math.min(...ys);
+		const hi = Math.max(...ys);
+		assert.ok(
+			lo >= 99 && hi <= 109,
+			`라운딩이 원래 선(103~105)을 벗어났다: ${lo}~${hi} · ${drawn[0] ?? ''}`,
+		);
 	});
 });
 

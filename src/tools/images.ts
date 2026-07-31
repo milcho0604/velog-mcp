@@ -20,7 +20,7 @@
  * velcdn 도메인에서 서빙되면 그 자체가 문제가 된다.
  */
 
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { open, readFile, realpath } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -75,13 +75,91 @@ interface Sniffed {
 
 /**
  * 앞부분 시그니처만 보면 "PNG 머리 8바이트 + 아무 텍스트" 도 통과한다.
- * 그건 이미지가 아니라 **이미지처럼 시작하는 파일**이다. 끝맺음까지 확인한다.
+ * 그건 이미지가 아니라 **이미지처럼 시작하는 파일**이다.
  *
- * 끝맺음을 파일 맨 끝으로 못 박지는 않는다 — 정상 파일에도 패딩이 붙는 경우가 있어
- * 엄격하게 잡으면 멀쩡한 사진을 거부한다. '마지막 64바이트 안에 있는가' 정도면
- * 머리만 베껴 붙인 파일은 걸러지고 정상 파일은 통과한다.
+ * ★ 그래서 끝맺음도 봤는데, 그것도 부족했다. `IDAT` 을 **파일 전체에서 바이트열로**
+ *   찾았더니 `IHDR 의 payload 안에 IDAT 이라는 글자` 를 넣은 파일이 통과했다
+ *   (코덱스가 재현). 청크가 아니라 글자를 본 것이다.
+ *   그래서 지금은 **청크 구조를 실제로 걸어간다.** 길이 필드를 따라가며
+ *   경계가 맞는지, 필요한 청크가 제자리에 있는지 확인한다.
+ *
+ * 완전한 디코딩은 아니다 — 화소 데이터가 진짜인지까지는 안 본다.
+ * 목적은 "아무 바이트나 이미지인 척 공개 CDN 에 올라가는 것"을 막는 것이다.
  */
+function readU32BE(bytes: Uint8Array, at: number): number {
+	return (
+		((bytes[at] ?? 0) << 24) |
+		((bytes[at + 1] ?? 0) << 16) |
+		((bytes[at + 2] ?? 0) << 8) |
+		(bytes[at + 3] ?? 0)
+	) >>> 0;
+}
+
+function readU32LE(bytes: Uint8Array, at: number): number {
+	return (
+		(bytes[at] ?? 0) |
+		((bytes[at + 1] ?? 0) << 8) |
+		((bytes[at + 2] ?? 0) << 16) |
+		((bytes[at + 3] ?? 0) << 24)
+	) >>> 0;
+}
+
+function fourCC(bytes: Uint8Array, at: number): string {
+	return String.fromCharCode(
+		bytes[at] ?? 0,
+		bytes[at + 1] ?? 0,
+		bytes[at + 2] ?? 0,
+		bytes[at + 3] ?? 0,
+	);
+}
+
+/** PNG 청크를 실제로 걸어간다: [길이4][타입4][데이터][CRC4] */
+function pngStructureOk(bytes: Uint8Array): boolean {
+	let at = 8; // 시그니처 다음
+	let first = true;
+	let sawIdat = false;
+	// 청크가 아무리 많아도 유한하다. 이상하면 즉시 실패.
+	while (at + 8 <= bytes.length) {
+		const len = readU32BE(bytes, at);
+		const type = fourCC(bytes, at + 4);
+		const next = at + 12 + len; // 길이4 + 타입4 + 데이터 + CRC4
+		if (len > bytes.length || next > bytes.length) return false;
+		if (first) {
+			if (type !== 'IHDR' || len !== 13) return false;
+			first = false;
+		}
+		if (type === 'IDAT') sawIdat = true;
+		// ★ IEND 는 규격상 **마지막** 청크다. 뒤에 뭔가 더 있으면 정상 PNG 가 아니고,
+		//   거기가 바로 polyglot 이 숨는 자리다. 파일 끝과 일치하는지까지 본다.
+		if (type === 'IEND') return len === 0 && sawIdat && next === bytes.length;
+		at = next;
+	}
+	return false; // IEND 로 끝나지 않았다
+}
+
+/** RIFF/WebP 청크를 걸어간다: [FourCC4][길이4][데이터(짝수 정렬)] */
+function webpStructureOk(bytes: Uint8Array): boolean {
+	const riffSize = readU32LE(bytes, 4);
+	if (riffSize + 8 > bytes.length) return false;
+	let at = 12;
+	const endAt = Math.min(bytes.length, riffSize + 8);
+	while (at + 8 <= endAt) {
+		const type = fourCC(bytes, at);
+		const len = readU32LE(bytes, at + 4);
+		const next = at + 8 + len + (len % 2); // 홀수면 1바이트 패딩
+		if (next > endAt) return false;
+		// 실제 화소가 든 청크. VP8X(확장 헤더)만 있는 건 이미지가 아니다.
+		if (type === 'VP8 ' || type === 'VP8L' || type === 'ANMF') return len > 0;
+		at = next;
+	}
+	return false;
+}
+
 function looksComplete(bytes: Uint8Array, ext: string): boolean {
+	if (ext === 'png') return pngStructureOk(bytes);
+	if (ext === 'webp') return webpStructureOk(bytes);
+	// JPEG·GIF 는 컨테이너 구조가 PNG/WebP 만큼 단순하지 않다. 끝맺음만 본다 —
+	// 머리만 베껴 붙인 파일을 거르는 선까지다. (그 이상은 디코더가 필요하다)
 	const len = bytes.length;
 	const tailFrom = Math.max(0, len - 64);
 	const has = (...sig: number[]): boolean => {
@@ -94,55 +172,8 @@ function looksComplete(bytes: Uint8Array, ext: string): boolean {
 		}
 		return false;
 	};
-	/** 특정 위치에 이 바이트들이 있는가 (구조 확인용) */
-	const at = (offset: number, ...sig: number[]): boolean =>
-		sig.every((b, j) => bytes[offset + j] === b);
-
-	/** 파일 전체에서 이 바이트열을 찾는다 (chunk 존재 확인용) */
-	const contains = (...sig: number[]): boolean => {
-		for (let i = 0; i <= len - sig.length; i++) {
-			let ok = true;
-			for (let j = 0; j < sig.length; j++) {
-				if (bytes[i + j] !== sig[j]) { ok = false; break; }
-			}
-			if (ok) return true;
-		}
-		return false;
-	};
-
-	if (ext === 'png') {
-		// 규격: 첫 chunk 는 길이 13 짜리 IHDR, 화소 데이터는 IDAT, 끝은 IEND.
-		// 'IHDR'·'IEND' 글자만 보면 23바이트짜리 껍데기도 통과한다 — 실제로 통과했다.
-		// 길이 필드와 IDAT 존재까지 봐야 '이미지처럼 생긴 파일'을 걸러낸다.
-		const ihdrLen =
-			((bytes[8] ?? 0) << 24) | ((bytes[9] ?? 0) << 16) | ((bytes[10] ?? 0) << 8) | (bytes[11] ?? 0);
-		return (
-			ihdrLen === 13 &&
-			at(12, 0x49, 0x48, 0x44, 0x52) && // IHDR
-			contains(0x49, 0x44, 0x41, 0x54) && // IDAT (화소 데이터)
-			has(0x49, 0x45, 0x4e, 0x44) // IEND
-		);
-	}
 	if (ext === 'jpg') return has(0xff, 0xd9); // EOI
 	if (ext === 'gif') return has(0x3b); // trailer
-	if (ext === 'webp') {
-		// RIFF 헤더가 선언한 길이가 실제 파일 안에 들어와야 하고,
-		// **실제 이미지 chunk**(VP8 / VP8L / VP8X)가 있어야 한다.
-		// 이게 없으면 12바이트짜리 빈 RIFF 껍데기도 통과한다.
-		if (len < 16) return false;
-		const size =
-			(bytes[4] ?? 0) | ((bytes[5] ?? 0) << 8) | ((bytes[6] ?? 0) << 16) | ((bytes[7] ?? 0) << 24);
-		if (size <= 0 || size + 8 > len) return false;
-		const isVp8 =
-			at(12, 0x56, 0x50, 0x38, 0x20) || // 'VP8 '
-			at(12, 0x56, 0x50, 0x38, 0x4c) || // 'VP8L'
-			at(12, 0x56, 0x50, 0x38, 0x58); //  'VP8X'
-		if (!isVp8) return false;
-		// chunk 는 FourCC 만으로 성립하지 않는다. 길이 필드와 그만한 payload 가 있어야 한다.
-		const chunkLen =
-			(bytes[16] ?? 0) | ((bytes[17] ?? 0) << 8) | ((bytes[18] ?? 0) << 16) | ((bytes[19] ?? 0) << 24);
-		return chunkLen > 0 && 20 + chunkLen <= len;
-	}
 	return true;
 }
 
@@ -174,18 +205,30 @@ export function sniffImage(bytes: Uint8Array): Sniffed | null {
 	return null;
 }
 
-/** 파일을 읽고 검사까지 한다. 통과 못 하면 이유를 그대로 말해준다. */
+/**
+ * 파일을 읽고 검사까지 한다. 통과 못 하면 이유를 그대로 말해준다.
+ *
+ * ★ `stat` 으로 크기를 보고 나서 `readFile` 로 다시 여는 구조였다. 그 사이에 경로가
+ *   다른 파일로 바뀌면 크기 검사가 무의미해진다. 한 번 연 **같은 핸들**에서 크기를
+ *   보고 그대로 읽어 그 틈을 없앤다.
+ */
 async function readImageFile(path: string): Promise<{ bytes: Uint8Array; kind: Sniffed }> {
-	const info = await stat(path).catch(() => null);
-	if (!info) throw new Error(`파일을 찾지 못했습니다: ${path}`);
-	if (!info.isFile()) throw new Error(`파일이 아닙니다: ${path}`);
-	if (info.size > MAX_UPLOAD_BYTES) {
-		throw new Error(
-			`파일이 너무 큽니다 (${(info.size / 1024 / 1024).toFixed(1)}MB). ` +
-				`이 도구의 상한은 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB 입니다.`,
-		);
+	const handle = await open(path, 'r').catch(() => null);
+	if (!handle) throw new Error(`파일을 찾지 못했습니다: ${path}`);
+	let bytes: Uint8Array;
+	try {
+		const info = await handle.stat();
+		if (!info.isFile()) throw new Error(`파일이 아닙니다: ${path}`);
+		if (info.size > MAX_UPLOAD_BYTES) {
+			throw new Error(
+				`파일이 너무 큽니다 (${(info.size / 1024 / 1024).toFixed(1)}MB). ` +
+					`이 도구의 상한은 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB 입니다.`,
+			);
+		}
+		bytes = new Uint8Array(await handle.readFile());
+	} finally {
+		await handle.close().catch(() => {});
 	}
-	const bytes = new Uint8Array(await readFile(path));
 	const kind = sniffImage(bytes);
 	if (!kind) {
 		throw new Error(
@@ -202,7 +245,7 @@ const toneField = z
 	.refine((v) => TONE_NAMES.includes(v), `톤 이름이어야 합니다: ${TONE_NAMES.join(', ')}`);
 
 const nodeSchema = z.object({
-	id: z.string().optional().describe('선을 연결할 때 쓰는 이름. 생략하면 n0, n1 …'),
+	id: z.string().max(64).optional().describe('선을 연결할 때 쓰는 이름. 생략하면 n0, n1 …'),
 	// 상한이 없으면 요청 하나로 수억 픽셀짜리 캔버스를 요구할 수 있다.
 	x: z
 		.number()
@@ -212,23 +255,24 @@ const nodeSchema = z.object({
 	y: z.number().min(-20000).max(20000),
 	w: z.number().min(60).max(2400).optional().describe('생략하면 글자 실측으로 정한다'),
 	h: z.number().min(36).max(1400).optional(),
-	title: z.string().min(1),
-	sub: z.string().optional().describe('두 번째 줄. 짧게'),
+	title: z.string().min(1).max(120),
+	sub: z.string().max(120).optional().describe('두 번째 줄. 짧게'),
 	icon: z
 		.string()
 		.refine((v) => ICON_NAMES.includes(v), `아이콘 이름: ${ICON_NAMES.join(', ')}`)
 		.optional(),
 	icon_tone: toneField.optional(),
-	tag: z.string().optional().describe('오른쪽 위 작은 배지 (예: ":6820", "v2")'),
+	tag: z.string().max(40).optional().describe('오른쪽 위 작은 배지 (예: ":6820", "v2")'),
 	tag_tone: toneField.optional(),
 });
 
 const groupSchema = z.object({
-	name: z.string().min(1),
-	sub: z.string().optional(),
+	name: z.string().min(1).max(80),
+	sub: z.string().max(80).optional(),
 	tone: toneField.optional(),
 	members: z
-		.array(z.string())
+		.array(z.string().max(64))
+		.max(60)
 		.optional()
 		.describe('이 노드들을 감싸도록 상자를 자동 계산한다. 좌표를 직접 줄 거면 생략'),
 	x: z.number().min(-20000).max(20000).optional(),
@@ -244,8 +288,8 @@ const edgeSchema = z.object({
 		.regex(/^[A-Za-z0-9_-]{1,16}$/, '영숫자·밑줄·하이픈 1~16자만')
 		.optional()
 		.describe('흐름 종류 key (범례와 색이 여기서 갈린다)'),
-	from: z.string().optional().describe('노드 id. 면을 고르려면 "id:right" 처럼'),
-	to: z.string().optional(),
+	from: z.string().max(80).optional().describe('노드 id. 면을 고르려면 "id:right" 처럼'),
+	to: z.string().max(80).optional(),
 	// ★ 점 개수에 상한이 없으면 감사 비용이 O(E²×S²) 로 터진다.
 	//   엣지 120개 × 점 1000개면 선분 비교가 수십억 번이다.
 	points: z
@@ -253,7 +297,7 @@ const edgeSchema = z.object({
 		.max(40)
 		.optional()
 		.describe('직접 꺾는 경우. 주면 from/to 대신 이 좌표를 쓴다'),
-	label: z.string().optional(),
+	label: z.string().max(120).optional(),
 	label_at: z
 		.tuple([z.number().min(-20000).max(20000), z.number().min(-20000).max(20000)])
 		.optional(),
@@ -266,7 +310,7 @@ const planeSchema = z.object({
 	key: z
 		.string()
 		.regex(/^[A-Za-z0-9_-]{1,16}$/, '영숫자·밑줄·하이픈 1~16자만 (SVG id 가 된다)'),
-	name: z.string().min(1),
+	name: z.string().min(1).max(40),
 	color: z.string().refine(isHexColor, '#rrggbb 형식만 받습니다'),
 	// stroke-dasharray 는 길이 목록이다. 숫자·공백·쉼표 외에는 받지 않는다.
 	dash: z
@@ -367,8 +411,10 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'감사에 걸린 산출물은 velog_upload_image 로도 받지 않는다. 고쳐서 다시 그릴 것.\n' +
 				`아이콘: ${ICON_NAMES.join(' ')}\n톤: ${TONE_NAMES.join(' ')}`,
 			inputSchema: {
-				title: z.string().min(1).describe('그림 제목 (좌상단)'),
-				subtitle: z.string().optional().describe('한 줄 설명·근거'),
+				// ★ 글자에도 상한이 필요하다. 좌표만 묶어두면 제목 하나에 10MB 를 넣어
+				//   HTML·SVG·getBBox·stdout 을 동시에 부풀릴 수 있다 (코덱스 4차).
+				title: z.string().min(1).max(200).describe('그림 제목 (좌상단)'),
+				subtitle: z.string().max(300).optional().describe('한 줄 설명·근거'),
 				// ★ id 가 겹치면 관통 감사를 피할 수 있다. NMAP 은 마지막 것만 남기는데
 				//   '자기 노드 제외' 집합은 id 문자열로 같은 id 를 전부 빼기 때문이다.
 				//   생략 시 자동 부여되는 n0·n1 과의 충돌도 같은 문제라 함께 본다.
@@ -398,7 +444,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 					.optional()
 					.describe('흐름 종류. 생략하면 요청/외부 호출/데이터/관측 4종'),
 				legend: z.boolean().default(true),
-				alt: z.string().optional().describe('이미지 대체 텍스트'),
+				alt: z.string().max(300).optional().describe('이미지 대체 텍스트'),
 				upload: z.boolean().default(true),
 				post_id: z
 					.string()
@@ -457,12 +503,12 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'제목이 길면 줄바꿈하고, 그래도 안 들어가면 글자 크기를 줄인다 — 전부 실측 기준이다.\n' +
 				'만든 뒤 velog_update_post 의 thumbnail 에 돌려받은 주소를 넣으면 표지가 된다.',
 			inputSchema: {
-				title: z.string().min(1),
-				subtitle: z.string().optional(),
-				kicker: z.string().optional().describe("상단 작은 라벨 (예: '디버깅 기록')"),
-				tags: z.array(z.string()).max(6).optional(),
+				title: z.string().min(1).max(200),
+				subtitle: z.string().max(300).optional(),
+				kicker: z.string().max(60).optional().describe("상단 작은 라벨 (예: '디버깅 기록')"),
+				tags: z.array(z.string().max(40)).max(6).optional(),
 				tone: toneField.optional(),
-				footer: z.string().optional().describe("우상단 서명 (예: '@milcho0604')"),
+				footer: z.string().max(60).optional().describe("우상단 서명 (예: '@milcho0604')"),
 				upload: z.boolean().default(true),
 				post_id: z.string().optional(),
 			},
@@ -508,7 +554,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'이미지 삭제 API 가 없다. 올리기 전에 무슨 파일인지 확인하라.',
 			inputSchema: {
 				path: z.string().min(1).describe('로컬 파일 경로'),
-				alt: z.string().optional(),
+				alt: z.string().max(300).optional(),
 				type: z
 					.enum(['post', 'profile'])
 					.default('post')

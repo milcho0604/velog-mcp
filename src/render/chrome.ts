@@ -189,7 +189,16 @@ function run(
 		let err = '';
 		let settled = false;
 
+		// ★ stdout 을 무제한으로 모으면 페이지가 큰 문자열을 뱉을 때 그대로 따라 커진다.
+		//   DOM 은 우리가 만든 것이라 정상이면 수백 KB 다. 상한을 넘으면 비정상이다.
+		const MAX_STDOUT = 32 * 1024 * 1024;
 		child.stdout.on('data', (chunk: Buffer) => {
+			if (out.length > MAX_STDOUT) {
+				finish(() => {
+					reject(new Error(`크롬 출력이 ${MAX_STDOUT / 1024 / 1024}MB 를 넘었습니다 — 입력이 비정상입니다.`));
+				});
+				return;
+			}
 			out += chunk.toString('utf8');
 		});
 		child.stderr.on('data', (chunk: Buffer) => {
