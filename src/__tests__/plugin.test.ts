@@ -663,6 +663,39 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		}
 	});
 
+	test('P21 — 배포물에 개인정보·로컬 경로가 실리지 않는다', async () => {
+		// 플러그인을 git 소스로 설치하면 **레포 전체가 사용자 기계로 클론된다.**
+		// npm 에 올리면 매니페스트가 레지스트리 페이지에 영구히 걸린다.
+		// 연락은 GitHub 이슈로 받는다 — 이메일을 적을 이유가 없다.
+		const files = [
+			['package.json', await readFile(new URL('package.json', ROOT), 'utf8')],
+			[
+				'plugin.json',
+				await readFile(new URL('.claude-plugin/plugin.json', PLUGIN), 'utf8'),
+			],
+			[
+				'marketplace.json',
+				await readFile(new URL('.claude-plugin/marketplace.json', ROOT), 'utf8'),
+			],
+			['plugin README', await readFile(new URL('README.md', PLUGIN), 'utf8')],
+		] as const;
+
+		for (const [label, text] of files) {
+			// 스코프 패키지(@scope/name)와 noreply 는 이메일이 아니다.
+			const emails = [...text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)]
+				.map((m) => m[0])
+				.filter((value) => !value.includes('noreply') && !value.startsWith('@'));
+			assert.deepEqual(emails, [], `${label} 에 이메일 주소가 있다`);
+
+			// 개발 기계의 절대 경로가 문서에 남으면 사용자 이름이 그대로 새 나간다.
+			assert.equal(
+				/\/Users\/[a-z]/i.test(text),
+				false,
+				`${label} 에 로컬 절대 경로가 있다`,
+			);
+		}
+	});
+
 	test('P12 — .mcp.json 의 env 에는 실제 값이 들어갈 수 없다', async () => {
 		const mcp = await json(new URL('.mcp.json', PLUGIN));
 		const env = (mcp['mcpServers'] as Record<string, { env?: Record<string, string> }>)['velog']

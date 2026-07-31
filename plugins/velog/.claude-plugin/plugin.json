@@ -6,7 +6,6 @@
 	"description": "Read and write Velog (velog.io), the Korean developer blogging platform. Browse, search, trending, and blog stats work with no auth. Writing defaults to drafts and private posts — public publishing is opt-in at install. Also renders diagrams and cover images for your posts and uploads them (needs local Chrome). 벨로그 글을 읽고 쓰고, 다이어그램·표지도 그려서 올립니다.",
 	"author": {
 		"name": "Changhyun Kim",
-		"email": "milcho0604@gmail.com",
 		"url": "https://github.com/milcho0604"
 	},
 	"homepage": "https://github.com/milcho0604/velog-mcp#readme",
