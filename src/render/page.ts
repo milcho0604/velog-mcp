@@ -700,9 +700,12 @@ function collinearOverlap(A, B){
   if (la < 1 || lb < 1) return false;
   // 평행? (단위벡터 외적이 거의 0)
   if (Math.abs((ax*by - ay*bx) / (la*lb)) > 0.02) return false;
-  // 같은 직선 위? (A 의 시작점에서 B 의 시작점까지의 수직거리)
-  var perp = Math.abs((B[0]-A[0]) * (ay/la) - (B[1]-A[1]) * (ax/la));
-  if (perp > 3) return false;
+  // 같은 직선 위? ★ B 의 **양 끝**을 다 본다. 시작점 하나만 재면 거의 평행한
+  //   선분에서 점 순서를 뒤집는 것만으로 답이 달라진다(실측으로 확인된 오탐).
+  var ux = ax/la, uy = ay/la;
+  var d0 = Math.abs((B[0]-A[0]) * uy - (B[1]-A[1]) * ux);
+  var d1 = Math.abs((B[2]-A[0]) * uy - (B[3]-A[1]) * ux);
+  if (Math.max(d0, d1) > 3) return false;
   // 구간이 실제로 겹치는가 (A 방향으로 투영)
   function proj(px, py){ return ((px-A[0]) * ax + (py-A[1]) * ay) / la; }
   var a0 = 0, a1 = la;

@@ -290,6 +290,12 @@ export class VelogClient {
 					' — 벨로그가 업로드를 일시 차단했습니다. 1시간 100건 / 1분 20건이 한도입니다.';
 			}
 			if (response.status === 413) hint = ' — 파일이 너무 큽니다 (서버 상한 30MB).';
+			// ★ 5xx 는 서버가 이미 저장한 뒤 실패했을 수도 있다. 통신 단절과 같은 성격이다.
+			if (response.status >= 500) {
+				hint =
+					'\n⚠️ 서버 오류라 저장 여부를 알 수 없습니다. 다시 올리면 중복될 수 ' +
+					'있으니(삭제 API 없음) 벨로그에서 확인한 뒤 결정하세요.';
+			}
 			throw new VelogApiError(
 				`이미지 업로드 HTTP ${response.status}: ${truncate(body, 300)}${hint}`,
 				{ status: response.status },

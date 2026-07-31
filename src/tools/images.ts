@@ -42,6 +42,19 @@ import { isHexColor } from '../render/tones.ts';
 /** 우리가 올리는 것 — 서버 상한(30MB)보다 낮게 잡는다. */
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
+/**
+ * 자가감사에 걸려 업로드를 건너뛴 PNG 경로.
+ *
+ * `force_upload` 를 없앴더니 "감사 실패 → 그 경로를 velog_upload_image 에 넘기기"라는
+ * 두 단계 우회가 남았다. 같은 인증으로 즉시 되므로 사실상 차단이 아니었다.
+ * 그래서 **이 서버가 감사에서 떨어뜨린 산출물은 이 서버로 못 올리게** 표시해 둔다.
+ *
+ * 이게 절대적 차단은 아니다 — 파일을 다른 곳으로 복사하면 우회된다. 그건 사용자가
+ * 눈으로 보게 되는 별개의 행동이므로 그 선에서 멈춘다. 목적은 '사고 방지'이지
+ * 사용자를 막는 것이 아니다.
+ */
+const rejectedRenders = new Set<string>();
+
 interface Sniffed {
 	readonly mime: string;
 	readonly ext: string;
@@ -68,15 +81,30 @@ function looksComplete(bytes: Uint8Array, ext: string): boolean {
 		}
 		return false;
 	};
-	if (ext === 'png') return has(0x49, 0x45, 0x4e, 0x44); // IEND
+	/** 특정 위치에 이 바이트들이 있는가 (구조 확인용) */
+	const at = (offset: number, ...sig: number[]): boolean =>
+		sig.every((b, j) => bytes[offset + j] === b);
+
+	if (ext === 'png') {
+		// 규격상 IHDR 이 첫 chunk 이고 IEND 가 마지막이다. 끝만 보면 머리에 아무거나
+		// 붙여도 통과하므로 **첫 chunk 도 확인**한다. (8~11=길이, 12~15=타입)
+		return at(12, 0x49, 0x48, 0x44, 0x52) && has(0x49, 0x45, 0x4e, 0x44);
+	}
 	if (ext === 'jpg') return has(0xff, 0xd9); // EOI
 	if (ext === 'gif') return has(0x3b); // trailer
 	if (ext === 'webp') {
-		// RIFF 헤더가 선언한 길이가 실제 파일 안에 들어와야 한다.
-		if (len < 12) return false;
+		// RIFF 헤더가 선언한 길이가 실제 파일 안에 들어와야 하고,
+		// **실제 이미지 chunk**(VP8 / VP8L / VP8X)가 있어야 한다.
+		// 이게 없으면 12바이트짜리 빈 RIFF 껍데기도 통과한다.
+		if (len < 16) return false;
 		const size =
 			(bytes[4] ?? 0) | ((bytes[5] ?? 0) << 8) | ((bytes[6] ?? 0) << 16) | ((bytes[7] ?? 0) << 24);
-		return size > 0 && size + 8 <= len;
+		if (size <= 0 || size + 8 > len) return false;
+		return (
+			at(12, 0x56, 0x50, 0x38, 0x20) || // 'VP8 '
+			at(12, 0x56, 0x50, 0x38, 0x4c) || // 'VP8L'
+			at(12, 0x56, 0x50, 0x38, 0x58) //   'VP8X'
+		);
 	}
 	return true;
 }
@@ -166,10 +194,10 @@ const groupSchema = z.object({
 		.array(z.string())
 		.optional()
 		.describe('이 노드들을 감싸도록 상자를 자동 계산한다. 좌표를 직접 줄 거면 생략'),
-	x: z.number().optional(),
-	y: z.number().optional(),
-	w: z.number().optional(),
-	h: z.number().optional(),
+	x: z.number().min(-20000).max(20000).optional(),
+	y: z.number().min(-20000).max(20000).optional(),
+	w: z.number().min(0).max(40000).optional(),
+	h: z.number().min(0).max(40000).optional(),
 });
 
 const edgeSchema = z.object({
@@ -189,7 +217,9 @@ const edgeSchema = z.object({
 		.optional()
 		.describe('직접 꺾는 경우. 주면 from/to 대신 이 좌표를 쓴다'),
 	label: z.string().optional(),
-	label_at: z.tuple([z.number(), z.number()]).optional(),
+	label_at: z
+		.tuple([z.number().min(-20000).max(20000), z.number().min(-20000).max(20000)])
+		.optional(),
 	label_anchor: z.enum(['start', 'middle', 'end']).optional(),
 });
 
@@ -245,9 +275,14 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			//   **모델이 스스로 켤 수 있는 스위치는 방어가 아니다.** 그래서 없앴다.
 			//   그래도 올려야 하면 경로가 있다: upload:false 로 그린 뒤 PNG 를 직접 보고
 			//   velog_upload_image 로 올리면 된다. 사람이 한 번 더 개입하게 된다.
+			// ★ 예전엔 여기서 "velog_upload_image 로 올리면 된다"고 안내했다.
+			//   그건 차단 안내문이 우회 방법을 같은 상대에게 그대로 알려주는 꼴이다.
+			//   경로는 알려주되(사람이 열어봐야 하므로) 우회를 권하지는 않는다.
+			//   그리고 이 PNG 는 아래에서 업로드 거부 목록에 올린다.
 			lines.push('올리지 않았습니다 — 위 문제를 고쳐 다시 그리세요.');
-			lines.push('그래도 올려야 하면 아래 PNG 를 확인한 뒤 velog_upload_image 를 쓰세요.');
+			lines.push('아래 PNG 는 이 서버로 올릴 수 없습니다 (감사에 걸린 산출물).');
 			lines.push('');
+			rejectedRenders.add(args.pngPath);
 			lines.push(`- 로컬 PNG: ${args.pngPath}`);
 			lines.push(`- 편집용 HTML: ${args.htmlPath}`);
 			return lines;
@@ -290,7 +325,27 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			inputSchema: {
 				title: z.string().min(1).describe('그림 제목 (좌상단)'),
 				subtitle: z.string().optional().describe('한 줄 설명·근거'),
-				nodes: z.array(nodeSchema).min(1).max(60),
+				// ★ id 가 겹치면 관통 감사를 피할 수 있다. NMAP 은 마지막 것만 남기는데
+				//   '자기 노드 제외' 집합은 id 문자열로 같은 id 를 전부 빼기 때문이다.
+				//   생략 시 자동 부여되는 n0·n1 과의 충돌도 같은 문제라 함께 본다.
+				nodes: z
+					.array(nodeSchema)
+					.min(1)
+					.max(60)
+					.superRefine((list, ctx) => {
+						const seen = new Set<string>();
+						list.forEach((node, i) => {
+							const id = node.id ?? `n${i}`;
+							if (seen.has(id)) {
+								ctx.addIssue({
+									code: 'custom',
+									message: `노드 id 가 겹칩니다: ${id} (생략하면 n0·n1… 이 자동 부여됩니다)`,
+									path: [i, 'id'],
+								});
+							}
+							seen.add(id);
+						});
+					}),
 				groups: z.array(groupSchema).max(12).optional(),
 				edges: z.array(edgeSchema).max(120).optional(),
 				planes: z
@@ -420,6 +475,12 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 		},
 		async (args) => {
 			client.requireAuth('velog_upload_image');
+			if (rejectedRenders.has(args.path)) {
+				throw new Error(
+					'이 PNG 는 이 서버의 자가감사에서 떨어진 산출물입니다 — 올릴 수 없습니다.\n' +
+						'그림을 고쳐 다시 그리세요 (velog_render_diagram).',
+				);
+			}
 			const { bytes, kind } = await readImageFile(args.path);
 			const name = basename(args.path);
 			const uploadOptions: Parameters<VelogClient['uploadImage']>[2] = args.post_id

@@ -16,7 +16,7 @@
 
 import { test, describe } from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { platform } from 'node:process';
@@ -163,7 +163,9 @@ describe('★ R2 — 입력은 데이터로만 들어간다 (스크립트 탈출
 	});
 
 	test('표지도 같다', () => {
-		const html = buildCoverHtml({ title: EVIL, subtitle: EVIL, kicker: EVIL, tags: [EVIL] });
+		const html = buildCoverHtml({
+			title: EVIL, subtitle: EVIL, kicker: EVIL, tags: [EVIL], footer: EVIL, tone: EVIL,
+		});
 		const json = scripts(html).find((s) => s.attrs.includes('application/json'));
 		assert.ok(json && !json.body.includes('<'));
 		assert.equal(scripts(html).length, 2);
@@ -234,18 +236,22 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 	const bytes = (...v: number[]): Uint8Array => new Uint8Array(v);
 	const asBytes = (v: string): Uint8Array => new TextEncoder().encode(v);
 	const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+	// 규격상 첫 chunk 는 IHDR 이다 (8~11=길이, 12~15=타입). 끝만 보면 머리에 아무거나
+	// 붙여도 통과하므로 fixture 도 구조를 갖춘 것으로 쓴다.
+	const PNG_IHDR = [0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52];
 	const PNG_END = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
 
 	// ★ 예전엔 '머리 8바이트짜리 PNG' 를 통과해야 하는 사례로 고정하고 있었다.
 	//   그건 이미지가 아니라 이미지처럼 시작하는 파일이다 — 그래서 시작 시그니처와
 	//   끝맺음을 함께 본다. 이 테스트도 온전한 파일로 바꿨다.
 	test('머리와 끝맺음이 모두 있어야 통과한다', () => {
-		assert.equal(sniffImage(bytes(...PNG_HEAD, 1, 2, 3, ...PNG_END))?.mime, 'image/png');
+		assert.equal(sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, 1, 2, 3, ...PNG_END))?.mime, 'image/png');
 		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 0xff, 0xd9))?.mime, 'image/jpeg');
 		assert.equal(sniffImage(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 0x3b))?.mime, 'image/gif');
 		assert.equal(
-			sniffImage(bytes(0x52, 0x49, 0x46, 0x46, 8, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4))
-				?.mime,
+			sniffImage(
+				bytes(0x52, 0x49, 0x46, 0x46, 12, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20, 1, 2, 3, 4),
+			)?.mime,
 			'image/webp',
 		);
 	});
@@ -255,8 +261,15 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(bytes(...PNG_HEAD, ...asBytes('BEGIN PRIVATE KEY'))), null);
 		assert.equal(sniffImage(bytes(...PNG_HEAD)), null, '잘린 PNG');
 		// IEND 뒤에 데이터를 덧붙인 것도 정상 PNG 가 아니다 (polyglot 이 숨는 자리)
-		assert.equal(sniffImage(bytes(...PNG_HEAD, ...PNG_END, ...new Array(100).fill(65))), null);
+		assert.equal(
+			sniffImage(bytes(...PNG_HEAD, ...PNG_IHDR, ...PNG_END, ...new Array(100).fill(65))),
+			null,
+		);
+		// 머리와 끝은 맞는데 첫 chunk 가 IHDR 이 아닌 것
+		assert.equal(sniffImage(bytes(...PNG_HEAD, 0, 0, 0, 13, 65, 65, 65, 65, ...PNG_END)), null);
 		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 3)), null, '끝나지 않은 JPEG');
+		// 이미지 chunk 없는 빈 RIFF 껍데기
+		assert.equal(sniffImage(bytes(0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 0x57, 0x45, 0x42, 0x50)), null);
 	});
 
 	test('비밀키·텍스트·SVG·빈 파일은 막힌다', () => {
@@ -266,7 +279,7 @@ describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 		assert.equal(sniffImage(asBytes('{"a":1}')), null);
 		assert.equal(sniffImage(new Uint8Array(0)), null);
 		// 시그니처가 한 칸 밀린 것도 통과하면 안 된다
-		assert.equal(sniffImage(bytes(0x00, ...PNG_HEAD, ...PNG_END)), null);
+		assert.equal(sniffImage(bytes(0x00, ...PNG_HEAD, ...PNG_IHDR, ...PNG_END)), null);
 	});
 });
 
@@ -425,6 +438,51 @@ describe('★ R10 — 도형 이름·평면 key 는 좁혀져 있다', () => {
 		await client.close();
 	});
 
+	// ★ id 가 겹치면 관통 감사를 피할 수 있다 — NMAP 은 마지막 것만 남기는데
+	//   '자기 노드 제외' 집합은 같은 id 를 전부 빼기 때문이다.
+	test('노드 id 중복은 막힌다 (자동 부여되는 n0 과의 충돌 포함)', async () => {
+		const client = await tools();
+		for (const nodes of [
+			[{ x: 0, y: 0, title: 'A', id: 'dup' }, { x: 200, y: 0, title: 'B', id: 'dup' }],
+			[{ x: 0, y: 0, title: 'A' }, { x: 200, y: 0, title: 'B', id: 'n0' }],
+		]) {
+			const r = await client.callTool({
+				name: 'velog_render_diagram',
+				arguments: { title: 't', nodes, upload: false },
+			});
+			assert.equal(r.isError, true, `막았어야 한다: ${JSON.stringify(nodes)}`);
+		}
+		await client.close();
+	});
+
+	// 좌표를 안 묶으면 요청 하나로 4만×4만 캔버스를 요구할 수 있다.
+	test('좌표·점 개수 상한을 넘으면 막힌다', async () => {
+		const client = await tools();
+		const cases: Array<Record<string, unknown>> = [
+			{ title: 't', nodes: [{ x: 999999, y: 0, title: 'A' }] },
+			{ title: 't', nodes: [{ x: 0, y: -999999, title: 'A' }] },
+			{
+				title: 't',
+				nodes: [{ x: 0, y: 0, title: 'A' }],
+				edges: [{ points: Array.from({ length: 41 }, (_, i) => [i, i]) }],
+			},
+			{
+				title: 't',
+				nodes: [{ x: 0, y: 0, title: 'A' }],
+				edges: [{ points: [[0, 0], [99999, 0]] }],
+			},
+			{ title: 't', nodes: [{ x: 0, y: 0, title: 'A' }], groups: [{ name: 'g', x: 999999, y: 0 }] },
+		];
+		for (const args of cases) {
+			const r = await client.callTool({
+				name: 'velog_render_diagram',
+				arguments: { ...args, upload: false },
+			});
+			assert.equal(r.isError, true, `막았어야 한다: ${JSON.stringify(args).slice(0, 90)}`);
+		}
+		await client.close();
+	});
+
 	test('없는 아이콘·톤 이름도 막힌다', async () => {
 		const client = await tools();
 		for (const bad of [{ icon: 'nope' }, { icon_tone: 'neon' }, { tag_tone: '#fff' }]) {
@@ -457,7 +515,10 @@ describe('★ R11 — 자가감사 실동작 (크롬 필요)', () => {
 			edges: [{ points: [[70, 60], [530, 300]] }], // mid 를 관통하는 대각선
 			legend: false,
 		});
-		assert.ok(r.audit.cross.length > 0, `관통을 못 잡았다: ${JSON.stringify(r.audit)}`);
+		assert.ok(
+			r.audit.cross.some((v) => v.includes('가운데')),
+			`가운데 노드의 관통이 빠졌다: ${JSON.stringify(r.audit.cross)}`,
+		);
 	});
 
 	// 양성만 보면 '무조건 걸린다'도 통과한다. 안 걸리는 경우도 확인한다.
@@ -516,9 +577,9 @@ describe('★ R11 — 자가감사 실동작 (크롬 필요)', () => {
 			title: '프로토타입 키',
 			nodes: [
 				{ id: '__proto__', x: 0, y: 0, title: '첫번째' },
-				{ id: 'constructor', x: 320, y: 0, title: '두번째' },
+				{ id: 'hasOwnProperty', x: 320, y: 0, title: '두번째' },
 			],
-			edges: [{ from: '__proto__', to: 'constructor', label: '연결' }],
+			edges: [{ from: '__proto__', to: 'hasOwnProperty', label: '연결' }],
 			legend: false,
 		});
 		assert.deepEqual(
@@ -526,6 +587,55 @@ describe('★ R11 — 자가감사 실동작 (크롬 필요)', () => {
 			[],
 			`노드를 못 찾았다: ${JSON.stringify(r.audit.over)}`,
 		);
+	});
+
+	// ★ 'own'(자기 노드 제외 집합)이 보통 객체면 own['constructor'] 가 상속
+	//   프로퍼티라 항상 참이라, id 가 constructor 인 노드는 관통 검사에서 통째로
+	//   빠진다. 그걸 잡으려면 그 노드가 **엣지의 종점이 아니어야** 한다 —
+	//   종점이면 원래도 제외 대상이라 변이를 넣어도 통과한다(코덱스 지적).
+	test("경유 노드 id 가 'constructor' 여도 관통을 잡는다", async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '상속 프로퍼티 id',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, w: 140, h: 60, title: '시작' },
+				{ id: 'constructor', x: 200, y: 0, w: 160, h: 60, title: '가운데' },
+				{ id: 'b', x: 460, y: 0, w: 140, h: 60, title: '끝' },
+			],
+			edges: [{ points: [[70, 30], [530, 30]] }], // 가운데를 관통
+			legend: false,
+		});
+		// ★ cross.length > 0 만 보면 안 된다. 이 선은 시작·끝 노드도 지나가므로
+		//   'constructor' 노드가 통째로 빠져도 그 조건은 만족된다(실제로 변이가
+		//   통과했다). **그 노드가 지목됐는지**를 봐야 강제력이 생긴다.
+		assert.ok(
+			r.audit.cross.some((v) => v.includes('가운데')),
+			`constructor id 노드의 관통이 빠졌다: ${JSON.stringify(r.audit.cross)}`,
+		);
+	});
+
+	// collinearOverlap 을 항상 false 로 바꿔도 통과하던 구멍을 막는다.
+	test('완전히 포개진 대각선 두 개를 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '대각선 겹침',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, title: '시작' },
+				{ id: 'b', x: 500, y: 300, title: '끝' },
+			],
+			edges: [
+				{ points: [[40, 80], [420, 320]], label: '첫번째' },
+				{ points: [[40, 80], [420, 320]], label: '두번째' },
+			],
+			legend: false,
+		});
+		assert.ok(r.audit.overlap.length > 0, `겹침을 못 잡았다: ${JSON.stringify(r.audit)}`);
 	});
 });
 
@@ -552,46 +662,40 @@ describe('★★ R13 — 서버가 죽으면 크롬도 같이 죽는다', () => 
 	// 렌더 중이던 크롬이 PPID=1 로 살아남아 23분을 돌고 있었다 (ps 로 확인).
 	// POSIX 에서 부모가 죽어도 자식은 안 죽는다 — 아무도 안 죽이면 그냥 남는다.
 	//
-	// 변이 검증: 종료 훅을 빼고 돌리면 크롬 4개가 남는다. 이 검사는 강제력이 있다.
-	test('렌더 도중 프로세스를 끝내도 크롬이 남지 않는다', async (t) => {
+	// ★ 처음엔 자식을 1.2초 뒤 스스로 끝내고 '고아 없음'만 봤다. 그건 두 가지가 약했다:
+	//   ① 자식이 크롬을 띄우기 전에 끝났어도 통과한다 (프로필 폴더는 spawn 전에 생기니
+	//      폴더 존재로도 증명이 안 된다)
+	//   ② 종료 경로를 process.exit() 하나만 본다
+	//   그래서 **크롬이 실제로 뜬 걸 확인한 뒤 SIGTERM 을 보내** 시그널 경로까지 본다.
+	test('크롬이 뜬 것을 확인한 뒤 서버를 SIGTERM 해도 크롬이 남지 않는다', async (t) => {
 		if (platform !== 'darwin' && platform !== 'linux') {
 			t.skip('pgrep 이 있는 환경에서만 확인한다');
 			return;
 		}
-		const has = await findChrome().then(() => true, () => false);
-		if (!has) {
+		if (!(await findChrome().then(() => true, () => false))) {
 			t.skip('크롬이 없어 건너뜀');
 			return;
 		}
 
 		const entry = new URL('../render/index.ts', import.meta.url).href;
+		// 자식은 스스로 끝나지 않는다. 부모가 크롬을 확인한 뒤 신호를 보낸다.
 		const script =
 			`import { renderDiagram } from ${JSON.stringify(entry)};\n` +
-			`renderDiagram({ title: '고아 확인', nodes: [{ x:0, y:0, title:'A' }], legend:false });\n` +
-			`setTimeout(() => process.exit(0), 1200);\n`;
+			`renderDiagram({ title: '고아 확인', nodes: [{ x:0, y:0, title:'A' }], legend:false })\n` +
+			`  .catch(() => {});\n` +
+			`setInterval(() => {}, 1000);\n`;
 
-		// ★ 자식에게 전용 TMPDIR 을 준다. 렌더러는 os.tmpdir() 아래에 프로필을 만들므로
-		//   이 검사가 **이 자식이 띄운 크롬만** 보게 된다. 전역으로 찾으면 같은 기계에서
-		//   돌고 있는 다른 렌더를 남의 고아로 오인한다.
+		// 자식에게 전용 TMPDIR 을 준다 — 이 자식이 띄운 크롬만 보기 위해서다.
+		// 전역으로 찾으면 같은 기계의 다른 렌더를 남의 고아로 오인한다.
 		const sandbox = await mkdtemp(join(tmpdir(), 'velog-mcp-orphan-test-'));
 		const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
 			stdio: 'ignore',
 			env: { ...process.env, TMPDIR: sandbox },
 		});
-		await new Promise<void>((resolve) => child.on('exit', () => { resolve(); }));
 
-		// ★ 고정 대기로 두면 안 된다. 브라우저 본체는 SIGKILL 로 즉시 죽지만 헬퍼
-		//   프로세스(gpu·network·storage)가 뒤따라 정리되는 데 걸리는 시간은 부하에
-		//   따라 달라진다 — 1.5초 고정이었을 때 단독 실행은 통과하고 전체 스위트에서는
-		//   실패했다. '언젠가 사라진다'가 보장이므로 사라질 때까지 본다.
-		// ★ `pgrep -f "velog-mcp-chrome-"` 는 **자기를 실행한 셸까지 잡는다** —
-		//   그 셸의 명령줄에 패턴 문자열이 그대로 들어 있기 때문이다. 처음엔 그걸
-		//   모르고 잡힌 pid 를 kill 했더니 테스트가 자기 프로세스 트리를 죽였다.
-		//   `velog[-]mcp` 로 쓰면 찾는 대상(`velog-mcp`)에는 맞고 명령줄 자신에는
-		//   안 맞는다. 거기에 더해 죽이기 전에 '정말 크롬인지' 한 번 더 본다.
-		// `pgrep -f <문자열>` 은 **자기를 실행한 셸까지 잡는다** (그 셸 명령줄에 패턴이
-		// 그대로 들어 있다). 처음엔 그걸 모르고 잡힌 pid 를 kill 했더니 테스트가 자기
-		// 프로세스 트리를 죽였다. `[-]` 로 쪼개면 대상에는 맞고 자신에는 안 맞는다.
+		// ★ `pgrep -f <문자열>` 은 자기를 실행한 셸까지 잡는다 (그 셸 명령줄에 패턴이
+		//   그대로 있다). 처음엔 그걸 모르고 잡힌 pid 를 kill 했다가 테스트가 자기
+		//   프로세스 트리를 죽였다. `[-]` 로 쪼개면 대상에는 맞고 자신에는 안 맞는다.
 		const marker = sandbox.replace('-orphan-test-', '[-]orphan-test-');
 		const alive = (): string[] =>
 			execFileSync('bash', ['-c', `pgrep -f "${marker}" || true`])
@@ -599,26 +703,36 @@ describe('★★ R13 — 서버가 죽으면 크롬도 같이 죽는다', () => 
 				.split('\n')
 				.map((v) => v.trim())
 				.filter((v) => /^\d+$/.test(v));
+
+		// ① 크롬이 실제로 떴는가 — 이게 확인돼야 이 검사에 의미가 있다
+		let up: string[] = [];
+		for (let i = 0; i < 60 && up.length === 0; i++) {
+			await new Promise<void>((resolve) => setTimeout(resolve, 200));
+			up = alive();
+		}
+		if (up.length === 0) {
+			child.kill('SIGKILL');
+			await rm(sandbox, { recursive: true, force: true }).catch(() => {});
+			assert.fail('자식이 크롬을 띄우지 못했다 — 이 검사는 의미가 없다');
+		}
+
+		// ② 서버를 SIGTERM 으로 내린다 (exit 훅이 아니라 시그널 경로)
+		child.kill('SIGTERM');
+		await new Promise<void>((resolve) => child.on('exit', () => { resolve(); }));
+
+		// ③ 사라질 때까지 본다. 본체는 즉시 죽지만 헬퍼 정리 시간은 부하에 따라 다르다.
 		let left = alive();
 		for (let i = 0; i < 40 && left.length > 0; i++) {
 			await new Promise<void>((resolve) => setTimeout(resolve, 250));
 			left = alive();
 		}
-		// ★ 자식이 애초에 크롬을 안 띄웠다면 '고아 없음'은 아무 의미가 없다 —
-		//   종료 훅을 지워도 통과하는 위양성이 된다. 프로필 폴더가 생겼는지로
-		//   '크롬을 띄우는 데까지는 갔다'를 확인한다 (자식이 먼저 죽어 정리 코드가
-		//   안 돌았으므로 폴더는 남아 있다).
-		const spawned = (await readdir(sandbox).catch(() => [])).some((n) =>
-			n.startsWith('velog-mcp-chrome-'),
-		);
-		assert.ok(spawned, '자식이 크롬을 띄우지도 못했다 — 이 검사는 의미가 없다');
 
 		// 걸렸으면 치우고 실패시킨다 — 테스트가 쓰레기를 남기면 안 된다.
-		// 다만 pid 만 믿고 죽이지 않는다. 명령줄에 크롬이 보이는 것만 죽인다.
+		// pid 만 믿고 죽이지 않는다. 크로미움 계열이 맞는지 명령줄로 한 번 더 본다.
 		const stuck: string[] = [];
 		for (const pid of left) {
 			const cmd = execFileSync('bash', ['-c', `ps -o command= -p ${pid} || true`]).toString();
-			if (!cmd.includes('Chrome') && !cmd.includes('chrom')) continue;
+			if (!/chrom|Chrome|Edge|Brave/i.test(cmd)) continue;
 			stuck.push(`${pid}: ${cmd.trim().slice(0, 60)}`);
 			execFileSync('bash', ['-c', `kill -9 ${pid} || true`]);
 		}
@@ -626,7 +740,6 @@ describe('★★ R13 — 서버가 죽으면 크롬도 같이 죽는다', () => 
 		assert.deepEqual(stuck, [], `10초를 기다려도 크롬이 남아 있다:\n${stuck.join('\n')}`);
 	});
 });
-
 
 describe('★★ R14 — 감사에 걸린 그림은 실제로 업로드까지 가지 않는다 (크롬 필요)', () => {
 	// R7 은 clean 판정식에 필드가 들어 있는지만 본다 — 텍스트 검사다.
@@ -727,6 +840,82 @@ describe('★★ R14 — 감사에 걸린 그림은 실제로 업로드까지 �
 				);
 			}
 		}
+		await client.close();
+	});
+});
+
+
+describe('★ R15 — 자원·우회 가드 (크롬 필요)', () => {
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+
+	// 좌표를 ±20000 으로 묶어도 그 안에서 4만×4만 캔버스가 나온다.
+	// 감사와 무관하게 스크린샷 **전에** 막아야 한다.
+	test('캔버스가 상한을 넘으면 스크린샷 전에 막힌다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		await assert.rejects(
+			() =>
+				renderDiagram({
+					title: '초대형',
+					nodes: [{ x: 0, y: 0, title: 'A' }],
+					edges: [{ points: [[-20000, -20000], [20000, 20000]] }],
+					legend: false,
+				}),
+			/너무 큽니다/,
+		);
+	});
+
+	// force_upload 를 없앴더니 "감사 실패 → 그 경로를 velog_upload_image 에" 라는
+	// 두 단계 우회가 남았다. 이 서버가 떨어뜨린 산출물은 이 서버로 못 올린다.
+	test('감사에 걸린 산출물은 velog_upload_image 로도 못 올린다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		let uploads = 0;
+		const velog = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'a.b.c', refreshToken: undefined },
+			},
+			fetchImpl: (async () => {
+				uploads += 1;
+				return new Response(JSON.stringify({ path: 'https://velog.velcdn.com/x.png' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}) as unknown as typeof fetch,
+		});
+		const server = new McpServer({ name: 't', version: '0' });
+		registerImageTools(server, velog);
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: 'bypass-test', version: '0' });
+		await Promise.all([client.connect(a), server.connect(b)]);
+
+		const rendered = await client.callTool({
+			name: 'velog_render_diagram',
+			arguments: {
+				title: '일부러 겹치게',
+				nodes: [
+					{ id: 'x', x: 0, y: 0, w: 200, h: 90, title: '노드 하나' },
+					{ id: 'y', x: 100, y: 40, w: 200, h: 90, title: '겹치는 노드' },
+				],
+				upload: true,
+			},
+		});
+		const text = String((rendered.content as Array<{ text: string }>)[0]?.text);
+		const png = /로컬 PNG: (\S+\.png)/.exec(text)?.[1];
+		assert.ok(png, `PNG 경로를 못 찾았다: ${text.slice(0, 200)}`);
+		assert.equal(uploads, 0, '감사에 걸렸는데 업로드가 나갔다');
+
+		const retry = await client.callTool({
+			name: 'velog_upload_image',
+			arguments: { path: png },
+		});
+		assert.equal(retry.isError, true, '감사에 걸린 산출물이 다른 도구로 올라갔다');
+		assert.equal(uploads, 0, '우회 경로로 업로드 요청이 나갔다');
 		await client.close();
 	});
 });

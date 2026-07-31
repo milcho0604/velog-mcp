@@ -44,6 +44,20 @@ interface RunArgs {
 	scale: number;
 }
 
+/**
+ * 캔버스 상한.
+ *
+ * 좌표를 ±20000 으로 묶어도 `points=[[-20000,-20000],[20000,20000]]` 하나면
+ * 40,000×40,000 캔버스가 나온다. 2배율이면 80,000×80,000 = 64억 픽셀,
+ * RGBA 로 약 25GB 다. 요청 한 번으로 기기를 재울 수 있다.
+ *
+ * 그래서 **스크린샷을 찍기 전에** 크기를 본다. 감사 결과와 무관하게 막아야 한다 —
+ * 감사가 깨끗해도 그림이 클 수 있기 때문이다.
+ * 블로그에 넣는 그림은 이 상한 근처에도 가지 않는다.
+ */
+const MAX_DIM = 6000;
+const MAX_AREA = 9_000_000;
+
 const RENDER_PREFIX = 'velog-mcp-render-';
 const PROFILE_PREFIX = 'velog-mcp-chrome-';
 const KEEP_MS = 24 * 60 * 60 * 1000;
@@ -76,22 +90,35 @@ async function render<A extends { w: number; h: number }>(
 ): Promise<RenderResult<A>> {
 	// 정리 실패가 렌더를 막으면 안 된다 — 청소는 부수적인 일이다.
 	await sweepOld().catch(() => {});
-	const dir = await mkdtemp(join(tmpdir(), RENDER_PREFIX));
-	// ★ 크롬 두 번에 **서로 다른 프로필**을 준다.
-	//   우리는 산출물이 나오면 크롬을 SIGKILL 하고 실제 종료를 기다리지 않는다.
-	//   그래서 같은 프로필을 재사용하면 앞선 크롬이 잠금을 놓기 전에 다음 크롬이
-	//   같은 폴더를 열게 된다 — 실패로 이어질 수 있는 경합이다.
-	const profileA = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
-	const profileB = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
-	const htmlPath = join(dir, `${args.basename}.html`);
-	const pngPath = join(dir, `${args.basename}.png`);
 
+	// ★ 폴더 생성도 try 안에서 한다. 밖에 두면 두 번째 생성만 실패했을 때 앞서 만든
+	//   것들이 finally 에 도달하지 못하고 남는다.
+	// 프로필만 finally 에서 지운다. 렌더 결과(dir)는 남겨야 하므로 밖에 둘 이유가 없다.
+	let profileA = '';
+	let profileB = '';
 	try {
+		const dir = await mkdtemp(join(tmpdir(), RENDER_PREFIX));
+		// 크롬 두 번에 **서로 다른 프로필**을 준다. 산출물이 나오면 SIGKILL 하고 실제
+		// 종료를 기다리지 않으므로, 같은 프로필을 재사용하면 앞선 크롬이 잠금을 놓기
+		// 전에 다음 크롬이 같은 폴더를 열게 된다.
+		profileA = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
+		profileB = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
+		const htmlPath = join(dir, `${args.basename}.html`);
+		const pngPath = join(dir, `${args.basename}.png`);
 		await writeFile(htmlPath, args.html, 'utf8');
 		const fileUrl = pathToFileURL(htmlPath).href;
 
 		const dom = await dumpDom(fileUrl, { profileDir: profileA });
 		const audit = parse(dom);
+
+		if (audit.w > MAX_DIM || audit.h > MAX_DIM || audit.w * audit.h > MAX_AREA) {
+			throw new Error(
+				`그림이 너무 큽니다: ${audit.w}×${audit.h}px ` +
+					`(상한 ${MAX_DIM}px / 면적 ${(MAX_AREA / 1_000_000).toFixed(0)}백만px).\n` +
+					'좌표 간격을 줄이세요 — 캔버스는 내용 bbox 로 자동 계산되므로 ' +
+					'노드를 멀리 떨어뜨릴수록 그대로 커집니다.',
+			);
+		}
 
 		await screenshot(fileUrl, pngPath, {
 			profileDir: profileB,
@@ -120,10 +147,9 @@ async function render<A extends { w: number; h: number }>(
 	} finally {
 		// 크롬 프로필은 임시 산출물이라 항상 지운다. 렌더 결과(dir)는 남긴다 —
 		// 사용자가 HTML 을 열어 손보거나 PNG 를 다시 쓸 수 있어야 한다.
-		await Promise.all([
-			rm(profileA, { recursive: true, force: true }).catch(() => {}),
-			rm(profileB, { recursive: true, force: true }).catch(() => {}),
-		]);
+		for (const profile of [profileA, profileB]) {
+			if (profile) await rm(profile, { recursive: true, force: true }).catch(() => {});
+		}
 	}
 }
 
