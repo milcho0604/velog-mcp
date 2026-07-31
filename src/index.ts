@@ -92,7 +92,19 @@ async function main(): Promise<void> {
 }
 
 /**
- * 그림 도구 3종이 지금 쓸 수 있는 상태인지 기동할 때 말한다.
+ * 크롬이 있어야만 되는 도구들.
+ *
+ * ⚠️ 한때 "그림 도구 3종"이라고 안내했는데 **틀렸다.** `velog_upload_image` 는
+ *   로컬 파일을 읽어 올릴 뿐이라 크롬이 필요 없다. 크롬 없는 사용자가 멀쩡히
+ *   되는 업로드까지 못 쓴다고 오해하게 만드는 안내였다.
+ *
+ * 그래서 개수를 세지 않고 **이름을 적는다.** 숫자는 코드와 따로 놀 수 있지만
+ * 이름은 테스트가 실물과 대조할 수 있다(P22).
+ */
+export const CHROME_TOOLS = ['velog_render_diagram', 'velog_render_cover'] as const;
+
+/**
+ * 그 도구들이 지금 쓸 수 있는 상태인지 기동할 때 말한다.
  *
  * 왜 기동 때인가 — 크롬이 없으면 `velog_render_diagram` 을 처음 부르는 순간에야
  * 알게 된다. 그 시점은 대개 글을 쓰다가 그림이 필요해진 때라, 거기서 설치를
@@ -103,16 +115,16 @@ async function main(): Promise<void> {
  * 재기동 없이 바로 되는 것도 이쪽이다.
  */
 async function describeRenderReadiness(): Promise<string> {
+	const names = CHROME_TOOLS.join(' · ');
 	try {
 		const path = await findChrome();
-		return `[${SERVER_NAME}] 그림 도구 3종: 사용 가능 (${path})\n`;
+		return `[${SERVER_NAME}] 그림 도구(${names}): 사용 가능 (${path})\n`;
 	} catch (error: unknown) {
 		const why = error instanceof Error ? error.message.split('\n')[0] : String(error);
 		return (
-			`[${SERVER_NAME}] ⚠️ 그림 도구 3종(다이어그램·표지·이미지 업로드 중 렌더)이 ` +
-			`지금은 안 됩니다 — ${why}\n` +
+			`[${SERVER_NAME}] ⚠️ 그림 도구(${names})가 지금은 안 됩니다 — ${why}\n` +
 			'   크롬을 설치하거나, 이미 있다면 `/plugin manage` 에서 크롬 경로를 지정하세요. ' +
-			'나머지 도구는 정상 동작합니다.\n'
+			'나머지 도구는 전부 정상 동작합니다(이미지 업로드 포함).\n'
 		);
 	}
 }

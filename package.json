@@ -11,19 +11,22 @@
     "dist",
     "docs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "npm-shrinkwrap.json"
   ],
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "verify:dist": "node scripts/verify-dist.ts",
     "watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
     "test": "node --test 'src/__tests__/*.test.ts'",
     "schema:dump": "node scripts/dump-schema.ts",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "prepublishOnly": "npm run build && npm run verify:dist"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

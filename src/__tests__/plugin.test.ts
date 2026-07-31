@@ -19,7 +19,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, access, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -31,7 +32,9 @@ import {
 import { readAuthFromEnv } from '../auth.ts';
 import { readCapabilities } from '../capabilities.ts';
 import { findChrome, resetChromeCache } from '../render/chrome.ts';
-import { SERVER_VERSION } from '../index.ts';
+import { SERVER_VERSION, CHROME_TOOLS } from '../index.ts';
+
+const execFile = promisify(execFileCb);
 
 const ROOT = new URL('../../', import.meta.url);
 const PLUGIN = new URL('plugins/velog/', ROOT);
@@ -39,6 +42,130 @@ const PLUGIN = new URL('plugins/velog/', ROOT);
 async function json(url: URL): Promise<Record<string, unknown>> {
 	return JSON.parse(await readFile(url, 'utf8')) as Record<string, unknown>;
 }
+
+/**
+ * 진짜 JSON-RPC 를 던지고 응답을 받는다.
+ *
+ * ★ 왜 필요한가 — `server.connect()` 를 통째로 지워도 기동 로그는 먼저 나온다.
+ *   즉 로그만 보는 테스트는 "말은 하는데 서버가 아닌" 상태를 못 잡는다.
+ *
+ * ★ 프로토콜 밖의 줄도 모은다(`junk`)
+ *   stdout 은 MCP 전용이다. 여기에 `console.log` 한 줄만 섞여도 클라이언트가
+ *   프레이밍을 잃는다. 처음엔 파싱 실패한 줄을 조용히 버렸는데, 그러면
+ *   기동 경로에 디버그 출력을 넣어도 테스트가 통과한다. 버리지 않고 돌려준다.
+ */
+async function rpc(
+	requests: readonly Record<string, unknown>[],
+	env: NodeJS.ProcessEnv = {},
+): Promise<{ responses: Array<Record<string, unknown>>; junk: string[] }> {
+	const entry = fileURLToPath(new URL('index.ts', new URL('../', import.meta.url)));
+	const child = spawn(process.execPath, [entry], {
+		stdio: ['pipe', 'pipe', 'ignore'],
+		env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '', ...env },
+	});
+
+	for (const request of requests) child.stdin.write(`${JSON.stringify(request)}\n`);
+
+	// 알림(`id` 없음)에는 응답이 오지 않는다. 요청 수로 세면 영원히 안 차서
+	// 매번 제한시간을 다 쓴다 — 실제로 그렇게 만들었다가 15초씩 걸렸다.
+	const expected = requests.filter((request) => 'id' in request).length;
+
+	let buffer = '';
+	const responses: Array<Record<string, unknown>> = [];
+	const junk: string[] = [];
+	return await new Promise((resolve) => {
+		const done = (): void => {
+			clearTimeout(timer);
+			child.kill('SIGKILL');
+			resolve({ responses, junk });
+		};
+		const timer = setTimeout(done, 15_000);
+		child.stdout.on('data', (chunk: Buffer) => {
+			buffer += chunk.toString('utf8');
+			const lines = buffer.split('\n');
+			buffer = lines.pop() ?? '';
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					responses.push(JSON.parse(line) as Record<string, unknown>);
+				} catch {
+					junk.push(line);
+				}
+			}
+			if (responses.length >= expected) done();
+		});
+		child.on('error', done);
+		child.on('close', done);
+	});
+}
+
+/** 서버에 직접 물어본 도구 목록. 문서의 숫자가 아니라 실물이다. */
+async function rpcTools(): Promise<Array<{ name: string }>> {
+	const { responses } = await rpc([
+		{
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'initialize',
+			params: {
+				protocolVersion: '2024-11-05',
+				capabilities: {},
+				clientInfo: { name: 'plugin-test', version: '0' },
+			},
+		},
+		{ jsonrpc: '2.0', method: 'notifications/initialized' },
+		{ jsonrpc: '2.0', id: 2, method: 'tools/list' },
+	]);
+	const list = responses.find((r) => r['id'] === 2);
+	return ((list?.['result'] as { tools?: Array<{ name: string }> })?.tools ?? []);
+}
+
+/**
+ * git 이 추적하는 파일 목록 = **사용자 기계로 클론되는 것 전부.**
+ *
+ * 직접 디렉터리를 훑으면 `.gitignore` 대상까지 섞이고, 목록을 손으로 적으면
+ * 새 파일이 생길 때마다 빠진다. git 에게 묻는 게 정확하다.
+ */
+async function trackedFiles(cwd: string): Promise<string[]> {
+	const { stdout } = await execFile('git', ['ls-files'], { cwd, maxBuffer: 4 * 1024 * 1024 });
+	const candidates = stdout
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => /\.(ts|js|json|md|yml|yaml)$/.test(line));
+
+	// 인덱스에는 남아 있지만 작업 트리에서 지워진 파일이 있을 수 있다
+	// (예: `npm shrinkwrap` 이 package-lock.json 을 없앤 직후). 그건 배포되지 않는다.
+	const present = await Promise.all(
+		candidates.map(async (relative) =>
+			access(new URL(relative, ROOT), constants.R_OK).then(
+				() => relative,
+				() => null,
+			),
+		),
+	);
+	return present.filter((value): value is string => value !== null);
+}
+
+/**
+ * 실제 사람의 주소만 골라낸다.
+ *
+ * 예외는 **도메인 끝자리**로 판정한다. '문자열에 noreply 가 들어 있으면 통과'로
+ * 두면 임의 도메인 주소에 그 낱말만 끼워 넣어 빠져나갈 수 있다.
+ * 전각 `＠` 도 본다 — 눈으로는 같은 글자다.
+ */
+const ALLOWED_EMAIL_DOMAINS = ['users.noreply.github.com', 'noreply.github.com'];
+
+function findPersonalEmails(text: string): string[] {
+	return [...text.matchAll(/[A-Za-z0-9._%+-]+[@＠][A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)]
+		.map((m) => m[0])
+		.filter((value) => !ALLOWED_EMAIL_DOMAINS.some((domain) => value.endsWith(domain)));
+}
+
+/** 개발 기계의 홈 경로. 남으면 사용자 계정명이 그대로 새 나간다. */
+const LOCAL_PATH_PATTERNS = [
+	['macOS', /\/Users\/(?!\.\.\.|<)[^\s/'")\]]+/],
+	['리눅스', /\/home\/(?!\.\.\.|<|user\b)[^\s/'")\]]+/],
+	['윈도우', /[A-Z]:\\Users\\(?!<)[^\s\\'")\]]+/],
+] as const;
 
 /** `src/` 전체를 훑는다. 소비 지점을 하나라도 빠뜨리면 P15 가 헛돈다. */
 async function readAllSources(dir: URL): Promise<Array<[string, string]>> {
@@ -402,57 +529,8 @@ describe('★ P19 — 디렉터리를 크롬 실행 파일로 오인하지 않�
 });
 
 describe('★ P18 — 기동 로그만 내는 게 아니라 실제로 MCP 로 붙는다', () => {
-	/**
-	 * 코덱스가 짚은 구멍이다: `server.connect()` 를 통째로 지워도 기동 로그는 먼저
-	 * 나오므로 P13/P14 가 전부 통과한다. 즉 "말은 하는데 서버가 아닌" 상태를 못 잡는다.
-	 * 그래서 진짜 JSON-RPC 를 던지고 응답을 받는다.
-	 */
-	async function rpc(
-		requests: readonly Record<string, unknown>[],
-		env: NodeJS.ProcessEnv = {},
-	): Promise<Array<Record<string, unknown>>> {
-		const entry = fileURLToPath(new URL('index.ts', new URL('../', import.meta.url)));
-		const child = spawn(process.execPath, [entry], {
-			stdio: ['pipe', 'pipe', 'ignore'],
-			env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '', ...env },
-		});
-
-		for (const request of requests) child.stdin.write(`${JSON.stringify(request)}\n`);
-
-		// 알림(`id` 없음)에는 응답이 오지 않는다. 요청 수로 세면 영원히 안 차서
-		// 매번 제한시간을 다 쓴다 — 실제로 그렇게 만들었다가 15초씩 걸렸다.
-		const expected = requests.filter((request) => 'id' in request).length;
-
-		let buffer = '';
-		const received: Array<Record<string, unknown>> = [];
-		return await new Promise((resolve) => {
-			const done = (): void => {
-				clearTimeout(timer);
-				child.kill('SIGKILL');
-				resolve(received);
-			};
-			const timer = setTimeout(done, 15_000);
-			child.stdout.on('data', (chunk: Buffer) => {
-				buffer += chunk.toString('utf8');
-				const lines = buffer.split('\n');
-				buffer = lines.pop() ?? '';
-				for (const line of lines) {
-					if (!line.trim()) continue;
-					try {
-						received.push(JSON.parse(line) as Record<string, unknown>);
-					} catch {
-						// 프로토콜 밖의 줄은 무시한다. stdout 은 MCP 전용이라 없어야 정상이다.
-					}
-				}
-				if (received.length >= expected) done();
-			});
-			child.on('error', done);
-			child.on('close', done);
-		});
-	}
-
 	test('initialize 에 응답하고 도구 목록을 돌려준다', async () => {
-		const responses = await rpc([
+		const { responses, junk } = await rpc([
 			{
 				jsonrpc: '2.0',
 				id: 1,
@@ -466,6 +544,9 @@ describe('★ P18 — 기동 로그만 내는 게 아니라 실제로 MCP 로 �
 			{ jsonrpc: '2.0', method: 'notifications/initialized' },
 			{ jsonrpc: '2.0', id: 2, method: 'tools/list' },
 		]);
+
+		// stdout 은 MCP 전용이다. 한 줄만 섞여도 클라이언트가 프레이밍을 잃는다.
+		assert.deepEqual(junk, [], 'stdout 에 프로토콜 아닌 줄이 섞였다');
 
 		const init = responses.find((r) => r['id'] === 1);
 		assert.ok(init, `initialize 응답이 없다: ${JSON.stringify(responses)}`);
@@ -663,37 +744,145 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		}
 	});
 
-	test('P21 — 배포물에 개인정보·로컬 경로가 실리지 않는다', async () => {
-		// 플러그인을 git 소스로 설치하면 **레포 전체가 사용자 기계로 클론된다.**
+	test('P21 — 배포되는 모든 파일에 개인정보·로컬 경로가 실리지 않는다', async () => {
+		// 플러그인을 git 소스로 설치하면 **레포 전체가 사용자 기계로 클론되고**,
 		// npm 에 올리면 매니페스트가 레지스트리 페이지에 영구히 걸린다.
 		// 연락은 GitHub 이슈로 받는다 — 이메일을 적을 이유가 없다.
-		const files = [
-			['package.json', await readFile(new URL('package.json', ROOT), 'utf8')],
-			[
-				'plugin.json',
-				await readFile(new URL('.claude-plugin/plugin.json', PLUGIN), 'utf8'),
-			],
-			[
-				'marketplace.json',
-				await readFile(new URL('.claude-plugin/marketplace.json', ROOT), 'utf8'),
-			],
-			['plugin README', await readFile(new URL('README.md', PLUGIN), 'utf8')],
-		] as const;
+		//
+		// ⚠️ 처음엔 파일 넷만 봤다. 코덱스가 짚었다 — `.mcp.json`·루트 README 둘·
+		//    `docs/` 를 통째로 놓치고, 예외가 '문자열에 noreply 가 들어 있으면 통과'라
+		//    너무 넓었다(임의 도메인 주소에 그 낱말만 끼워 넣으면 빠져나간다).
+		//    지금은 **git 이 추적하는 배포 표면 전체**를 훑고, 예외는 도메인 끝자리로 좁혔다.
+		//    이 주석에 예시 주소를 적었다가 이 테스트에 잡혔다 — 그게 의도한 동작이다.
+		const shipped = await trackedFiles(fileURLToPath(ROOT));
+		assert.ok(shipped.length >= 20, `훑은 파일이 너무 적다: ${shipped.length}`);
 
-		for (const [label, text] of files) {
-			// 스코프 패키지(@scope/name)와 noreply 는 이메일이 아니다.
-			const emails = [...text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)]
-				.map((m) => m[0])
-				.filter((value) => !value.includes('noreply') && !value.startsWith('@'));
-			assert.deepEqual(emails, [], `${label} 에 이메일 주소가 있다`);
+		for (const relative of shipped) {
+			const text = await readFile(new URL(relative, ROOT), 'utf8');
 
-			// 개발 기계의 절대 경로가 문서에 남으면 사용자 이름이 그대로 새 나간다.
-			assert.equal(
-				/\/Users\/[a-z]/i.test(text),
-				false,
-				`${label} 에 로컬 절대 경로가 있다`,
-			);
+			assert.deepEqual(findPersonalEmails(text), [], `${relative} 에 이메일 주소가 있다`);
+
+			for (const [label, pattern] of LOCAL_PATH_PATTERNS) {
+				const hit = pattern.exec(text);
+				assert.equal(hit, null, `${relative} 에 ${label} 로컬 경로가 있다: ${hit?.[0] ?? ''}`);
+			}
 		}
+	});
+
+	test('P21b — 그 걸러내는 규칙 자체를 시험한다', () => {
+		// ⚠️ 실제 파일만 훑으면, 규칙을 느슨하게 되돌려도 **지금 그 허점을 찌르는 값이
+		//    없어서** 테스트가 통과한다. 실제로 변이 검증에서 살아남았다.
+		//    그래서 규칙에 직접 나쁜 값을 먹인다.
+		//
+		// ⚠️⚠️ 그 값들을 소스에 그대로 적으면 **이 파일이 P21 에 걸린다**(실제로 걸렸다).
+		//    이 파일도 클론돼 나가므로 스캔에서 빼는 건 구멍이 된다.
+		//    그래서 실행할 때 조립한다 — 소스에는 온전한 주소가 없다.
+		const at = String.fromCodePoint(0x40);
+		const wideAt = String.fromCodePoint(0xff20);
+		const mustCatch = [
+			// 도메인 아무 데나 그 낱말만 끼워 넣어 예외를 흉내내는 경우
+			['임의 도메인 + noreply 낱말', `a-noreply${at}evil-domain.test`],
+			['하위도메인만 흉내', `a${at}users.noreply.github.com.evil.test`],
+			['전각 골뱅이', `someone${wideAt}gmail.com`],
+			['평범한 개인 주소', `someone${at}gmail.com`],
+		] as const;
+		for (const [label, value] of mustCatch) {
+			assert.deepEqual(findPersonalEmails(value), [value], `못 잡았다: ${label}`);
+		}
+
+		const mustPass = [
+			`128167167+milcho0604${at}users.noreply.github.com`,
+			`noreply${at}noreply.github.com`,
+			'@modelcontextprotocol/sdk', // 스코프 패키지는 이메일이 아니다
+			'velog.io/@milcho0604', // 블로그 핸들
+		] as const;
+		for (const value of mustPass) {
+			assert.deepEqual(findPersonalEmails(value), [], `잘못 잡았다: ${value}`);
+		}
+
+		// 경로 규칙도 같이 시험한다. 문서의 자리표시자는 실제 경로가 아니다.
+		// 경로도 같은 이유로 조립한다 — 소스에 온전한 홈 경로를 적으면 P21 에 걸린다.
+		const [macos, linux, windows] = LOCAL_PATH_PATTERNS;
+		const who = 'some' + 'one';
+		const posix = (root: string): string => ['', root, who, 'dev'].join('/');
+		const win = ['C:', 'Users', who, 'dev'].join('\\');
+
+		assert.notEqual(macos[1].exec(posix('Users')), null, 'macOS 홈 경로를 놓쳤다');
+		assert.notEqual(linux[1].exec(posix('home')), null, '리눅스 홈 경로를 놓쳤다');
+		assert.notEqual(windows[1].exec(win), null, '윈도우 홈 경로를 놓쳤다');
+
+		// 문서에 흔한 자리표시자·일반명은 실제 경로가 아니다.
+		assert.equal(macos[1].exec(['', 'Users', '<your-name>', 'dev'].join('/')), null, '자리표시자를 잘못 잡았다');
+		assert.equal(linux[1].exec(['', 'home', 'user', 'dev'].join('/')), null, '문서용 일반명을 잘못 잡았다');
+	});
+
+	test('P22 — 크롬이 필요한 도구를 개수가 아니라 이름으로 안내한다', async () => {
+		// ⚠️ "그림 도구 3종"이라고 안내했는데 틀렸다 — `velog_upload_image` 는
+		//    로컬 파일을 읽어 올릴 뿐 크롬을 쓰지 않는다. 숫자는 코드와 따로 논다.
+		//    이름을 쓰면 실물과 대조할 수 있다.
+		const responses = await rpcTools();
+		const names = new Set(responses.map((tool) => tool.name));
+		for (const tool of CHROME_TOOLS) {
+			assert.ok(names.has(tool), `${tool} 은 등록된 도구가 아니다`);
+		}
+
+		const log = await startupLog({}, [/그림 도구.*(사용 가능|안 됩니다)/s]);
+		for (const tool of CHROME_TOOLS) {
+			assert.ok(log.includes(tool), `기동 안내가 ${tool} 을 말하지 않는다:\n${log}`);
+		}
+
+		// 세 번째 도구가 렌더를 쓰기 시작하면 이 목록이 낡는다.
+		// 호출 지점 수를 세어 그때 실패하게 한다(완전한 증명은 아니고 표식이다).
+		const images = await readFile(new URL('tools/images.ts', new URL('../', import.meta.url)), 'utf8');
+		const callSites = [...images.matchAll(/await render(?:Diagram|Cover)\(/g)].length;
+		assert.equal(
+			callSites,
+			CHROME_TOOLS.length,
+			'렌더를 부르는 곳 수가 CHROME_TOOLS 와 다르다 — 목록과 안내를 갱신하라',
+		);
+	});
+
+	test('P24 — 발행이 dist 검증을 반드시 거친다', async () => {
+		// 코덱스 지적: 테스트는 `src/index.ts` 를 띄우는데 사용자가 실행하는 건
+		// `dist/index.js` 다. `dist/` 는 .gitignore 대상이라 lint·테스트가 안 닿는다.
+		// 그래서 dist 에서만 깨진 상태는 267개가 다 통과해도 안 잡힌다.
+		//
+		// `prepublishOnly` 는 `npm publish` 가 **반드시** 거치는 자리다.
+		// 이 테스트는 그 관문이 조용히 빠지는 것을 막는다.
+		const pkg = await json(new URL('package.json', ROOT));
+		const scripts = pkg['scripts'] as Record<string, string>;
+
+		const gate = scripts['prepublishOnly'] ?? '';
+		assert.match(gate, /\bbuild\b/, '발행 전에 빌드하지 않으면 낡은 dist 가 나간다');
+		assert.match(gate, /verify:dist/, '발행 전에 dist 를 띄워보지 않는다');
+
+		assert.match(
+			scripts['verify:dist'] ?? '',
+			/scripts\/verify-dist\.ts/,
+			'verify:dist 가 검증 스크립트를 가리키지 않는다',
+		);
+		await access(new URL('scripts/verify-dist.ts', ROOT), constants.R_OK);
+	});
+
+	test('P23 — 의존성 트리 전체를 고정해서 발행한다', async () => {
+		// 코덱스 지적: `@milcho0604/velog-mcp@0.4.0` 을 정확히 핀해도 **그 안의 의존성은
+		// 안 고정된다**(`^1.30.0`, `^4.4.3`). 나중 콜드 설치는 같은 0.4.0 이어도 더 새
+		// 의존성을 받고, 그 코드는 **토큰이 든 같은 프로세스에서** 돈다.
+		// `npm-shrinkwrap.json` 은 package-lock 과 달리 발행물에 실려 트리를 고정한다.
+		const pkg = await json(new URL('package.json', ROOT));
+		const shrink = await json(new URL('npm-shrinkwrap.json', ROOT));
+
+		assert.equal(shrink['version'], pkg['version'], 'shrinkwrap 버전이 패키지와 다르다');
+
+		// `files` 화이트리스트에 없으면 tarball 에 안 실린다 — 실측으로 확인했다.
+		assert.ok(
+			(pkg['files'] as string[]).includes('npm-shrinkwrap.json'),
+			'files 에 없으면 발행물에 안 실려서 고정이 무의미해진다',
+		);
+
+		const packages = shrink['packages'] as Record<string, { dev?: boolean }>;
+		const production = Object.keys(packages).filter((k) => k && !packages[k]?.dev);
+		assert.ok(production.length > 50, `고정된 운영 의존성이 너무 적다: ${production.length}`);
 	});
 
 	test('P12 — .mcp.json 의 env 에는 실제 값이 들어갈 수 없다', async () => {

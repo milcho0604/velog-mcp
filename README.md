@@ -259,7 +259,8 @@ from primitive shapes. Nothing is fetched — the renderer runs with DNS disable
 
 **Requires Chrome** (or any Chromium-based browser: Edge, Brave, Chromium). It is found
 automatically on macOS/Linux/Windows; set `VELOG_CHROME_PATH` if yours lives elsewhere.
-Only these three tools need it — the other 18 work without a browser.
+Only `velog_render_diagram` and `velog_render_cover` need it — `velog_upload_image`
+just reads a local file, so it and the other 18 tools work without a browser.
 
 **Cost, measured:** one diagram is ~1 GB peak across 9–11 Chrome processes for 3–4
 seconds, then back to zero. That's Chrome's floor, not our content. Coordinates, text
