@@ -28,7 +28,7 @@ Claude Code 플러그인에는 `userConfig` 가 있고, `sensitive: true` 로 �
 
 ```
 velog-mcp/
-├── .claude-plugin/marketplace.json     ← 마켓플레이스 `milcho-plugins`
+├── .claude-plugin/marketplace.json     ← 마켓플레이스 `milcho`
 └── plugins/velog/                      ← 플러그인 `velog`
     ├── .claude-plugin/plugin.json      ← userConfig 4개
     ├── .mcp.json                       ← npx 로 npm 패키지 실행

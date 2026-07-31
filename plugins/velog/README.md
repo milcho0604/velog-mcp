@@ -1,6 +1,7 @@
 # Velog — Claude Code 플러그인
 
-벨로그(velog.io)를 Claude Code 안에서 읽고 쓴다. 도구 26종.
+벨로그(velog.io)를 Claude Code 안에서 읽고 쓴다. 기본 도구 21개
+(프로필 수정을 켜면 5개가 더 붙는다).
 
 전체 문서는 저장소 루트에 있다 — [README.ko.md](../../README.ko.md) ·
 [docs/tools.md](../../docs/tools.md) · [docs/security.md](../../docs/security.md)
@@ -9,7 +10,7 @@
 
 ```bash
 /plugin marketplace add milcho0604/velog-mcp
-/plugin install velog@milcho-plugins
+/plugin install velog@milcho
 ```
 
 설치하면 값 네 개를 묻는다. **하나도 안 넣어도 설치는 되고, 읽기 전용으로 동작한다.**

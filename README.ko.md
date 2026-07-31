@@ -38,7 +38,7 @@ HTTP·테스트 러너·타입스크립트 실행은 전부 Node 24 내장을 �
 
 ```bash
 /plugin marketplace add milcho0604/velog-mcp
-/plugin install velog@milcho-plugins
+/plugin install velog@milcho
 ```
 
 설치할 때 값 네 개를 묻는다. **하나도 안 넣어도 설치되고, 읽기 전용으로 동작한다.**

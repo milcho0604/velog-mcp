@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-	"name": "milcho-plugins",
+	"name": "milcho",
 	"description": "밀초가 만든 Claude Code 플러그인.",
 	"owner": {
 		"name": "Changhyun Kim",
@@ -11,8 +11,10 @@
 		{
 			"name": "velog",
 			"source": "./plugins/velog",
+			"description": "Read and write Velog (velog.io), the Korean developer blogging platform. Browse, search, trending, and blog stats work with no auth. Writing defaults to drafts and private posts — public publishing is opt-in at install. Also renders diagrams and cover images for your posts and uploads them (needs local Chrome). 벨로그 글을 읽고 쓰고, 다이어그램·표지도 그려서 올립니다.",
+			"homepage": "https://github.com/milcho0604/velog-mcp#readme",
 			"category": "productivity",
-			"tags": ["blog", "velog", "writing", "korean"]
+			"tags": ["blog", "velog", "writing", "publishing", "korean", "diagram"]
 		}
 	]
 }

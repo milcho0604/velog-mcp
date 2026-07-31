@@ -3,7 +3,7 @@
 	"name": "velog",
 	"displayName": "Velog",
 	"version": "0.4.0",
-	"description": "벨로그(velog.io) 블로그를 읽고 쓴다. 조회·검색·통계는 인증 없이, 쓰기는 초안과 비공개 발행이 기본. 공개 발행은 설치할 때 따로 켜야 한다. 글에 넣을 다이어그램·표지 이미지도 그려서 올린다(로컬 크롬 필요).",
+	"description": "Read and write Velog (velog.io), the Korean developer blogging platform. Browse, search, trending, and blog stats work with no auth. Writing defaults to drafts and private posts — public publishing is opt-in at install. Also renders diagrams and cover images for your posts and uploads them (needs local Chrome). 벨로그 글을 읽고 쓰고, 다이어그램·표지도 그려서 올립니다.",
 	"author": {
 		"name": "Changhyun Kim",
 		"email": "milcho0604@gmail.com",
@@ -12,7 +12,17 @@
 	"homepage": "https://github.com/milcho0604/velog-mcp#readme",
 	"repository": "https://github.com/milcho0604/velog-mcp",
 	"license": "MIT",
-	"keywords": ["velog", "blog", "writing", "korean", "diagram"],
+	"keywords": [
+		"velog",
+		"blog",
+		"blogging",
+		"writing",
+		"publishing",
+		"korean",
+		"markdown",
+		"diagram",
+		"cover-image"
+	],
 	"userConfig": {
 		"refresh_token": {
 			"type": "string",

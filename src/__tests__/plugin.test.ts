@@ -606,6 +606,25 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		assert.equal(entry['name'], manifest['name'], '슬러그가 다르면 사용자가 보는 이름이 갈린다');
 	});
 
+	test('P20 — 목록에 보이는 설명이 설치 화면 설명과 같다', async () => {
+		// 커뮤니티 카탈로그 실측(2,307개): 전부 `description` 이 있고 2,306개가 `homepage` 가 있다.
+		// 그리고 사용자가 목록에서 걸러내는 축은 **이름과 설명뿐**이다(공식 문서).
+		// 설명이 두 파일에 복제돼 있으므로 어긋나면 카탈로그와 설치 화면이 다른 말을 한다.
+		const market = await json(new URL('.claude-plugin/marketplace.json', ROOT));
+		const entry = (market['plugins'] as Array<Record<string, unknown>>)[0];
+		const manifest = await json(new URL('.claude-plugin/plugin.json', PLUGIN));
+		assert.ok(entry);
+
+		assert.equal(entry['description'], manifest['description'], '설명이 두 파일에서 갈렸다');
+		assert.ok(entry['homepage'], '목록에서 더 볼 곳이 없으면 설치를 망설인다');
+
+		// 이 목록은 대부분 영어로 훑는다(한국어 설명은 2,307개 중 9개).
+		// 한국어만 적으면 `velog` 를 이미 아는 사람만 찾을 수 있다.
+		const description = String(manifest['description']);
+		assert.match(description, /velog/i, '이름으로 찾는 사람이 걸릴 단어가 없다');
+		assert.match(description, /[A-Za-z]{40,}|[A-Za-z][A-Za-z ,.()-]{40,}/, '영어 설명이 없다');
+	});
+
 	test('P11 — .mcp.json 이 가리키는 npm 패키지가 이 저장소의 패키지다', async () => {
 		const pkg = await json(new URL('package.json', ROOT));
 		const mcpRaw = await readFile(new URL('.mcp.json', PLUGIN), 'utf8');

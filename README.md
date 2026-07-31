@@ -41,7 +41,7 @@ Requires **Node.js 24 or newer**.
 
 ```bash
 /plugin marketplace add milcho0604/velog-mcp
-/plugin install velog@milcho-plugins
+/plugin install velog@milcho
 ```
 
 Installation asks for four values. **Leave them all blank and it still installs,
