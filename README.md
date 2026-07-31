@@ -237,7 +237,10 @@ automatically on macOS/Linux/Windows; set `VELOG_CHROME_PATH` if yours lives els
 Only these three tools need it — the other 18 work without a browser.
 
 **Cost, measured:** one diagram is ~1 GB peak across 9–11 Chrome processes for 3–4
-seconds, then back to zero. That's Chrome's floor, not our content. Renders are
+seconds, then back to zero. That's Chrome's floor, not our content. Coordinates, text
+lengths and array sizes are all bounded, and the canvas cap (6000px / 9M px) is enforced
+**inside the page** — a browser commits to a surface the moment it receives width and
+height, so checking after the fact is too late. Renders are
 **serialized** — MCP clients call tools in parallel, and without that a five-diagram
 request would mean 45 Chrome processes and 6 GB. Serialized, four concurrent requests
 still peak at one render's worth. Ten renders in a row show no accumulation.
@@ -317,8 +320,13 @@ npm run build         # tsconfig.build.json (tests excluded from dist)
 npm run schema:dump   # dump Velog's current GraphQL schema
 ```
 
-161 tests. The ones in `src/__tests__/safety.test.ts` pin the security invariants —
-if that file fails, find out why instead of working around it.
+234 tests. `src/__tests__/safety.test.ts` pins the security invariants (A1–A11) and
+`render.test.ts` pins the drawing ones (R1–R23) — if either fails, find out why instead
+of working around it.
+
+Every guard here was checked by **breaking it on purpose**: 20 mutations, each of which
+must make exactly one test fail. A test that still passes with the guard removed is not
+a test. Several in this repo did pass at first, and that is how they got fixed.
 
 ## Documentation
 
