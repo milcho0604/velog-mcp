@@ -149,13 +149,20 @@ describe('D2 — 커서가 고착돼도 집계가 부풀지 않는다', () => {
 describe('D4 — 발행된 글을 임시저장으로 끌어내리지 않는다', () => {
 	async function serverWith(postState: { is_temp?: boolean } | null) {
 		const calls: string[] = [];
+		// 소유권 검증이 currentUser 를 조회하므로 목도 그걸 답해야 한다.
+		// 대상 글의 작성자를 같은 계정으로 두어 '소유권은 통과, is_temp 로만 판정'
+		// 하는 상황을 만든다.
+		const owned = postState ? { ...postState, user: { username: 'me' } } : null;
 		const client = new VelogClient({
 			auth: authed,
 			sleepImpl: async () => {},
 			fetchImpl: jsonFetch((body) => {
 				const query = (body as { query: string }).query;
+				if (query.includes('currentUser')) {
+					return { body: { data: { currentUser: { id: 'u1', username: 'me' } } } };
+				}
 				calls.push(query.includes('PostState') ? 'check' : 'edit');
-				if (query.includes('PostState')) return { body: { data: { post: postState } } };
+				if (query.includes('PostState')) return { body: { data: { post: owned } } };
 				return {
 					body: {
 						data: {

@@ -17,6 +17,7 @@ import { QUERY_POSTS } from '../graphql.ts';
 import { formatPostList, textResult } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { resolveMyUsername } from '../me.ts';
+import { assertOwned } from '../ownership.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
 
@@ -41,7 +42,7 @@ const MUTATION_EDIT_POST = `
 /** 수정 전 상태 확인용. 필요한 필드만 받는다. */
 const QUERY_POST_STATE = `
   query PostState($input: ReadPostInput!) {
-    post(input: $input) { id is_temp }
+    post(input: $input) { id is_temp user { username } }
   }
 `;
 
@@ -182,18 +183,19 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 		async ({ id, title, body, tags, url_slug, thumbnail, series_id }) => {
 			client.requireAuth('velog_update_draft');
 
-			// ★ 발행된 글을 임시저장으로 끌어내리는 사고를 코드로 막는다.
-			//   editPost 는 is_temp 를 덮어쓰므로, 발행글 id 가 들어오면 그 글이
-			//   조용히 비공개가 된다. 문서 경고만으로는 부족해 사전 확인을 넣었다.
-			const before = await client.request<{ post: { is_temp?: boolean } | null }>(
-				QUERY_POST_STATE,
-				{ input: { id } },
-			);
+			// ★ 두 가지를 확인한 뒤에야 수정한다.
+			//   ① 내 글인가 — 벨로그 서버가 edit 에서 소유권을 안 본다(ownership.ts)
+			//   ② 정말 초안인가 — editPost 는 is_temp 를 덮어쓰므로 발행글 id 가
+			//      들어오면 그 글이 조용히 비공개로 내려간다
+			const before = await client.request<{
+				post: { id: string; is_temp?: boolean; user?: { username?: string } | null } | null;
+			}>(QUERY_POST_STATE, { input: { id } });
 			if (!before.post) {
 				throw new Error(
 					`id=${id} 인 글을 찾지 못했습니다. velog_list_drafts 로 id 를 확인하세요.`,
 				);
 			}
+			await assertOwned(client, before.post, 'velog_update_draft');
 			if (before.post.is_temp !== true) {
 				throw new Error(
 					`id=${id} 는 이미 발행된 글입니다. 이 도구로 수정하면 임시저장으로 내려가 ` +

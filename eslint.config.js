@@ -19,7 +19,7 @@ import tseslint from 'typescript-eslint';
 
 export default defineConfig(
 	{
-		ignores: ['dist/**', 'node_modules/**', 'schema-dump/**'],
+		ignores: ['dist/**', 'node_modules/**', 'schema-dump/**', 'tmp/**'],
 	},
 
 

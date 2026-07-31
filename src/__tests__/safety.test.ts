@@ -266,3 +266,42 @@ describe('A7 — 벨로그 외 호스트로 나가지 않는다', () => {
 		}
 	});
 });
+
+describe('★★ A8 — editPost 를 부르는 모든 경로에 소유권 검증이 있다', () => {
+	// 실제로 빠져 있었다. publish.ts 세 곳에만 넣고 drafts.ts 의 update_draft 를
+	// 빠뜨렸는데, is_temp 사전확인이 '우연히' 막아주고 있었다.
+	// 우연에 기대는 건 방어가 아니다 — 구조로 강제한다.
+	test('editPost mutation 을 쓰는 파일은 반드시 assertOwned 를 import 한다', async () => {
+		for (const [name, src] of await readAllSources()) {
+			if (name === 'ownership.ts') continue;
+			if (!/editPost\s*\(/.test(src)) continue;
+			assert.match(
+				src,
+				/import\s*\{[^}]*assertOwned[^}]*\}\s*from\s*'[^']*ownership\.ts'/,
+				`${name} 이 editPost 를 부르는데 assertOwned 를 가져오지 않는다`,
+			);
+		}
+	});
+
+	test('mutate() 호출 개수만큼 assertOwned 호출이 있다', async () => {
+		for (const [name, rawSrc] of await readAllSources()) {
+			const src = codeOnly(rawSrc);
+			// editPost 를 실제로 보내는 mutate 호출 수
+			const edits = (src.match(/mutate<[^>]*editPost[^>]*>/g) ?? []).length;
+			if (edits === 0) continue;
+			const guards = (src.match(/await assertOwned\(/g) ?? []).length;
+			assert.ok(
+				guards >= edits,
+				`${name}: editPost 전송 ${edits}회인데 소유권 검증은 ${guards}회다`,
+			);
+		}
+	});
+
+	test('소유권 검증은 단일 구현이다 — 복사본이 생기면 한쪽만 고쳐진다', async () => {
+		const defs = (await readAllSources()).filter(([, src]) =>
+			/export\s+async\s+function\s+assertOwned/.test(src),
+		);
+		assert.equal(defs.length, 1, `assertOwned 구현이 ${defs.length}개다`);
+		assert.equal(defs[0]?.[0], 'ownership.ts');
+	});
+});
