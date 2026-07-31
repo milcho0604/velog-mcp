@@ -15,7 +15,7 @@
  *   URL 형식이 맞는지만 보고 스킴은 안 따지기 때문이다. 썸네일은 결국 남의
  *   페이지에서 렌더되므로 http/https 로 못 박는다.
  */
-export function isSafeImageUrl(value: string): boolean {
+export function isSafeHttpUrl(value: string): boolean {
 	let url: URL;
 	try {
 		url = new URL(value);
@@ -23,9 +23,14 @@ export function isSafeImageUrl(value: string): boolean {
 		return false;
 	}
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-	// 호스트가 없는 http URL(예: "http:///x")은 이미지가 될 수 없다.
 	return url.hostname.length > 0;
 }
+
+/**
+ * 이미지용. 현재 규칙은 http(s) + 호스트 존재로 같아서 그대로 위임한다.
+ * 구현을 복사하지 않는다 — 한쪽만 고쳐지는 사고를 이 레포에서 이미 두 번 겪었다.
+ */
+export const isSafeImageUrl = isSafeHttpUrl;
 
 /** URL 에서 실제로 문제가 되는 문자만 제거한다. */
 export function slugify(title: string): string {

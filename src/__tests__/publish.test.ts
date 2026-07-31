@@ -36,6 +36,7 @@ const EXISTING = {
 	thumbnail: 'https://images.velog.io/x.png',
 	tags: ['기존태그A', '기존태그B'],
 	series: { id: 's1' },
+	meta: {} as Record<string, unknown>,
 	user: { username: 'me' },
 };
 
@@ -87,10 +88,19 @@ async function callTool(
 				sent = body.variables?.input ?? null;
 				return json({ editPost: initial, writePost: initial });
 			}
-			// post 조회 — mutation 뒤라면 보낸 상태를 반영해 돌려준다.
+			// post 조회 — mutation 뒤라면 **보낸 내용 전체**를 반영해 돌려준다.
+			// 플래그만 반영하면 새로 켠 내용 검증(제목·본문·태그…)이 전부 실패한다.
+			// 실제 서버도 저장한 값을 돌려주므로 이게 현실에 맞는 목이다.
 			const after = sent
 				? {
 						...initial,
+						title: sent.title ?? initial.title,
+						body: sent.body ?? initial.body,
+						url_slug: sent.url_slug ?? initial.url_slug,
+						tags: sent.tags ?? initial.tags,
+						thumbnail: sent.thumbnail ?? initial.thumbnail,
+						series: sent.series_id ? { id: sent.series_id } : initial.series,
+						meta: sent.meta ?? initial.meta,
 						is_temp: sent.is_temp ?? initial.is_temp,
 						is_private: sent.is_private ?? initial.is_private,
 						...options.serverOverride,
@@ -377,5 +387,69 @@ describe('★ update_post 는 초안을 받지 않는다 (코덱스 2차 [중간
 		assert.equal(isError, true, '초안을 통과시켜 발행될 수 있다');
 		assert.equal(sent, null);
 		assert.match(text, /velog_update_draft/, '어느 도구를 쓰라는 안내가 없다');
+	});
+});
+
+describe('★ 사후검증이 내용까지 본다 (코덱스 4차)', () => {
+	// 종전엔 is_temp·is_private 두 플래그만 봤다. 도구 설명에는 '생략 필드를
+	// 보존한다'고 써놓고, 본문·태그·슬러그가 통째로 날아가도 성공으로 보고했다.
+	// 보장과 검증이 어긋난 상태였다.
+	test('본문이 저장되지 않으면 실패로 알린다', async () => {
+		const { isError, text } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', body: '새 본문입니다' },
+			{ publicPublish: true, serverOverride: { body: '' } },
+		);
+		assert.equal(isError, true, '본문이 날아갔는데 성공으로 보고했다');
+		assert.match(text, /본문 길이/);
+	});
+
+	test('태그가 저장되지 않으면 실패로 알린다', async () => {
+		const { isError, text } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', tags: ['새태그'] },
+			{ publicPublish: true, serverOverride: { tags: [] } },
+		);
+		assert.equal(isError, true);
+		assert.match(text, /태그/);
+	});
+
+	test('슬러그가 바뀌어 저장되면 실패로 알린다', async () => {
+		const { isError, text } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', url_slug: 'my-slug' },
+			{ publicPublish: true, serverOverride: { url_slug: 'something-else' } },
+		);
+		assert.equal(isError, true);
+		assert.match(text, /주소/);
+	});
+
+	test('meta 가 비워지면 실패로 알린다', async () => {
+		const withMeta = { ...EXISTING, meta: { short_description: '요약' } } as never;
+		const { isError, text } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', title: 'x' },
+			{ publicPublish: true, post: withMeta, serverOverride: { meta: {} } as never },
+		);
+		assert.equal(isError, true);
+		assert.match(text, /meta/);
+	});
+
+	test('태그 순서만 다른 건 실패가 아니다 — 서버가 정렬할 수 있다', async () => {
+		const { isError } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', tags: ['b', 'a'] },
+			{ publicPublish: true, serverOverride: { tags: ['a', 'b'] } },
+		);
+		assert.notEqual(isError, true, '순서 차이를 실패로 봤다');
+	});
+
+	test('정상 저장이면 통과한다', async () => {
+		const { isError } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', title: '새 제목', body: '새 본문' },
+			{ publicPublish: true },
+		);
+		assert.notEqual(isError, true);
 	});
 });

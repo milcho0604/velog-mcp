@@ -16,7 +16,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { VelogClient } from '../client.ts';
 import type { Capabilities } from '../capabilities.ts';
 import { textResult } from '../format.ts';
-import { isSafeImageUrl } from '../slug.ts';
+import { isSafeImageUrl, isSafeHttpUrl } from '../slug.ts';
 import { fetchCurrentUser, invalidateMe } from '../me.ts';
 
 const MUTATION_UPDATE_PROFILE = `
@@ -110,8 +110,14 @@ export function registerProfileEditTools(
 				'★ 이건 **블로그 주인의 프로필**이다 — 글의 요약문(short_description)이 아니다. ' +
 				'생략한 항목은 현재 값을 그대로 유지한다.',
 			inputSchema: {
-				display_name: z.string().optional().describe('표시 이름. 생략하면 유지'),
-				short_bio: z.string().optional().describe('한줄 소개. 생략하면 유지'),
+				display_name: z.string().max(255).optional().describe('표시 이름. 생략하면 유지'),
+				// ★ 서버가 short_bio 를 255자로 **조용히 자른다**(userResolvers 의 slice).
+				//   여기서 안 막으면 "저장했습니다" 라고 해놓고 뒷부분이 사라진다.
+				short_bio: z
+					.string()
+					.max(255, '한줄 소개는 255자까지입니다 (서버가 그 이상을 조용히 자릅니다)')
+					.optional()
+					.describe('한줄 소개 (255자 이내). 생략하면 유지'),
 			},
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
@@ -202,11 +208,21 @@ export function registerProfileEditTools(
 				`프로필의 SNS 링크를 바꾼다. 지원 키: ${SOCIAL_KEYS.join(', ')}. ` +
 				'생략한 키는 현재 값을 유지하고, 빈 문자열을 주면 그 항목이 지워진다.',
 			inputSchema: {
-				github: z.string().optional(),
-				twitter: z.string().optional(),
-				facebook: z.string().optional(),
-				url: z.string().optional().describe('홈페이지'),
-				email: z.string().optional().describe('공개 이메일'),
+				// 빈 문자열은 '삭제' 의미라 허용한다. 그 외에는 형식을 본다 —
+				// 잘못된 링크를 프로필에 박아두면 방문자가 깨진 링크를 밟는다.
+				github: z.string().max(100).optional().describe('사용자명 또는 URL'),
+				twitter: z.string().max(100).optional(),
+				facebook: z.string().max(100).optional(),
+				url: z
+					.string()
+					.refine((v) => v === '' || isSafeHttpUrl(v), 'http(s) URL 이어야 합니다')
+					.optional()
+					.describe('홈페이지 (빈 문자열이면 삭제)'),
+				email: z
+					.string()
+					.refine((v) => v === '' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), '이메일 형식이 아닙니다')
+					.optional()
+					.describe('공개 이메일 (빈 문자열이면 삭제)'),
 			},
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},

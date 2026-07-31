@@ -25,12 +25,19 @@ VELOG_ALLOW_PUBLIC=1   공개 발행
 
 ## 능력 상한
 
-**기본 설정에서** 이 서버가 저지를 수 있는 최악의 일:
+**기본 설정에서** 이 서버가 저지를 수 있는 일:
 
 > **비공개 글이 몇 개 생긴다.** (사용자가 지우면 원복. 남에게 보인 적 없음)
+>
+> ⚠️ 그리고 **드물게** — 사용자가 이미 최근 5분에 공개 글을 10건 올려둔 상태라면,
+> 우리가 보내는 비공개 요청 하나가 벨로그의 파괴 동작(그 시간대 글 전부 비공개화)을
+> **촉발할 수 있다.** 우리 글이 계수를 올려서가 아니라, 검사가 공개 여부를 보기 전에
+> 무조건 돌기 때문이다. 아래 §대응 참고.
 
 `VELOG_ALLOW_PUBLIC=1` 을 켜면 상한이 올라간다 — 공개 발행은 RSS·검색 색인·
-구독 메일로 나가므로 지워도 회수되지 않는다. 그래서 그 스위치가 따로 있다.
+구독 메일로 나가므로 지워도 회수되지 않는다.
+`VELOG_ALLOW_PROFILE=1` 은 프로필·소개글·블로그제목·SNS·프로필사진을 연다 —
+전부 되돌릴 수 있고 배포되지 않아 상한이 크게 오르지는 않는다.
 
 아래는 **처음엔 틀렸다가 고치고 나서야 사실이 된 것**이다.
 경위를 남겨둔다 — 같은 착각을 다시 하지 않기 위해서다.
@@ -69,38 +76,44 @@ released_at  DateTime?  @default(now())    // 초안도 생성 즉시 시각이 
 | 공개 발행 **5분 5건** 상한 (`ratelimit.ts`) | 벨로그 임계 10보다 낮게 잡는다 — 사용자가 웹에서 직접 쓴 글은 우리 카운터에 안 잡히므로 여유가 필요하다 |
 | ★ **초안을 `is_private: true` 로** | 계수 대상이 `is_private:false` 뿐이라 초안이 카운터를 **올리지 않는다**. ⚠️단 검사는 공개 여부를 보기 전에 무조건 돌아, 이미 공개 글 10건이 쌓였으면 비공개 요청도 조치를 **촉발할 수 있다** — 그래서 위 두 방어를 없애지 않았다 |
 
-세 번째가 근본 해결이다. 방어를 하나 더 얹는 것보다 **애초에 위험 구간에 안
-들어가는 값**을 고르는 편이 낫다. 초안은 어차피 본인만 보므로 잃는 것도 없다.
-rate limit 은 이제 공개 발행 경로에만 남는다.
+세 번째가 **가장 효과가 크다.** 방어를 하나 더 얹는 것보다 애초에 위험 구간에
+덜 들어가는 값을 고르는 편이 낫고, 초안은 어차피 본인만 보므로 잃는 것도 없다.
+
+다만 **근본 해결은 아니다.** 처음엔 그렇게 적었다가 정정했다 — 우리 글이 계수를
+올리지 않을 뿐, 요청 자체는 이미 쌓인 계수에 대한 조치를 촉발할 수 있다.
+그래서 앞의 두 방어(무재시도·상한)를 **없애지 않고 유지한다.** 상한은 공개 발행
+경로에 남아 있다.
 
 막을 때는 이유와 해제 시각을 함께 알린다. 조용히 거절하면 사용자가 원인을 못 찾는다.
 
 ## 구현하지 않은 것과 이유
 
-introspection 으로 확인한 mutation 23개 중 **21개를 의도적으로 뺐다.**
-목록에서 뺀 게 아니라 **호출 코드를 안 썼다.**
+introspection 으로 확인한 mutation 23개의 처리를 셋으로 나눈다.
+
+**(1) 기본으로 쓰는 것** — `writePost` / `editPost`.
+`is_temp`·`is_private` 조합으로 초안·비공개 발행·공개 발행·발행취소를 모두 처리한다.
+공개 여부만 `VELOG_ALLOW_PUBLIC` 게이트를 탄다.
+
+**(2) 게이트로 여는 것** — `VELOG_ALLOW_PROFILE=1` 일 때만 도구로 등록한다.
+`updateProfile` / `updateAbout` / `updateVelogTitle` / `updateSocialInfo` /
+`updateThumbnail`. 되돌릴 수 있고 본인 계정에만 영향이며 배포되지 않는다.
+게이트를 둔 이유는 위험이 아니라 혼동이다 → [ADR 0004](decisions/0004-capability-model.md)
+
+**(3) 어떤 설정으로도 안 여는 것** — 아래. 목록에서 뺀 게 아니라 **호출 코드를 안 썼다.**
 
 | mutation | 뺀 이유 |
 | --- | --- |
 | `unregister` | **계정 탈퇴.** 복구 불가. 존재 자체가 위험 |
 | `logout` | 세션 파괴 |
-| `writePost(is_temp:false)` | 발행. RSS·검색·구독메일로 이미 나간 뒤엔 못 되돌림 |
 | `likePost` `unlikePost` | 남의 알림에 내 이름이 뜬다 |
 | `follow` `unfollow` | 같음 |
 | `sendMail` | 메일 발송 |
 | `createNotification` | 알림 생성 |
 | `removeAllNotifications` | 일괄 삭제. 되돌릴 수 없음 |
 | `readNotification` `readAllNotifications` `updateNotNoticeNotification` | 읽음 상태 변경 |
-| `updateProfile` `updateAbout` `updateThumbnail` `updateVelogTitle` `updateSocialInfo` `updateEmailRules` | 계정 설정 변경 |
+| `updateEmailRules` | 메일 수신 설정 |
 | `initiateChangeEmail` `confirmChangeEmail` | 이메일 변경 = 계정 탈취 경로 |
 | `acceptIntegration` | 외부 연동 승인 |
-
-남긴 둘:
-
-| mutation | 제한 |
-| --- | --- |
-| `writePost` | 초안 도구는 `is_temp:true` **상수**. 발행 도구는 `is_private` 가 설정에 따라 결정 |
-| `editPost` | 같음 |
 
 > `deletePost` 는 v3 mutation 목록에 **없다.** 글 삭제는 애초에 불가능하다.
 

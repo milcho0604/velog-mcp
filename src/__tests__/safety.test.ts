@@ -423,26 +423,96 @@ describe('★ A10 — 프로필 수정은 VELOG_ALLOW_PROFILE 없이는 불가�
 	});
 });
 
-describe('★★ A11 — series_id 를 보내는 모든 곳에 시리즈 소유권 검증이 있다', () => {
-	// 벨로그는 '처음 시리즈에 붙일 때' 소유권을 확인하지 않는다:
-	//   if (!prevSeriesPost && series_id) { appendToSeries(...) }   ← 검사 없음
-	//   if (prevSeriesPost && ...) { checkSeriesOwnership(...) }    ← 여기만
-	// velog_list_series 로 남의 공개 시리즈 id 를 얻을 수 있으므로,
-	// 글 소유권(assertOwned)만으로는 못 막는다 — 글은 내 것이기 때문이다.
-	test('series_id 를 input 에 싣는 파일은 assertOwnsSeries 를 쓴다', async () => {
-		for (const [name, rawSrc] of await readAllSources()) {
-			const src = codeOnly(rawSrc);
-			if (name === 'ownership.ts') continue;
-			if (!/input\['series_id'\]|series_id:\s*\w/.test(src)) continue;
-			assert.match(
-				src,
-				/assertOwnsSeries\(/,
-				`${name} 이 series_id 를 보내는데 시리즈 소유권을 확인하지 않는다`,
+describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한다', () => {
+	// ★ 이 테스트는 처음에 허술했다. '파일 안에 assertOwnsSeries 가 있나'만 봐서,
+	//   한 도구에만 넣고 다른 도구에서 빼도 통과했다. 코덱스 4차가 잡아줬다.
+	//   지금은 **도구를 실제로 호출해** 거부되는지 본다 — 텍스트 검사보다 강하다.
+	//
+	// 검사 대상은 '사용자가 준' series_id 뿐이다. 서버에서 읽어온 기존 시리즈
+	// (post.series.id)를 그대로 되돌려 보내는 건 이미 내 글의 시리즈라 무관하다.
+
+	/** series_id 를 파라미터로 받는 도구를 스키마에서 찾아낸다. */
+	async function toolsTakingSeriesId(): Promise<string[]> {
+		const client = await connect(true, false);
+		const { tools } = await client.listTools();
+		const names = tools
+			.filter((t) => 'series_id' in (t.inputSchema?.properties ?? {}))
+			.map((t) => t.name);
+		await client.close();
+		return names;
+	}
+
+	/** 남의 시리즈 id 를 주는 서버. 내 시리즈 목록에는 그 id 가 없다. */
+	async function callWithOthersSeries(tool: string) {
+		let mutated = false;
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async (_u: string, init: { body: string }) => {
+				const body = JSON.parse(init.body) as { query: string };
+				const json = (data: unknown) =>
+					new Response(JSON.stringify({ data }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				if (body.query.includes('currentUser')) {
+					return json({ currentUser: { id: 'u1', username: 'me' } });
+				}
+				if (body.query.includes('seriesList')) {
+					// 내 시리즈는 mine-1 뿐 — others-1 은 남의 것이다.
+					return json({ seriesList: [{ id: 'mine-1', name: '내 시리즈' }] });
+				}
+				if (body.query.includes('mutation')) {
+					mutated = true;
+					return json({ writePost: {}, editPost: {} });
+				}
+				return json({
+					post: {
+						id: 'p1',
+						title: 't',
+						body: 'b',
+						url_slug: 's',
+						is_temp: true,
+						is_private: true,
+						tags: [],
+						user: { username: 'me' },
+					},
+				});
+			}) as unknown as typeof fetch,
+		});
+		const server = createServer(client, { publicPublish: true, editProfile: false });
+		const [ct, st] = InMemoryTransport.createLinkedPair();
+		const mcp = new Client({ name: 'a11', version: '0' });
+		await Promise.all([mcp.connect(ct), server.connect(st)]);
+		const result = await mcp.callTool({
+			name: tool,
+			arguments: { id: 'p1', title: 't', body: 'b', series_id: 'others-1' },
+		});
+		await mcp.close();
+		return { isError: result.isError === true, mutated };
+	}
+
+	test('series_id 를 받는 도구가 실제로 존재한다 — 없으면 이 테스트가 무의미하다', async () => {
+		const names = await toolsTakingSeriesId();
+		assert.ok(names.length > 0, 'series_id 파라미터를 가진 도구가 하나도 없다');
+	});
+
+	test('★ series_id 를 받는 모든 도구가 남의 시리즈를 거부한다', async () => {
+		for (const tool of await toolsTakingSeriesId()) {
+			const { isError, mutated } = await callWithOthersSeries(tool);
+			assert.equal(isError, true, `${tool} 이 남의 시리즈 id 를 통과시켰다`);
+			assert.equal(
+				mutated,
+				false,
+				`${tool} 이 mutation 을 실제로 보냈다 — 남의 시리즈가 변경된다`,
 			);
 		}
 	});
 
-	test('시리즈 소유권 구현도 단일하다', async () => {
+	test('시리즈 소유권 구현은 단일하다 — 복사본이 생기면 한쪽만 고쳐진다', async () => {
 		const defs = (await readAllSources()).filter(([, src]) =>
 			/export\s+async\s+function\s+assertOwnsSeries/.test(src),
 		);
