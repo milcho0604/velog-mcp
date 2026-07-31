@@ -16,7 +16,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { VelogClient } from '../client.ts';
 import type { Capabilities } from '../capabilities.ts';
 import { textResult } from '../format.ts';
-import { isSafeImageUrl, isSafeHttpUrl } from '../slug.ts';
+import { isSafeImageUrl, isSafeProfileLink } from '../slug.ts';
 import { fetchCurrentUser, invalidateMe } from '../me.ts';
 
 const MUTATION_UPDATE_PROFILE = `
@@ -219,17 +219,11 @@ export function registerProfileEditTools(
 				github: z.string().max(100).optional().describe('사용자명 또는 URL'),
 				twitter: z.string().max(100).optional(),
 				facebook: z.string().max(100).optional(),
-				// ★ 벨로그 웹은 'example.com' 처럼 scheme 없는 값을 저장하고 렌더링
-				//   시점에 https:// 를 붙인다(apps/web/src/lib/includeProtocol.ts).
-				//   http(s) 만 받으면 정상 사용을 막는다. 막을 건 javascript:·data:
-				//   같은 위험 스킴뿐이다.
+				// 벨로그 웹과 같은 규칙으로 본다 — slug.ts 의 isSafeProfileLink 주석 참고.
 				url: z
 					.string()
 					.max(255)
-					.refine(
-						(v) => v === '' || isSafeHttpUrl(v) || !/^[a-z][a-z0-9+.-]*:/i.test(v),
-						'javascript:·data: 같은 스킴은 넣을 수 없습니다',
-					)
+					.refine(isSafeProfileLink, 'javascript:·data: 같은 스킴은 넣을 수 없습니다')
 					.optional()
 					.describe('홈페이지. scheme 없이 example.com 도 됩니다 (빈 문자열이면 삭제)'),
 				email: z

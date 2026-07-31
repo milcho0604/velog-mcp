@@ -117,6 +117,25 @@ function resultLines(post: PostState, verb: string): string {
  *  - 재조회가 null 을 주면 뭔가 잘못된 것인데, 이전 상태로 성공을 보고하면
  *    사용자가 그걸 모른다.
  */
+/** 키 순서에 좌우되지 않는 값 비교. meta 가 임의 JSON 이라 필요하다. */
+function deepEqual(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
+		return false;
+	}
+	if (Array.isArray(a) !== Array.isArray(b)) return false;
+	if (Array.isArray(a) && Array.isArray(b)) {
+		return a.length === b.length && a.every((v, i) => deepEqual(v, b[i]));
+	}
+	const ka = Object.keys(a);
+	const kb = Object.keys(b);
+	if (ka.length !== kb.length) return false;
+	return ka.every((k) =>
+		Object.hasOwn(b, k) &&
+		deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+	);
+}
+
 /** 비교 불가 표식. 어떤 실제 값과도 같지 않다. */
 const NOT_COMPARABLE = Symbol('not-comparable');
 
@@ -188,8 +207,10 @@ async function verifyAfter(
 		const sentMeta = sent['meta'];
 		if (sentMeta && typeof sentMeta === 'object') {
 			const savedMeta = (post.meta ?? {}) as Record<string, unknown>;
+			// ★ JSON.stringify 비교는 키 순서에 걸린다({a,b} vs {b,a}). meta 는 임의
+			//   JSON 이고 PostgreSQL JSON 컬럼이라 순서가 바뀔 수 있다. 의미로 비교한다.
 			const lost = Object.entries(sentMeta as Record<string, unknown>).filter(
-				([k, v]) => JSON.stringify(savedMeta[k]) !== JSON.stringify(v),
+				([k, v]) => !deepEqual(savedMeta[k], v),
 			);
 			if (lost.length > 0) {
 				mismatches.push(

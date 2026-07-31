@@ -262,7 +262,9 @@ describe('A6 — 런타임 의존성을 늘리지 않는다', () => {
 describe('A7 — 벨로그 외 호스트로 나가지 않는다', () => {
 	test('소스의 http(s) URL 은 velog.io 뿐이다', async () => {
 		for (const [name, rawSrc] of await readAllSources()) {
-			for (const url of codeOnly(rawSrc).match(/https?:\/\/[^\s'"`)]+/g) ?? []) {
+			// 템플릿 보간(`https://${x}`)은 고정 호스트가 아니라 검사 대상이 아니다.
+			const src = codeOnly(rawSrc).replace(/https?:\/\/\$\{[^}]*\}/g, '');
+			for (const url of src.match(/https?:\/\/[^\s'"`)]+/g) ?? []) {
 				assert.ok(
 					url.includes('velog.io') || url.includes('images.velog'),
 					`${name} 에 벨로그 외 URL 이 있다: ${url}`,
@@ -457,10 +459,23 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 		velog_publish_post: { is_temp: true, is_private: true },
 	};
 
-	/** 남의 시리즈 id 를 주는 서버. 내 시리즈 목록에는 그 id 가 없다. */
-	async function callWithOthersSeries(tool: string) {
+	/** 내 시리즈는 mine-1 뿐. 주어진 seriesId 로 도구를 부른다. */
+	async function callWithSeries(tool: string, seriesId: string) {
 		let mutated = false;
 		const state = STATE_FOR[tool] ?? { is_temp: true, is_private: true };
+		// 재조회는 '방금 저장된' 모습을 돌려줘야 사후검증이 통과한다.
+		// 저장 전에는 시리즈가 없고, 저장 후에는 보낸 시리즈가 붙어 있다.
+		const postFor = (afterMutation: boolean) => ({
+			id: 'p1',
+			title: 't',
+			body: 'b',
+			url_slug: 's',
+			tags: [],
+			meta: {},
+			user: { username: 'me' },
+			...(afterMutation ? { series: { id: seriesId } } : {}),
+			...state,
+		});
 		const client = new VelogClient({
 			auth: {
 				kind: 'authenticated',
@@ -483,20 +498,11 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 				}
 				if (body.query.includes('mutation')) {
 					mutated = true;
-					return json({ writePost: {}, editPost: {} });
+					// assertStayedDraft·verifyAfter 가 응답을 읽으므로 실제 형태로 준다.
+					const saved = postFor(true);
+					return json({ writePost: saved, editPost: saved });
 				}
-				return json({
-					post: {
-						id: 'p1',
-						title: 't',
-						body: 'b',
-						url_slug: 's',
-						tags: [],
-						meta: {},
-						user: { username: 'me' },
-						...state,
-					},
-				});
+				return json({ post: postFor(mutated) });
 			}) as unknown as typeof fetch,
 		});
 		const server = createServer(client, { publicPublish: true, editProfile: false });
@@ -505,7 +511,7 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 		await Promise.all([mcp.connect(ct), server.connect(st)]);
 		const result = await mcp.callTool({
 			name: tool,
-			arguments: { id: 'p1', title: 't', body: 'b', series_id: 'others-1' },
+			arguments: { id: 'p1', title: 't', body: 'b', series_id: seriesId },
 		});
 		await mcp.close();
 		const text = (result.content as Array<{ text?: string }>)[0]?.text ?? '';
@@ -519,7 +525,7 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 
 	test('★ series_id 를 받는 모든 도구가 남의 시리즈를 거부한다', async () => {
 		for (const tool of await toolsTakingSeriesId()) {
-			const { isError, mutated, text } = await callWithOthersSeries(tool);
+			const { isError, mutated, text } = await callWithSeries(tool, 'others-1');
 			assert.equal(isError, true, `${tool} 이 남의 시리즈 id 를 통과시켰다`);
 			assert.equal(
 				mutated,
@@ -533,6 +539,20 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 				/시리즈가 아닙니다/,
 				`${tool} 이 다른 이유로 거부했다 — 시리즈 가드가 동작했는지 알 수 없다: ${text.slice(0, 90)}`,
 			);
+		}
+	});
+
+	test('★ 내 시리즈는 통과해 mutation 까지 간다 — 무조건 거부는 안 된다', async () => {
+		// 음성 경로만 보면 '모든 시리즈를 거부' 하는 구현도 통과한다.
+		// 소유권 조회가 실제로 일어나고 판정이 값에 따라 갈리는지 확인한다.
+		for (const tool of await toolsTakingSeriesId()) {
+			const { isError, mutated, text } = await callWithSeries(tool, 'mine-1');
+			assert.notEqual(
+				isError,
+				true,
+				`${tool} 이 내 시리즈(mine-1)를 거부했다 — 무조건 거부하고 있다: ${text.slice(0, 90)}`,
+			);
+			assert.equal(mutated, true, `${tool} 이 내 시리즈인데 mutation 까지 안 갔다`);
 		}
 	});
 
