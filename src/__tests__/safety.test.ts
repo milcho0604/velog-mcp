@@ -305,3 +305,46 @@ describe('★★ A8 — editPost 를 부르는 모든 경로에 소유권 검증
 		assert.equal(defs[0]?.[0], 'ownership.ts');
 	});
 });
+
+describe('★★ A9 — editPost 는 기존 meta 를 보존한다', () => {
+	// meta 에는 short_description 같은 표시 데이터가 들어간다. EditPostInput 에서
+	// meta 는 필수이고 서버가 받은 값을 그대로 DB 에 넣으므로, {} 를 보내면 지워진다.
+	//
+	// ★ 이 규칙이 필요한 이유: 같은 실수를 두 번 했다. 소유권 검증도, meta 보존도
+	//   publish.ts 에만 넣고 drafts.ts 를 빠뜨렸다. 파일이 둘이면 반드시 한쪽이 빠진다.
+	test('id 를 함께 보내는(=수정) input 은 meta 를 빈 객체로 두지 않는다', async () => {
+		for (const [name, rawSrc] of await readAllSources()) {
+			const src = codeOnly(rawSrc);
+			if (!/mutate<[^>]*editPost/.test(src)) continue;
+
+			// editPost 를 보내는 파일에서 `meta: {}` 리터럴이 남아 있으면,
+			// 그게 수정 경로인지 생성 경로인지 사람이 확인해야 한다.
+			// 생성(writePost)은 보존할 게 없으므로 {} 가 맞다.
+			const emptyMetaLines = src
+				.split('\n')
+				.map((line, i) => [i + 1, line] as const)
+				.filter(([, line]) => /^\s*meta:\s*\{\}\s*,?\s*$/.test(line));
+
+			for (const [lineNo, line] of emptyMetaLines) {
+				// 해당 input 블록 앞쪽에 `id,` 가 있으면 수정 경로다.
+				const block = src.split('\n').slice(Math.max(0, lineNo - 12), lineNo).join('\n');
+				assert.ok(
+					!/^\s*id,\s*$/m.test(block),
+					`${name}:${lineNo} 수정 경로인데 meta 를 {} 로 보낸다 — ` +
+						`기존 short_description 이 지워진다. (${line.trim()})`,
+				);
+			}
+		}
+	});
+
+	test('editPost 를 보내는 파일은 meta 를 조회한다', async () => {
+		for (const [name, src] of await readAllSources()) {
+			if (!/mutate<[^>]*editPost/.test(codeOnly(src))) continue;
+			assert.match(
+				src,
+				/query[\s\S]*?post\(input:[\s\S]*?\bmeta\b/,
+				`${name} 이 editPost 를 보내는데 사전조회에 meta 가 없다 — 병합할 값이 없다`,
+			);
+		}
+	});
+});

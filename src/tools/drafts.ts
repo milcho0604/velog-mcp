@@ -42,7 +42,7 @@ const MUTATION_EDIT_POST = `
 /** 수정 전 상태 확인용. 필요한 필드만 받는다. */
 const QUERY_POST_STATE = `
   query PostState($input: ReadPostInput!) {
-    post(input: $input) { id is_temp user { username } }
+    post(input: $input) { id is_temp meta user { username } }
   }
 `;
 
@@ -188,7 +188,12 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			//   ② 정말 초안인가 — editPost 는 is_temp 를 덮어쓰므로 발행글 id 가
 			//      들어오면 그 글이 조용히 비공개로 내려간다
 			const before = await client.request<{
-				post: { id: string; is_temp?: boolean; user?: { username?: string } | null } | null;
+				post: {
+					id: string;
+					is_temp?: boolean;
+					meta?: unknown;
+					user?: { username?: string } | null;
+				} | null;
 			}>(QUERY_POST_STATE, { input: { id } });
 			if (!before.post) {
 				throw new Error(
@@ -209,7 +214,10 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				body,
 				tags,
 				url_slug: toUrlSlug(title, url_slug),
-				meta: {},
+				// ★ {} 를 보내면 short_description 등 표시 데이터가 지워진다.
+				//   서버가 받은 값을 그대로 DB 에 넣으므로 기존 값을 실어야 한다.
+				//   (publish.ts 만 고치고 여기를 또 빠뜨렸었다 — 소유권 때와 같은 실수)
+				meta: before.post.meta ?? {},
 				...DRAFT_ONLY,
 			};
 			if (thumbnail) input['thumbnail'] = thumbnail;
