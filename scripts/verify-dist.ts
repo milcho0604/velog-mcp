@@ -34,6 +34,17 @@ const ENTRY = new URL('dist/index.js', ROOT);
 /** 핸드셰이크 뒤에도 얼마간 지켜본다. 지연 오염·조기 종료는 그 뒤에 온다. */
 const WATCH_MS = 2_000;
 
+/**
+ * 무슨 일이 있어도 여기서 끝낸다.
+ *
+ * ⚠️ 한때 감시창을 확보하려고 `hardTimer.refresh()` 를 호출했다. 그런데 그건
+ *   **stdout 이 올 때마다** 불렸다. 유효한 JSON-RPC 알림을 300ms 마다 뱉는 서버를
+ *   넣어보니 관문이 **끝나지 않았다**(120초에 손으로 끊음). 발행이 멈추는 게 아니라
+ *   그냥 매달린다 — 실패보다 나쁘다.
+ *   그래서 **절대 시한은 절대 연장하지 않는다.** 감시창도 한 번만 건다.
+ */
+const DEADLINE_MS = 45_000;
+
 /** 기본 등록 도구 수. 프로필 게이트를 켜면 늘어난다. */
 const MIN_TOOLS = 21;
 
@@ -95,8 +106,9 @@ async function handshake(binLink: string): Promise<Outcome> {
 			resolve({ responses, junk, stderr, died });
 		};
 
-		const hardTimer = setTimeout(finish, 30_000);
+		const hardTimer = setTimeout(finish, DEADLINE_MS);
 		let watchTimer: NodeJS.Timeout = setTimeout(() => undefined, 0);
+		let watching = false;
 
 		child.stderr.on('data', (chunk: Buffer) => {
 			stderr += chunk.toString('utf8');
@@ -124,11 +136,11 @@ async function handshake(binLink: string): Promise<Outcome> {
 			}
 			// 응답을 다 받아도 **바로 죽이지 않는다.** 지연 stdout 과 조기 종료를
 			// 보려면 잠깐 살려둬야 한다 — 즉시 죽이면 둘 다 못 본다(코덱스 지적).
-			if (responses.length >= 2) {
+			// 감시창은 **한 번만** 건다. 매 청크마다 다시 걸면 수다스러운 서버에서
+			// 영원히 안 끝난다(실측으로 그렇게 만들었다가 고쳤다).
+			if (responses.length >= 2 && !watching) {
+				watching = true;
 				clearTimeout(watchTimer);
-				// 응답이 늦게 오면 hard timer 가 감시창을 잘라 "2초 지켜봤다"가 거짓이 된다.
-				// 감시창을 확보하도록 hard timer 를 미룬다.
-				hardTimer.refresh?.();
 				watchTimer = setTimeout(finish, WATCH_MS);
 			}
 		});
