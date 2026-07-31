@@ -1,6 +1,6 @@
 {
   "name": "@milcho0604/velog-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Velog MCP server — 읽기 전면 지원. 쓰기는 초안과 비공개 발행이 기본이고, 공개 발행은 VELOG_ALLOW_PUBLIC=1 로 사용자가 켠다.",
   "type": "module",
   "main": "./dist/index.js",

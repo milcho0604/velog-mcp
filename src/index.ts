@@ -24,9 +24,10 @@ import { registerExportTools } from './tools/export.ts';
 import { registerProfileTools } from './tools/profile.ts';
 import { registerPublishTools } from './tools/publish.ts';
 import { registerProfileEditTools } from './tools/profile-edit.ts';
+import { registerImageTools } from './tools/images.ts';
 
 export const SERVER_NAME = 'velog-mcp';
-export const SERVER_VERSION = '0.2.0';
+export const SERVER_VERSION = '0.3.0';
 
 export function createServer(
 	client: VelogClient,
@@ -55,6 +56,7 @@ export function createServer(
 	registerProfileTools(server, client);
 	registerPublishTools(server, client, capabilities, limiter);
 	registerProfileEditTools(server, client, capabilities);
+	registerImageTools(server, client);
 
 	return server;
 }
