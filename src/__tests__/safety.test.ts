@@ -26,13 +26,19 @@ import { __testing } from '../tools/drafts.ts';
 
 const SRC = new URL('../', import.meta.url);
 
-async function readAllSources(dir = SRC): Promise<Array<[string, string]>> {
+/**
+ * 이름은 SRC 기준 **상대경로**로 준다 (`tools/publish.ts`, `render/index.ts`).
+ * 파일명만 쓰면 `index.ts` 가 두 개라 예외 목록이 엉뚱한 파일까지 풀어준다.
+ */
+async function readAllSources(dir = SRC, prefix = ''): Promise<Array<[string, string]>> {
 	const out: Array<[string, string]> = [];
 	for (const entry of await readdir(dir, { withFileTypes: true })) {
 		if (entry.name === '__tests__') continue;
 		const url = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir);
-		if (entry.isDirectory()) out.push(...(await readAllSources(url)));
-		else if (entry.name.endsWith('.ts')) out.push([entry.name, await readFile(url, 'utf8')]);
+		if (entry.isDirectory()) out.push(...(await readAllSources(url, `${prefix}${entry.name}/`)));
+		else if (entry.name.endsWith('.ts')) {
+			out.push([`${prefix}${entry.name}`, await readFile(url, 'utf8')]);
+		}
 	}
 	return out;
 }
@@ -129,7 +135,7 @@ describe('A2 — 초안 도구는 어떤 설정에서도 발행하지 않는다'
 	});
 
 	test('drafts.ts 에는 is_temp:false 를 만드는 코드가 없다', async () => {
-		const drafts = (await readAllSources()).find(([n]) => n === 'drafts.ts');
+		const drafts = (await readAllSources()).find(([n]) => n === 'tools/drafts.ts');
 		assert.ok(drafts, 'drafts.ts 를 못 찾았다');
 		assert.ok(
 			!/is_temp\s*:\s*false/.test(codeOnly(drafts[1])),
@@ -195,11 +201,14 @@ describe('A4 — 도구 목록 스냅샷', () => {
 		'velog_publish_draft',
 		'velog_publish_post',
 		'velog_recent_posts',
+		'velog_render_cover',
+		'velog_render_diagram',
 		'velog_search_posts',
 		'velog_trending_posts',
 		'velog_unpublish_post',
 		'velog_update_draft',
 		'velog_update_post',
+		'velog_upload_image',
 		'velog_user_tags',
 		'velog_whoami',
 	];
@@ -240,11 +249,28 @@ describe('A4 — 도구 목록 스냅샷', () => {
 });
 
 describe('A5 — 토큰이 디스크로 나가지 않는다', () => {
+	// 파일 쓰기가 본업인 모듈이 둘 있다: 글 백업(export)과 그림 렌더(render).
+	// 그냥 예외로 빼면 그 파일이 나중에 토큰을 만져도 아무도 모른다.
+	// 그래서 "면제"가 아니라 **조건부 허용**으로 둔다 — 쓰되 토큰 경로를 참조하지 말 것.
+	const ALLOWED_WRITERS = new Set(['tools/export.ts', 'render/index.ts']);
+	const TOKEN_TOUCH =
+		/TokenStore|buildCookieHeader|parseSetCookie|refreshToken|accessToken|VELOG_REFRESH_TOKEN|'Cookie'/;
+
 	test('토큰을 다루는 모듈이 파일 쓰기 API 를 쓰지 않는다', async () => {
-		const WRITERS = /writeFile|appendFile|createWriteStream|writeFileSync|mkdirSync/;
+		const WRITERS = /writeFile|appendFile|createWriteStream|writeFileSync|mkdirSync|mkdtemp/;
 		for (const [name, src] of await readAllSources()) {
-			if (name === 'export.ts') continue; // 글 백업은 의도적으로 파일을 쓴다
+			if (ALLOWED_WRITERS.has(name)) continue;
 			assert.ok(!WRITERS.test(src), `${name} 이 파일을 쓴다 — 토큰 유출 경로가 될 수 있다`);
+		}
+	});
+
+	test('파일을 쓰는 모듈은 토큰 경로를 참조하지 않는다', async () => {
+		for (const [name, src] of await readAllSources()) {
+			if (!ALLOWED_WRITERS.has(name)) continue;
+			assert.ok(
+				!TOKEN_TOUCH.test(codeOnly(src)),
+				`${name} 은 파일을 쓰는 모듈인데 토큰 관련 심볼을 참조한다`,
+			);
 		}
 	});
 });
@@ -265,6 +291,9 @@ describe('A7 — 벨로그 외 호스트로 나가지 않는다', () => {
 			// 템플릿 보간(`https://${x}`)은 고정 호스트가 아니라 검사 대상이 아니다.
 			const src = codeOnly(rawSrc).replace(/https?:\/\/\$\{[^}]*\}/g, '');
 			for (const url of src.match(/https?:\/\/[^\s'"`)]+/g) ?? []) {
+				// ★ SVG 네임스페이스는 접속 주소가 아니라 규격이 정한 식별자다.
+				//   createElementNS 에 넘기는 값일 뿐 아무 요청도 나가지 않는다.
+				if (url === 'http://www.w3.org/2000/svg') continue;
 				assert.ok(
 					url.includes('velog.io') || url.includes('images.velog'),
 					`${name} 에 벨로그 외 URL 이 있다: ${url}`,
