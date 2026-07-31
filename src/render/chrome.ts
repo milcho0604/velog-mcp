@@ -21,6 +21,14 @@
  *   `--user-data-dir` 을 임시 폴더로 지정한다. 지정하지 않으면 기본 프로필을
  *   열려다 이미 떠 있는 크롬과 충돌하고, 로그인 세션이 있는 프로필에서 렌더하게 된다.
  *
+ * ★★ 서버가 죽으면 크롬도 같이 죽인다
+ *   실제로 고아를 만들었다. MCP 클라이언트가 60초 타임아웃으로 연결을 끊자 서버
+ *   프로세스가 죽었는데, 그때 렌더 중이던 크롬이 PPID=1 로 살아남아 23분을 돌고 있었다
+ *   (`ps` 로 확인). POSIX 에서 부모가 죽어도 자식은 안 죽는다 — 아무도 안 죽인다.
+ *   그래서 띄운 크롬을 들고 있다가 프로세스 종료 시 정리한다.
+ *   ⚠️ 서버 자신이 SIGKILL 당하면 이 정리도 못 돈다. 그 경우는 남은 프로필 폴더를
+ *   다음 렌더의 청소(render/index.ts)가 하루 뒤 거둬간다.
+ *
  * ★★ 크롬이 끝나기를 기다리지 않는다 — 안 끝나기 때문이다
  *   Chrome 150 의 새 헤드리스는 `--dump-dom` 결과를 **1.7초 만에 stdout 으로 내놓고도
  *   프로세스를 유지한다** (실측: 30초를 더 기다려도 종료 안 함). 종료를 기다리는
@@ -31,7 +39,7 @@
  *   완성으로 오인할 수 있다.
  */
 
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { access, constants, readFile } from 'node:fs/promises';
 import { platform } from 'node:process';
 
@@ -102,6 +110,38 @@ export function resetChromeCache(): void {
 	cached = undefined;
 }
 
+/**
+ * 지금 살아 있는 크롬들. 서버가 내려갈 때 같이 정리하려고 들고 있는다.
+ * 훅은 실제로 하나라도 띄운 뒤에만 건다 — 아무것도 안 그리는 프로세스(테스트 등)의
+ * 시그널 동작을 바꾸지 않기 위해서다.
+ */
+const live = new Set<ChildProcess>();
+let hooked = false;
+
+function killAll(): void {
+	for (const child of live) {
+		try {
+			child.kill('SIGKILL');
+		} catch {
+			// 이미 죽었으면 그만이다.
+		}
+	}
+	live.clear();
+}
+
+function hookProcessExit(): void {
+	if (hooked) return;
+	hooked = true;
+	// exit 핸들러에서는 동기 작업만 된다. kill 은 동기라 여기서 충분하다.
+	process.on('exit', killAll);
+	for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+		process.on(signal, () => {
+			killAll();
+			process.exit(0);
+		});
+	}
+}
+
 const BASE_FLAGS: readonly string[] = [
 	'--headless',
 	'--disable-gpu',
@@ -140,7 +180,9 @@ function run(
 	const limit = options.timeoutMs ?? 30_000;
 
 	return new Promise((resolve, reject) => {
+		hookProcessExit();
 		const child = spawn(chrome, full, { stdio: ['ignore', 'pipe', 'pipe'] });
+		live.add(child);
 		let out = '';
 		let err = '';
 		let settled = false;
@@ -159,6 +201,7 @@ function run(
 			settled = true;
 			clearInterval(poll);
 			clearTimeout(deadline);
+			live.delete(child);
 			child.kill('SIGKILL');
 			action();
 		};

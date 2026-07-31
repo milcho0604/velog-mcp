@@ -15,6 +15,11 @@
  */
 
 import { test, describe } from 'node:test';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { platform } from 'node:process';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Script } from 'node:vm';
@@ -473,5 +478,77 @@ describe('★ R12 — 페이지에 URL 을 받는 자리가 없다', () => {
 				assert.ok(use.startsWith('url(#'), `${name} 의 url() 이 문서 밖을 가리킨다: ${use})`);
 			}
 		}
+	});
+});
+
+
+describe('★★ R13 — 서버가 죽으면 크롬도 같이 죽는다', () => {
+	// 실제로 고아를 만들었다. MCP 클라이언트가 타임아웃으로 연결을 끊자 서버가 죽었고,
+	// 렌더 중이던 크롬이 PPID=1 로 살아남아 23분을 돌고 있었다 (ps 로 확인).
+	// POSIX 에서 부모가 죽어도 자식은 안 죽는다 — 아무도 안 죽이면 그냥 남는다.
+	//
+	// 변이 검증: 종료 훅을 빼고 돌리면 크롬 4개가 남는다. 이 검사는 강제력이 있다.
+	test('렌더 도중 프로세스를 끝내도 크롬이 남지 않는다', async (t) => {
+		if (platform !== 'darwin' && platform !== 'linux') {
+			t.skip('pgrep 이 있는 환경에서만 확인한다');
+			return;
+		}
+		const has = await findChrome().then(() => true, () => false);
+		if (!has) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+
+		const entry = new URL('../render/index.ts', import.meta.url).href;
+		const script =
+			`import { renderDiagram } from ${JSON.stringify(entry)};\n` +
+			`renderDiagram({ title: '고아 확인', nodes: [{ x:0, y:0, title:'A' }], legend:false });\n` +
+			`setTimeout(() => process.exit(0), 1200);\n`;
+
+		// ★ 자식에게 전용 TMPDIR 을 준다. 렌더러는 os.tmpdir() 아래에 프로필을 만들므로
+		//   이 검사가 **이 자식이 띄운 크롬만** 보게 된다. 전역으로 찾으면 같은 기계에서
+		//   돌고 있는 다른 렌더를 남의 고아로 오인한다.
+		const sandbox = await mkdtemp(join(tmpdir(), 'velog-mcp-orphan-test-'));
+		const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+			stdio: 'ignore',
+			env: { ...process.env, TMPDIR: sandbox },
+		});
+		await new Promise<void>((resolve) => child.on('exit', () => { resolve(); }));
+
+		// ★ 고정 대기로 두면 안 된다. 브라우저 본체는 SIGKILL 로 즉시 죽지만 헬퍼
+		//   프로세스(gpu·network·storage)가 뒤따라 정리되는 데 걸리는 시간은 부하에
+		//   따라 달라진다 — 1.5초 고정이었을 때 단독 실행은 통과하고 전체 스위트에서는
+		//   실패했다. '언젠가 사라진다'가 보장이므로 사라질 때까지 본다.
+		// ★ `pgrep -f "velog-mcp-chrome-"` 는 **자기를 실행한 셸까지 잡는다** —
+		//   그 셸의 명령줄에 패턴 문자열이 그대로 들어 있기 때문이다. 처음엔 그걸
+		//   모르고 잡힌 pid 를 kill 했더니 테스트가 자기 프로세스 트리를 죽였다.
+		//   `velog[-]mcp` 로 쓰면 찾는 대상(`velog-mcp`)에는 맞고 명령줄 자신에는
+		//   안 맞는다. 거기에 더해 죽이기 전에 '정말 크롬인지' 한 번 더 본다.
+		// `pgrep -f <문자열>` 은 **자기를 실행한 셸까지 잡는다** (그 셸 명령줄에 패턴이
+		// 그대로 들어 있다). 처음엔 그걸 모르고 잡힌 pid 를 kill 했더니 테스트가 자기
+		// 프로세스 트리를 죽였다. `[-]` 로 쪼개면 대상에는 맞고 자신에는 안 맞는다.
+		const marker = sandbox.replace('-orphan-test-', '[-]orphan-test-');
+		const alive = (): string[] =>
+			execFileSync('bash', ['-c', `pgrep -f "${marker}" || true`])
+				.toString()
+				.split('\n')
+				.map((v) => v.trim())
+				.filter((v) => /^\d+$/.test(v));
+		let left = alive();
+		for (let i = 0; i < 40 && left.length > 0; i++) {
+			await new Promise<void>((resolve) => setTimeout(resolve, 250));
+			left = alive();
+		}
+		// 걸렸으면 치우고 실패시킨다 — 테스트가 쓰레기를 남기면 안 된다.
+		// 다만 pid 만 믿고 죽이지 않는다. 명령줄에 크롬이 보이는 것만 죽인다.
+		const stuck: string[] = [];
+		for (const pid of left) {
+			const cmd = execFileSync('bash', ['-c', `ps -o command= -p ${pid} || true`]).toString();
+			if (!cmd.includes('Chrome') && !cmd.includes('chrom')) continue;
+			stuck.push(`${pid}: ${cmd.trim().slice(0, 60)}`);
+			execFileSync('bash', ['-c', `kill -9 ${pid} || true`]);
+		}
+		await rm(sandbox, { recursive: true, force: true }).catch(() => {});
+		assert.deepEqual(stuck, [], `10초를 기다려도 크롬이 남아 있다:\n${stuck.join('\n')}`);
 	});
 });
