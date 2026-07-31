@@ -37,6 +37,7 @@ import { findChrome, resetChromeCache } from '../render/chrome.ts';
 import { SERVER_VERSION, CHROME_TOOLS } from '../index.ts';
 import {
 	findPersonalEmails,
+	findLeaks,
 	LOCAL_PATH_PATTERNS,
 	scanFiles,
 } from '../../scripts/shipping-checks.ts';
@@ -874,6 +875,38 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		assert.equal(linux[1].exec(['', 'home', 'user', 'dev'].join('/')), null, '문서용 일반명을 잘못 잡았다');
 	});
 
+	test('P21d — 규칙이 우회되는 모양을 직접 먹인다', () => {
+		// 6차 반례 둘. 실제 파일에는 그런 값이 없어 규칙을 되돌려도 안 걸린다.
+		const who = 'some' + 'one';
+
+		// ① NUL 검사를 앞 8KiB 로 좁히면: 'A' 8,192개 뒤의 UTF-16 경로를 textual 로 보고
+		//    그 파일을 **UTF-8 로 읽어** 훑는다 → 아무것도 못 찾고 조용히 통과한다.
+		const filler = new Uint8Array(8192).fill(0x41);
+		const utf16Path = new Uint8Array(
+			Buffer.from(['C:', 'Users', who, 'dev'].join('\\'), 'utf16le'),
+		);
+		const mixed = new Uint8Array(filler.length + utf16Path.length);
+		mixed.set(filler);
+		mixed.set(utf16Path, filler.length);
+
+		const mixedResult = scanFiles([['mixed.bin', mixed]]);
+		assert.deepEqual(
+			mixedResult.leaks,
+			[],
+			'UTF-16 은 UTF-8 규칙으로 못 찾는다 — 찾았다면 이 사례가 무의미해진 것이다',
+		);
+		assert.deepEqual(
+			mixedResult.skipped,
+			['mixed.bin'],
+			'뒤쪽 NUL 을 못 보면 검사한 척하고 넘어간다 — 전체를 봐야 한다',
+		);
+
+		// ② 윈도우 경로의 `Users` 대소문자. 도구에 따라 소문자로 나온다.
+		const lower = ['c:', 'users', who, 'dev'].join('\\');
+		const found = findLeaks('doc.md', lower);
+		assert.equal(found.length, 1, `소문자 users 를 놓쳤다: ${lower}`);
+	});
+
 	test('P21c — 검사하지 못한 파일은 조용히 넘기지 않고 보고한다', () => {
 		// `looksTextual` 은 UTF-16 이나 앞부분에 NUL 이 든 텍스트를 바이너리로 오판한다.
 		// 그걸 `continue` 로 넘기면 **검사받지 않은 파일이 그대로 발행된다.**
@@ -921,6 +954,21 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 
 			// `import { renderCover as makeCover, renderDiagram } from '../render/index.ts'`
 			// 에서 **지역 이름**(makeCover·renderDiagram)을 뽑는다.
+			// ⚠️ named import 만 보면 `import * as R` 이나 동적 import 를 못 본다(6차).
+			//    그런 경로는 **이 검사가 감당 못 한다**는 뜻이므로 조용히 넘기지 않고 실패시킨다.
+			for (const [shape, pattern] of [
+				['namespace import', /import\s+\*\s+as\s+\w+\s+from\s*'[^']*render\/index\.ts'/],
+				['동적 import', /import\s*\(\s*'[^']*render\/index\.ts'\s*\)/],
+				['re-export', /export\s*\*\s*from\s*'[^']*render\/index\.ts'/],
+			] as const) {
+				assert.equal(
+					pattern.test(code),
+					false,
+					`${file} 이 ${shape} 로 렌더를 들여온다 — 이 검사가 못 따라간다. ` +
+						'named import 로 바꾸거나 이 테스트를 확장하라.',
+				);
+			}
+
 			const importBlock = /import\s*\{([^}]*)\}\s*from\s*'[^']*render\/index\.ts'/s.exec(code);
 			const localNames = (importBlock?.[1] ?? '')
 				.split(',')
@@ -1018,15 +1066,41 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			const entry = packages[key];
 			// 정확한 버전만 인정한다 — 끝을 고정하지 않으면 `9.9.9-not-real` 도 통과한다.
 			if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(entry?.version ?? '')) return true;
-			// 내용 고정은 integrity 가 한다. sha512 형식까지 본다.
-			return !/^sha(?:512|1)-[A-Za-z0-9+/=]+$/.test(entry?.integrity ?? '');
+			// ⚠️ `sha512-A` 나 `sha512-====` 도 통과하던 정규식이었다(코덱스 6차).
+			//    해시 길이를 요구하고, npm 이 쓸 수 있는 세 종류를 다 받는다.
+			return !/^sha(?:256|384|512)-[A-Za-z0-9+/]{20,}={0,2}$/.test(entry?.integrity ?? '');
 		});
 		assert.deepEqual(broken, [], `버전이나 integrity 가 온전치 않은 항목이 있다`);
 
 		// 직접 의존성은 이름으로도 한 번 더 확인한다 — 통째로 사라지는 경우를 잡는다.
+		// ⚠️ `dev: true` 를 붙이면 위의 운영 목록에서 빠져 검사를 통째로 우회한다(6차 반례).
 		for (const name of Object.keys(pkg['dependencies'] as Record<string, string>)) {
-			assert.ok(packages[`node_modules/${name}`], `${name} 이 shrinkwrap 에 없다`);
+			const entry = packages[`node_modules/${name}`];
+			assert.ok(entry, `${name} 이 shrinkwrap 에 없다`);
+			assert.notEqual(entry.dev, true, `${name} 은 운영 의존성인데 dev 로 표시돼 있다`);
 		}
+
+		// ★ 전이 의존성까지 **풀리는지** 본다. 개수만 세면 `ajv` 를 지워도 92개라 통과한다.
+		//   node_modules 해석 규칙대로 위로 올라가며 찾는다.
+		const resolves = (fromPath: string, name: string): boolean => {
+			// `node_modules/a/node_modules/b` → 후보: 그 안 → 바깥 → … → 루트
+			const segments = fromPath === '' ? [] : fromPath.split('/node_modules/');
+			for (let depth = segments.length; depth >= 0; depth -= 1) {
+				const prefix = segments.slice(0, depth).join('/node_modules/');
+				const candidate = prefix ? `${prefix}/node_modules/${name}` : `node_modules/${name}`;
+				if (packages[candidate]) return true;
+			}
+			return false;
+		};
+
+		const unresolved: string[] = [];
+		for (const key of ['', ...production]) {
+			const entry = packages[key] as { dependencies?: Record<string, string> } | undefined;
+			for (const name of Object.keys(entry?.dependencies ?? {})) {
+				if (!resolves(key, name)) unresolved.push(`${key || '<루트>'} → ${name}`);
+			}
+		}
+		assert.deepEqual(unresolved, [], '풀리지 않는 의존성이 있다 — 트리가 온전히 고정되지 않았다');
 	});
 
 	test('P12 — .mcp.json 의 env 에는 실제 값이 들어갈 수 없다', async () => {

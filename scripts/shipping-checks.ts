@@ -42,7 +42,7 @@ export function findPersonalEmails(text: string): string[] {
 export const LOCAL_PATH_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
 	['macOS', /\/Users\/(?!\.\.\.|<)[^\s/'")\]]+/],
 	['리눅스', /\/home\/(?!\.\.\.|<|user\b)[^\s/'")\]]+/],
-	['윈도우', /[A-Za-z]:[\\/]Users[\\/](?!<)[^\s\\/'")\]]+/],
+	['윈도우', /[A-Za-z]:[\\/][Uu][Ss][Ee][Rr][Ss][\\/](?!<)[^\s\\/'")\]]+/],
 ];
 
 export interface Leak {
@@ -72,8 +72,10 @@ export function findLeaks(file: string, text: string): Leak[] {
  * 실제로 그렇게 만들었다가 64개 중 62개만 검사하고 있었다.
  */
 export function looksTextual(bytes: Uint8Array): boolean {
-	const head = bytes.subarray(0, 8192);
-	return !head.includes(0);
+	// ⚠️ 앞 8KiB 만 보면 우회된다 — 'A' 8,192바이트 뒤에 UTF-16 홈 경로를 붙인 버퍼가
+	//    textual 로 판정되고 leaks 도 skipped 도 비었다(실측). 전체를 본다.
+	//    발행물이 0.6MiB 라 비용은 무시할 만하다.
+	return !bytes.includes(0);
 }
 
 export interface ScanResult {

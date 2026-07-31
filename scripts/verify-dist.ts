@@ -20,12 +20,14 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, readdir, mkdtemp, symlink, rm } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, symlink, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { scanFiles } from './shipping-checks.ts';
+import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
+
 import { SERVER_NAME, CHROME_TOOLS } from '../src/index.ts';
 
 const ROOT = new URL('../', import.meta.url);
@@ -57,18 +59,34 @@ interface Outcome {
 }
 
 async function handshake(binLink: string): Promise<Outcome> {
-	// ★★ **npm 이 실제로 쓰는 모양으로 띄운다 — 심볼릭 링크.**
-	//   `npx`·`npm i -g` 는 `node_modules/.bin/velog-mcp` 링크를 만들어 실행한다.
-	//   정규화된 실제 경로로만 검증하면 **링크에서만 죽는 버그를 못 본다.**
-	//   실제로 그런 버그가 있었다(argv[1] 이 링크라 `isDirectRun()` 이 false →
-	//   출력 0줄·코드 0). 관문이 실물과 다른 모양을 보고 있었던 것이다.
+	// ★★ **npm 이 실제로 쓰는 모양 그대로 띄운다 — 링크를 '직접 실행'한다.**
 	//
-	// ⚠️ `ENTRY.pathname` 은 공백을 `%20` 으로 남긴다(실측) → `fileURLToPath`.
-	const child = spawn(process.execPath, [binLink], {
+	//   `npx`·`npm i -g` 는 `node_modules/.bin/velog-mcp` 링크를 만들고 대상에
+	//   **실행 권한을 붙인 뒤**, 그 링크를 **직접 실행**한다. 그러면 커널이
+	//   **shebang** 을 읽어 node 를 띄운다.
+	//
+	//   ⚠️ 한때 `spawn(process.execPath, [link])` 로 열었다. 그건 node 를 우리가
+	//      직접 부르는 것이라 **shebang 을 안 탄다** — 즉 `#!/usr/bin/env node` 를
+	//      지워도 관문이 통과한다. 실제 `npx` 는 그때 기동에 실패한다.
+	//      실측: tarball 안 `dist/index.js` 는 `-rw-r--r--` 이고, 실행 권한은
+	//      npm 이 **설치할 때** 붙인다. 그래서 여기서도 붙여 재현한다.
+	// spawn 자체가 던질 수 있다 — shebang 이 없거나 실행 권한이 없으면 `ENOEXEC`.
+	// 그냥 두면 스택 트레이스로 터진다. 막기는 하지만 **왜** 막혔는지는 안 알려준다.
+	let child;
+	try {
+		child = spawn(binLink, [], {
 		stdio: ['pipe', 'pipe', 'pipe'],
-		// 토큰 없이 띄운다. 발행 검증이 실제 계정을 건드릴 이유가 없다.
-		env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
-	});
+			// 토큰 없이 띄운다. 발행 검증이 실제 계정을 건드릴 이유가 없다.
+			env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
+		});
+	} catch (error: unknown) {
+		const code = (error as { code?: string }).code ?? '';
+		fail(
+			`npm 방식(링크 직접 실행)으로 띄우지 못했습니다 — ${code || String(error)}\n` +
+				'   `dist/index.js` 첫 줄의 `#!/usr/bin/env node` 가 있는지, 실행 권한이 붙는지 보세요.\n' +
+				'   이 상태로 발행하면 `npx` 가 서버를 못 띄웁니다.',
+		);
+	}
 
 	const requests = [
 		{
@@ -106,7 +124,7 @@ async function handshake(binLink: string): Promise<Outcome> {
 			resolve({ responses, junk, stderr, died });
 		};
 
-		const hardTimer = setTimeout(finish, DEADLINE_MS);
+		let hardTimer = setTimeout(finish, DEADLINE_MS);
 		let watchTimer: NodeJS.Timeout = setTimeout(() => undefined, 0);
 		let watching = false;
 
@@ -119,17 +137,22 @@ async function handshake(binLink: string): Promise<Outcome> {
 			buffer = lines.pop() ?? '';
 			for (const line of lines) {
 				if (!line.trim()) continue;
-				// ⚠️ JSON 이면 무조건 MCP 응답으로 인정했었다. 그러면 JSON 로거 한 줄이
-				//    섞여도 "stdout 순수"라고 판정한다 — 실제 프로토콜은 이미 오염됐는데.
-				//    형태(`jsonrpc: '2.0'` + id 또는 method)까지 본다.
-				let parsed: Record<string, unknown> | null;
+				// ⚠️ 두 번 약했다.
+				//    ① JSON 이면 무조건 MCP 응답으로 인정 → JSON 로거 한 줄이 섞여도
+				//       "stdout 순수"라고 판정했다.
+				//    ② 그다음엔 `jsonrpc:'2.0'` + id/method 만 봤다. 그것도 부족했다 —
+				//       `{"jsonrpc":"2.0","id":999,"level":"debug"}` 는 그 검사를 통과하지만
+				//       **SDK 의 `deserializeMessage()` 는 거부한다**(실측). 실제 클라이언트는
+				//       파싱 오류로 연결을 끊는다.
+				//    그래서 **SDK 가 쓰는 바로 그 스키마**로 판정한다. 우리가 흉내 낼 이유가 없다.
+				let parsed: unknown;
 				try {
-					parsed = JSON.parse(line) as Record<string, unknown>;
+					parsed = JSON.parse(line);
 				} catch {
-					parsed = null;
+					parsed = undefined;
 				}
-				if (parsed && parsed['jsonrpc'] === '2.0' && ('id' in parsed || 'method' in parsed)) {
-					responses.push(parsed);
+				if (parsed !== undefined && JSONRPCMessageSchema.safeParse(parsed).success) {
+					responses.push(parsed as Record<string, unknown>);
 				} else {
 					junk.push(line);
 				}
@@ -141,6 +164,10 @@ async function handshake(binLink: string): Promise<Outcome> {
 			if (responses.length >= 2 && !watching) {
 				watching = true;
 				clearTimeout(watchTimer);
+				// 응답이 시한 직전에 오면 감시창이 잘려 "2초 지켜봤다"가 거짓이 된다.
+				// **딱 한 번만** 시한을 밀어 감시창을 확보한다 — 무한 연장이 아니다.
+				clearTimeout(hardTimer);
+				hardTimer = setTimeout(finish, WATCH_MS + 1_000);
 				watchTimer = setTimeout(finish, WATCH_MS);
 			}
 		});
@@ -169,6 +196,8 @@ const pkg = JSON.parse(await readFile(new URL('package.json', ROOT), 'utf8')) as
  */
 const linkDir = await mkdtemp(join(tmpdir(), 'velog-mcp-verify-'));
 const binLink = join(linkDir, 'velog-mcp');
+// npm 이 설치할 때 하는 것: 대상에 실행 권한을 붙이고 링크를 건다.
+await chmod(fileURLToPath(ENTRY), 0o755);
 await symlink(fileURLToPath(ENTRY), binLink);
 
 const { responses, junk, stderr, died } = await handshake(binLink).finally(async () => {
