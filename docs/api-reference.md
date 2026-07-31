@@ -72,6 +72,46 @@ Cookie: access_token=<...>; refresh_token=<...>
 > `deletePost` 는 v3 mutation 목록에 **없다**. 삭제는 다른 경로인 듯하나
 > 어차피 구현하지 않으므로 조사하지 않았다.
 
+### 이미지 업로드는 GraphQL 이 아니다
+
+mutation 23개 어디에도 업로드가 없다. 벨로그는 파일을 fastify REST 라우트로 받는다.
+경로는 공식 소스에서 세 겹으로 조립된다:
+
+```
+routes/index.mts        fastify.register(api,        { prefix: '/api'   })
+routes/files/index.mts  fastify.register(v3,         { prefix: '/v3'    })   ← files 아래
+routes/index.mts        fastify.register(filesRoute, { prefix: '/files' })
+→ POST https://v3.velog.io/api/files/v3/upload
+```
+
+| 항목 | 값 | 근거 |
+| --- | --- | --- |
+| 폼 필드 | `image` (파일) · `type` · `ref_id?` | `multer.single('image')` |
+| `type` | `post` \| `profile` (+ 컨트롤러는 `book` 도 허용) | `filesController.upload` |
+| 응답 | `{ path: "https://velog.velcdn.com/..." }` | `B2ManagerService.upload` |
+| 크기 상한 | **30MB** | `multer({limits:{fileSize:1024*1024*30}})` |
+| 남용 차단 | 1시간 100건 초과 · 1분 20건 이상 → **429** | `ImageService.detectAbuse` |
+| 인증 | 쿠키 (GraphQL 과 동일) | `authGuardPlugin` |
+
+★ `type:'post'` + `ref_id` 를 주면 서버가 **그 글이 내 글인지 확인한다**:
+
+```ts
+if (type === 'post' && !!ref_id) {
+  const post = await this.postService.findById(ref_id)
+  if (post?.fk_user_id !== signedUserId) throw new ForbiddenError("Can't access the post")
+}
+```
+
+`editPost` 에는 없는 소유권 검사가 여기엔 있다. 쓸 수 있으면 쓰는 게 낫다.
+
+**이미지 삭제 API 는 없다.** 올린 건 못 지운다.
+
+실측 (2026-07-31, 실계정):
+```
+POST /api/files/v3/upload  →  200 {"path":"https://velog.velcdn.com/images/milcho0604/post/…/image.png"}
+GET  그 주소 (무인증)       →  200 image/png · 147,485 bytes · 2168×1106
+```
+
 ### WritePostInput (11필드) — ✅ 공식 소스와 일치
 
 `velog-io/velog` 의 `apps/server/src/graphql/Post.gql` 원문과 대조했고 필드·필수여부가

@@ -98,7 +98,7 @@ and blog stats all work unauthenticated.
 
 | Environment | What you get |
 | --- | --- |
-| *(nothing set)* | Read everything · create drafts · **publish privately** — 18 tools |
+| *(nothing set)* | Read everything · create drafts · **publish privately** · draw and upload images — 21 tools |
 | `VELOG_ALLOW_PUBLIC=1` | …plus **public publishing** (adds an `is_private` parameter) |
 | `VELOG_ALLOW_PROFILE=1` | …plus **profile editing** (adds 5 tools) |
 
@@ -149,7 +149,7 @@ Full reasoning: [docs/security.md](docs/security.md)
 
 ## Tools
 
-18 tools. Only 6 of them change anything on Velog.
+21 tools. Only 9 of them change anything on Velog.
 
 ### Reading — no auth required
 
@@ -196,6 +196,42 @@ Tools that take a `username` — `velog_list_drafts`, `velog_blog_stats`,
 `velog_export_posts`, `velog_search_posts` — fall back to your own account when you
 omit it.
 
+### Diagrams and images
+
+| Tool | Effect |
+| --- | --- |
+| `velog_render_diagram` | Draw an architecture/flow diagram and upload it |
+| `velog_render_cover` | Draw a 1200×630 cover card for a post |
+| `velog_upload_image` | Upload a local image file, get the Markdown back |
+
+You describe **what exists and what flows where**; the renderer owns everything else —
+palette, spacing, text measurement, corner rounding, canvas size. That is deliberate: a
+diagram redrawn from scratch each time looks different each time.
+
+Every measurement is real. Node widths and line breaks come from the browser's
+`getBBox()`, never from a character count — with mixed Korean and English text, counting
+characters is wrong every time. The canvas is sized *after* drawing, from the content's
+bounding box, so a diagram cannot be clipped.
+
+Then it audits itself and reports five classes of defect:
+
+```
+text spilling outside its card · letter-spacing squeezed to fit
+a line crossing (or hiding behind) a node
+two lines overlapping · two nodes overlapping · a label sitting on a card
+```
+
+**If the audit finds anything, nothing is uploaded.** Velog has no delete-image API and
+every upload counts against your quota, so a flawed diagram is worth redrawing rather
+than shipping. Pass `force_upload: true` to override.
+
+Icons are 28 built-in glyphs (`server`, `database`, `cloud`, `clock`, `alert`, …) drawn
+from primitive shapes. Nothing is fetched — the renderer runs with DNS disabled.
+
+**Requires Chrome** (or any Chromium-based browser: Edge, Brave, Chromium). It is found
+automatically on macOS/Linux/Windows; set `VELOG_CHROME_PATH` if yours lives elsewhere.
+Only these three tools need it — the other 18 work without a browser.
+
 ### Profile editing — `VELOG_ALLOW_PROFILE=1`
 
 Five more tools appear: `velog_update_profile` (display name, bio),
@@ -232,6 +268,12 @@ Once it's configured, just talk to your MCP client.
 
 "Publish that draft"
    → private by default; public only with VELOG_ALLOW_PUBLIC=1
+
+"Draw how the request flows from the LB through the workers to Redis"
+   → renders a diagram, audits it, uploads it, hands back the Markdown line
+
+"Make a cover image for this post"
+   → 1200×630 card; pass the URL to velog_update_post's thumbnail
 ```
 
 Your MCP client asks for approval before each tool call, and irreversible tools carry

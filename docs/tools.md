@@ -1,9 +1,9 @@
 # 도구 카탈로그
 
-기본 18개 + 프로필 수정 5개(설정 시).
+기본 21개 + 프로필 수정 5개(설정 시).
 
 ```
-기본 (설정 없음)         읽기 + 초안 + 비공개 발행        도구 18개
+기본 (설정 없음)         읽기 + 초안 + 비공개 발행 + 그림   도구 21개
 VELOG_ALLOW_PUBLIC=1    공개 발행                        (파라미터만 추가)
 VELOG_ALLOW_PROFILE=1   프로필·소개글·블로그제목·SNS·사진  도구 5개 추가
 ```
@@ -33,6 +33,9 @@ VELOG_ALLOW_PROFILE=1   프로필·소개글·블로그제목·SNS·사진  도�
 | `velog_publish_draft` | **필요** | **쓰기 — 초안을 발행** (`destructive`) |
 | `velog_unpublish_post` | **필요** | **쓰기 — 초안으로 되돌림** (`destructive`) |
 | `velog_update_post` | **필요** | **쓰기 — 발행글 수정** |
+| `velog_render_diagram` | 올릴 때만 | 그림 생성 (+ 업로드) |
+| `velog_render_cover` | 올릴 때만 | 표지 생성 (+ 업로드) |
+| `velog_upload_image` | **필요** | **쓰기 — 공개 CDN 업로드** |
 
 `username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·
 `velog_export_posts`·`velog_search_posts` 는 **생략하면 토큰의 계정**을 쓴다.
@@ -269,3 +272,84 @@ RSS·메일로 나가지도 않는다. 이유는 **혼동**이다: 프로필의 
 글 삭제는 애초에 불가능하다 — v3 mutation 목록에 `deletePost` 가 없다.
 
 전체 목록과 사유는 [security.md](security.md).
+
+
+---
+
+## 그림 도구 3종
+
+### `velog_render_diagram`
+
+구성도·흐름도를 그린다. **좌표는 사람이 정하고 나머지는 렌더러가 정한다.**
+
+```
+넘기는 것   nodes(x·y·제목·부제·아이콘·배지) / groups / edges / planes
+정해지는 것  노드 폭·높이 · 캔버스 크기 · 선 꺾임과 라운딩 · 팬아웃 간격 · 라벨 자리
+```
+
+- **폭·높이 생략 가능** — 글자를 `getBBox` 로 재서 정한다. 글자수 추정은 쓰지 않는다.
+- **좌표 원점은 아무 데나** — 다 그린 뒤 내용 bbox 로 캔버스를 되맞춘다. 잘리지 않는다.
+- **엣지는 `from`/`to` 만** — `"노드id:right"` 처럼 면을 고를 수도 있고, 생략하면
+  두 노드의 상대 위치로 정한다. 같은 면에서 여러 선이 나가면 등간격으로 벌린다.
+  꼭 손으로 꺾어야 하면 `points` 로 좌표를 직접 준다.
+- **라벨 자리 자동** — 후보를 여러 개 만들어 카드·다른 라벨과 안 겹치는 자리를 고른다.
+
+#### 자가감사 5종
+
+| 항목 | 무엇을 잡나 |
+| --- | --- |
+| `over` | 글자가 카드 밖으로 나감 |
+| `compressed` | 자간을 눌러 억지로 맞춤 → **노드 폭을 넓히라는 신호** |
+| `cross` | 선이 노드를 관통하거나 노드 뒤로 숨음 |
+| `overlap` | 서로 다른 선이 같은 자리에 겹침 |
+| `collide` | 노드끼리 겹침 · 배지가 아이콘 침범 |
+| `label` | 라벨이 카드 위나 다른 라벨 위에 얹힘 |
+
+하나라도 걸리면 **올리지 않고** 무엇이 문제인지 돌려준다. 벨로그는 이미지 삭제 API 가
+없어서 잘못 올린 건 지울 수 없다. 그대로 올리려면 `force_upload: true`.
+
+#### 아이콘 28종
+
+```
+server database cache cloud browser mobile layers clock bell chart
+lock key code file user gear alert check cross arrow branch package
+terminal network mail search retry bolt
+```
+
+전부 도형 조합이다 — 밖에서 받아오는 게 없다. 색은 `icon_tone` 으로 고른다.
+
+#### 톤 10종
+
+`slate gray blue green amber yellow purple teal rose indigo`
+
+그룹 배경·아이콘·배지에 쓴다. 임의 색을 못 받게 한 이유는 두 가지다:
+그림마다 톤이 달라지는 걸 막는 것과, 값이 결국 SVG 속성이 되므로 입력을 좁히는 것.
+평면(`planes`) 색만 `#rrggbb` 로 직접 지정할 수 있다.
+
+### `velog_render_cover`
+
+글 목록·SNS 미리보기용 1200×630 카드. 제목이 길면 줄바꿈하고, 3줄에도 안 들어가면
+글자 크기를 62 → 40px 까지 줄인다. 줄바꿈도 실측이다 — 공백이 없는 한글 제목은
+글자 단위로 끊는다.
+
+만든 뒤 `velog_update_post` 의 `thumbnail` 에 주소를 넣으면 표지가 된다.
+
+### `velog_upload_image`
+
+로컬 이미지를 올린다. **확장자가 아니라 파일 앞부분 시그니처로 판정한다.**
+
+```
+받는 것    PNG · JPEG · GIF · WebP
+안 받는 것  그 외 전부 (SVG 포함) · 10MB 초과 · 디렉터리
+```
+
+SVG 를 받지 않는 건 텍스트라 시그니처로 가릴 수 없고, 스크립트를 품은 채
+velcdn 도메인에서 서빙되면 그 자체가 문제가 되기 때문이다.
+
+`post_id` 를 주면 벨로그가 **그 글이 내 글인지 확인한다** — 아니면 403.
+벨로그에 몇 안 되는 실제 소유권 검사라 쓸 수 있으면 쓴다.
+
+### 크롬 의존
+
+렌더 도구 2종만 브라우저를 쓴다. 없으면 그 도구만 안내와 함께 실패하고 나머지 19개는
+그대로 동작한다. 찾는 순서는 `VELOG_CHROME_PATH` → OS 별 기본 설치 경로.
