@@ -267,8 +267,14 @@ export class VelogClient {
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
 			const codes = collectCauseCodes(cause);
+			// ★ '실패'라고 단정하면 안 된다. 서버가 파일을 받아 저장한 뒤 응답만
+			//   끊겼을 수도 있다. 그 상태에서 다시 올리면 중복 업로드가 되고 한도만
+			//   깎인다. 무엇을 모르는지 그대로 알려줘야 사용자가 판단할 수 있다.
 			throw new VelogApiError(
-				`이미지 업로드 실패: ${this.#mask(reason)}${codes.length ? ` (${codes.join('/')})` : ''}`,
+				`이미지 업로드 중 통신이 끊겼습니다: ${this.#mask(reason)}` +
+					`${codes.length ? ` (${codes.join('/')})` : ''}\n` +
+					'⚠️ 올라갔는지 아닌지 알 수 없습니다. 다시 올리면 같은 그림이 두 번 저장될 수 ' +
+					'있으니(삭제 API 없음) 벨로그에서 확인한 뒤 결정하세요.',
 				{ networkCodes: codes },
 			);
 		}
@@ -294,9 +300,11 @@ export class VelogClient {
 		try {
 			payload = (await response.json()) as { path?: unknown };
 		} catch (cause) {
+			// 2xx 를 받고 본문만 못 읽은 경우다 — 서버는 이미 저장했을 가능성이 높다.
 			throw new VelogApiError(
 				'업로드 응답을 JSON 으로 읽지 못했습니다: ' +
-					this.#mask(cause instanceof Error ? cause.message : String(cause)),
+					this.#mask(cause instanceof Error ? cause.message : String(cause)) +
+					'\n⚠️ 서버는 200 을 줬으므로 이미 저장됐을 수 있습니다. 다시 올리기 전에 확인하세요.',
 			);
 		}
 		if (typeof payload.path !== 'string' || payload.path === '') {

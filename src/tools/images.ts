@@ -48,6 +48,40 @@ interface Sniffed {
 }
 
 /**
+ * 앞부분 시그니처만 보면 "PNG 머리 8바이트 + 아무 텍스트" 도 통과한다.
+ * 그건 이미지가 아니라 **이미지처럼 시작하는 파일**이다. 끝맺음까지 확인한다.
+ *
+ * 끝맺음을 파일 맨 끝으로 못 박지는 않는다 — 정상 파일에도 패딩이 붙는 경우가 있어
+ * 엄격하게 잡으면 멀쩡한 사진을 거부한다. '마지막 64바이트 안에 있는가' 정도면
+ * 머리만 베껴 붙인 파일은 걸러지고 정상 파일은 통과한다.
+ */
+function looksComplete(bytes: Uint8Array, ext: string): boolean {
+	const len = bytes.length;
+	const tailFrom = Math.max(0, len - 64);
+	const has = (...sig: number[]): boolean => {
+		for (let i = tailFrom; i <= len - sig.length; i++) {
+			let ok = true;
+			for (let j = 0; j < sig.length; j++) {
+				if (bytes[i + j] !== sig[j]) { ok = false; break; }
+			}
+			if (ok) return true;
+		}
+		return false;
+	};
+	if (ext === 'png') return has(0x49, 0x45, 0x4e, 0x44); // IEND
+	if (ext === 'jpg') return has(0xff, 0xd9); // EOI
+	if (ext === 'gif') return has(0x3b); // trailer
+	if (ext === 'webp') {
+		// RIFF 헤더가 선언한 길이가 실제 파일 안에 들어와야 한다.
+		if (len < 12) return false;
+		const size =
+			(bytes[4] ?? 0) | ((bytes[5] ?? 0) << 8) | ((bytes[6] ?? 0) << 16) | ((bytes[7] ?? 0) << 24);
+		return size > 0 && size + 8 <= len;
+	}
+	return true;
+}
+
+/**
  * 파일 앞부분으로 형식을 판정한다. 확장자는 보지 않는다 — 이름은 누구나 바꾼다.
  * 여기서 통과하지 못하면 업로드하지 않는다.
  */
@@ -57,20 +91,20 @@ export function sniffImage(bytes: Uint8Array): Sniffed | null {
 		at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47 &&
 		at(4) === 0x0d && at(5) === 0x0a && at(6) === 0x1a && at(7) === 0x0a
 	) {
-		return { mime: 'image/png', ext: 'png' };
+		return looksComplete(bytes, 'png') ? { mime: 'image/png', ext: 'png' } : null;
 	}
 	if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) {
-		return { mime: 'image/jpeg', ext: 'jpg' };
+		return looksComplete(bytes, 'jpg') ? { mime: 'image/jpeg', ext: 'jpg' } : null;
 	}
 	if (at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x38) {
-		return { mime: 'image/gif', ext: 'gif' };
+		return looksComplete(bytes, 'gif') ? { mime: 'image/gif', ext: 'gif' } : null;
 	}
 	// RIFF....WEBP
 	if (
 		at(0) === 0x52 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x46 &&
 		at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42 && at(11) === 0x50
 	) {
-		return { mime: 'image/webp', ext: 'webp' };
+		return looksComplete(bytes, 'webp') ? { mime: 'image/webp', ext: 'webp' } : null;
 	}
 	return null;
 }
@@ -90,9 +124,9 @@ async function readImageFile(path: string): Promise<{ bytes: Uint8Array; kind: S
 	const kind = sniffImage(bytes);
 	if (!kind) {
 		throw new Error(
-			`이미지 파일이 아닙니다: ${path}\n` +
-				'PNG·JPEG·GIF·WebP 만 올립니다. 확장자가 아니라 파일 내용으로 판정합니다 ' +
-				'(SVG 는 받지 않습니다).',
+			`이미지 파일이 아닙니다(또는 파일이 온전하지 않습니다): ${path}\n` +
+				'PNG·JPEG·GIF·WebP 만 올립니다. 확장자가 아니라 파일 내용으로 판정하며 ' +
+				'시작 시그니처와 끝맺음을 함께 봅니다 (SVG 는 받지 않습니다).',
 		);
 	}
 	return { bytes, kind };
@@ -104,8 +138,13 @@ const toneField = z
 
 const nodeSchema = z.object({
 	id: z.string().optional().describe('선을 연결할 때 쓰는 이름. 생략하면 n0, n1 …'),
-	x: z.number().describe('왼쪽 위 x. 원점은 아무 데나 잡아도 된다 — 캔버스는 자동으로 맞춘다'),
-	y: z.number(),
+	// 상한이 없으면 요청 하나로 수억 픽셀짜리 캔버스를 요구할 수 있다.
+	x: z
+		.number()
+		.min(-20000)
+		.max(20000)
+		.describe('왼쪽 위 x. 원점은 아무 데나 잡아도 된다 — 캔버스는 자동으로 맞춘다'),
+	y: z.number().min(-20000).max(20000),
 	w: z.number().min(60).max(2400).optional().describe('생략하면 글자 실측으로 정한다'),
 	h: z.number().min(36).max(1400).optional(),
 	title: z.string().min(1),
@@ -134,11 +173,19 @@ const groupSchema = z.object({
 });
 
 const edgeSchema = z.object({
-	plane: z.string().optional().describe('흐름 종류 key (범례와 색이 여기서 갈린다)'),
+	// plane.key 와 같은 규칙. 이 값도 marker 참조로 들어간다.
+	plane: z
+		.string()
+		.regex(/^[A-Za-z0-9_-]{1,16}$/, '영숫자·밑줄·하이픈 1~16자만')
+		.optional()
+		.describe('흐름 종류 key (범례와 색이 여기서 갈린다)'),
 	from: z.string().optional().describe('노드 id. 면을 고르려면 "id:right" 처럼'),
 	to: z.string().optional(),
+	// ★ 점 개수에 상한이 없으면 감사 비용이 O(E²×S²) 로 터진다.
+	//   엣지 120개 × 점 1000개면 선분 비교가 수십억 번이다.
 	points: z
-		.array(z.tuple([z.number(), z.number()]))
+		.array(z.tuple([z.number().min(-20000).max(20000), z.number().min(-20000).max(20000)]))
+		.max(40)
 		.optional()
 		.describe('직접 꺾는 경우. 주면 from/to 대신 이 좌표를 쓴다'),
 	label: z.string().optional(),
@@ -178,7 +225,6 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 		auditText: string;
 		clean: boolean;
 		upload: boolean;
-		force: boolean;
 		alt: string;
 		postId?: string;
 		what: string;
@@ -190,11 +236,17 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 		lines.push(args.auditText);
 		lines.push('');
 
-		if (args.upload && !args.clean && !args.force) {
+		if (args.upload && !args.clean) {
 			// ★ 감사에 걸린 그림은 올리지 않는다. 벨로그 업로드는 되돌릴 수 없고
 			//   (삭제 API 가 없다) 계정 업로드 한도도 깎는다. 고쳐서 다시 그리는 게 맞다.
+			//
+			// ★★ 예전엔 `force_upload` 파라미터로 이걸 끌 수 있었다. 그건 이 저장소가
+			//   공개 발행에서 이미 배운 것(ADR 0004)을 그대로 어긴 것이다 —
+			//   **모델이 스스로 켤 수 있는 스위치는 방어가 아니다.** 그래서 없앴다.
+			//   그래도 올려야 하면 경로가 있다: upload:false 로 그린 뒤 PNG 를 직접 보고
+			//   velog_upload_image 로 올리면 된다. 사람이 한 번 더 개입하게 된다.
 			lines.push('올리지 않았습니다 — 위 문제를 고쳐 다시 그리세요.');
-			lines.push('그대로 올리려면 force_upload: true 를 주세요.');
+			lines.push('그래도 올려야 하면 아래 PNG 를 확인한 뒤 velog_upload_image 를 쓰세요.');
 			lines.push('');
 			lines.push(`- 로컬 PNG: ${args.pngPath}`);
 			lines.push(`- 편집용 HTML: ${args.htmlPath}`);
@@ -232,7 +284,8 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'구성도·흐름도를 그려 PNG 로 만들고 벨로그에 올린다. 본문에 붙일 마크다운을 돌려준다.\n' +
 				'좌표만 주면 나머지는 렌더러가 맞춘다 — 노드 폭·캔버스 크기·선 꺾임·라벨 위치는 ' +
 				'브라우저 실측으로 정해지고, 글자 삐져나옴/선 관통/겹침은 자가감사가 잡는다.\n' +
-				'감사에 걸리면 올리지 않고 무엇이 문제인지 알려준다 (force_upload 로 무시 가능).\n' +
+				'감사에 걸리면 **올리지 않고** 무엇이 문제인지 알려준다. 이 판단은 끌 수 없다 — ' +
+				'그래도 올려야 하면 upload:false 로 그린 뒤 PNG 를 확인하고 velog_upload_image 를 쓴다.\n' +
 				`아이콘: ${ICON_NAMES.join(' ')}\n톤: ${TONE_NAMES.join(' ')}`,
 			inputSchema: {
 				title: z.string().min(1).describe('그림 제목 (좌상단)'),
@@ -248,7 +301,6 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				legend: z.boolean().default(true),
 				alt: z.string().optional().describe('이미지 대체 텍스트'),
 				upload: z.boolean().default(true),
-				force_upload: z.boolean().default(false),
 				post_id: z
 					.string()
 					.optional()
@@ -289,7 +341,6 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 					auditText: formatAudit(a),
 					clean,
 					upload: args.upload,
-					force: args.force_upload,
 					alt: args.alt ?? args.title,
 					...(args.post_id ? { postId: args.post_id } : {}),
 					what: '다이어그램',
@@ -314,7 +365,6 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				tone: toneField.optional(),
 				footer: z.string().optional().describe("우상단 서명 (예: '@milcho0604')"),
 				upload: z.boolean().default(true),
-				force_upload: z.boolean().default(false),
 				post_id: z.string().optional(),
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -340,7 +390,6 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 					auditText: formatCoverAudit(result.audit),
 					clean: result.audit.truncated.length === 0,
 					upload: args.upload,
-					force: args.force_upload,
 					alt: args.title,
 					...(args.post_id ? { postId: args.post_id } : {}),
 					what: '표지',

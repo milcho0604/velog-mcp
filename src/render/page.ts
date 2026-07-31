@@ -406,8 +406,14 @@ function rpath(pts, r){
     var inLen = Math.hypot(c[0]-p[0], c[1]-p[1]);
     var outLen = Math.hypot(nx[0]-c[0], nx[1]-c[1]);
     var rr = Math.min(r, inLen/2, outLen/2);
-    var ix = c[0] - Math.sign(c[0]-p[0]) * rr, iy = c[1] - Math.sign(c[1]-p[1]) * rr;
-    var ox = c[0] + Math.sign(nx[0]-c[0]) * rr, oy = c[1] + Math.sign(nx[1]-c[1]) * rr;
+    // ★ 축별 Math.sign 으로 r 만큼 물리면 직각에서는 맞지만 **대각선에서는 원래
+    //   선을 벗어난다.** points=[[0,0],[100,1],[200,2]] 이면 거의 y=1 인 선이
+    //   실제로는 y=-8~10 까지 벌어진다(감사는 원본 선분을 보므로 못 잡는다).
+    //   방향 단위벡터로 물려야 어떤 각도에서도 선 위에 남는다.
+    var iux = inLen ? (c[0]-p[0]) / inLen : 0, iuy = inLen ? (c[1]-p[1]) / inLen : 0;
+    var oux = outLen ? (nx[0]-c[0]) / outLen : 0, ouy = outLen ? (nx[1]-c[1]) / outLen : 0;
+    var ix = c[0] - iux * rr, iy = c[1] - iuy * rr;
+    var ox = c[0] + oux * rr, oy = c[1] + ouy * rr;
     d += ' L' + ix + ',' + iy + ' Q' + c[0] + ',' + c[1] + ' ' + ox + ',' + oy;
   }
   d += ' L' + pts[pts.length-1][0] + ',' + pts[pts.length-1][1];
@@ -482,8 +488,10 @@ for (var pk = 0; pk < plan.length; pk++) {
   if (itm.bad) { badRefs.push(itm.bad); continue; }
   if (!itm.pts) continue;
   var pln = planeOf(itm.e.plane);
+  // ★ itm.e.plane 을 그대로 쓰면 없는 key 일 때 marker 를 못 찾아 화살촉이 조용히
+  //   사라진다. planeOf() 가 되돌려준 **실재하는** 평면의 key 를 쓴다.
   var pathEl = el('path', {d:rpath(itm.pts), fill:'none', stroke:pln.color,
-                           'stroke-width':1.8, 'marker-end':'url(#arr-'+itm.e.plane+')'}, content);
+                           'stroke-width':1.8, 'marker-end':'url(#arr-'+pln.key+')'}, content);
   if (pln.dash) pathEl.setAttribute('stroke-dasharray', pln.dash);
 }
 
@@ -665,7 +673,10 @@ var cross = [];
 for (var ci = 0; ci < plan.length; ci++) {
   var ic = plan[ci];
   if (!ic.pts) continue;
-  var own = {};
+  // ★ 여기도 Object.create(null) 이어야 한다. 보통 객체면 own['constructor'] 가
+  //   상속 프로퍼티라 **항상 참**이라, id 가 'constructor' 인 노드는 관통 검사에서
+  //   통째로 빠진다. NMAP 등은 고쳤는데 이것만 남아 있었다.
+  var own = Object.create(null);
   if (ic.a) { own[ic.a.n.id] = 1; own[ic.b.n.id] = 1; }
   var ss = segs(ic.pts);
   for (var cj = 0; cj < S.nodes.length; cj++) {
@@ -679,6 +690,27 @@ for (var ci = 0; ci < plan.length; ci++) {
     }
   }
 }
+// ★ 처음엔 수평-수평, 수직-수직만 비교했다. 그러면 똑같은 **대각선** 두 개가
+//   완전히 포개져도 통과한다. 각도에 상관없이 '평행하고 같은 직선 위이며 구간이
+//   겹치는가'로 본다.
+function collinearOverlap(A, B){
+  var ax = A[2]-A[0], ay = A[3]-A[1];
+  var bx = B[2]-B[0], by = B[3]-B[1];
+  var la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+  if (la < 1 || lb < 1) return false;
+  // 평행? (단위벡터 외적이 거의 0)
+  if (Math.abs((ax*by - ay*bx) / (la*lb)) > 0.02) return false;
+  // 같은 직선 위? (A 의 시작점에서 B 의 시작점까지의 수직거리)
+  var perp = Math.abs((B[0]-A[0]) * (ay/la) - (B[1]-A[1]) * (ax/la));
+  if (perp > 3) return false;
+  // 구간이 실제로 겹치는가 (A 방향으로 투영)
+  function proj(px, py){ return ((px-A[0]) * ax + (py-A[1]) * ay) / la; }
+  var a0 = 0, a1 = la;
+  var b0 = proj(B[0], B[1]), b1 = proj(B[2], B[3]);
+  var lo = Math.max(Math.min(a0,a1), Math.min(b0,b1));
+  var hi = Math.min(Math.max(a0,a1), Math.max(b0,b1));
+  return hi - lo > 20;
+}
 var overlap = [];
 for (var oa = 0; oa < plan.length; oa++) {
   if (!plan[oa].pts) continue;
@@ -689,18 +721,7 @@ for (var oa = 0; oa < plan.length; oa++) {
     var hit = false;
     for (var x1 = 0; x1 < sa.length && !hit; x1++) {
       for (var x2 = 0; x2 < sb.length && !hit; x2++) {
-        var A = sa[x1], B = sb[x2];
-        var aH = Math.abs(A[1]-A[3]) < 0.6, bH = Math.abs(B[1]-B[3]) < 0.6;
-        var aV = Math.abs(A[0]-A[2]) < 0.6, bV = Math.abs(B[0]-B[2]) < 0.6;
-        if (aH && bH && Math.abs(A[1]-B[1]) < 3) {
-          var lo = Math.max(Math.min(A[0],A[2]), Math.min(B[0],B[2]));
-          var hi = Math.min(Math.max(A[0],A[2]), Math.max(B[0],B[2]));
-          if (hi - lo > 20) hit = true;
-        } else if (aV && bV && Math.abs(A[0]-B[0]) < 3) {
-          var lo2 = Math.max(Math.min(A[1],A[3]), Math.min(B[1],B[3]));
-          var hi2 = Math.min(Math.max(A[1],A[3]), Math.max(B[1],B[3]));
-          if (hi2 - lo2 > 20) hit = true;
-        }
+        if (collinearOverlap(sa[x1], sb[x2])) hit = true;
       }
     }
     if (hit) overlap.push((plan[oa].e.label || ('선#'+oa)) + ' ↔ ' + (plan[ob].e.label || ('선#'+ob)));
@@ -720,9 +741,16 @@ for (var bi = 0; bi < badRefs.length; bi++) over.push('없는 노드 참조: ' +
 // 아이콘과 배지가 겹치는지 (폭을 직접 지정한 경우에만 생길 수 있다)
 for (var gi2 = 0; gi2 < S.nodes.length; gi2++) {
   var gn = S.nodes[gi2];
-  if (!gn.icon || !gn.tag) continue;
-  var iconRight = gn.x + gn.w / 2 + 15;
+  if (!gn.tag) continue;
   var tagLeft = gn.x + gn.w - (gn.tagBoxW || 0) - 9;
+  // 폭을 직접 준 경우 배지가 카드 왼쪽으로 삐져나갈 수 있다. 아이콘이 없으면
+  // 아이콘 침범 검사만으로는 이걸 못 잡는다.
+  if (tagLeft < gn.x + 6) {
+    collide.push(gn.title + ': 배지가 카드를 벗어남 (폭을 넓히세요)');
+    continue;
+  }
+  if (!gn.icon) continue;
+  var iconRight = gn.x + gn.w / 2 + 15;
   if (tagLeft < iconRight + 4) collide.push(gn.title + ': 배지가 아이콘을 침범 (폭을 넓히세요)');
 }
 

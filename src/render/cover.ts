@@ -169,6 +169,14 @@ if (S.tags && S.tags.length) {
 
 if (S.footer) txt(W - M, M + 8, S.footer, 19, 'foot', '#94a3b8', 'end');
 
+// ★ 상단 라벨(왼쪽)과 서명(오른쪽)은 같은 높이에 고정 배치된다. 둘 다 길면 가운데서
+//   부딪히는데 여기엔 줄바꿈도 축소도 없다 — 감사만이라도 해야 조용히 안 나간다.
+if (S.kicker || S.footer) {
+  var kw = S.kicker ? widthOf(S.kicker, 20, 'kicker') : 0;
+  var fw = S.footer ? widthOf(S.footer, 19, 'foot') : 0;
+  if (M + kw > W - M - fw - 20) truncated.push('상단 라벨과 서명이 겹침');
+}
+
 svg.removeChild(scratch);
 document.title = 'AUDIT ' + JSON.stringify({w:W, h:H, truncated:truncated, titleSize:size});
 })();

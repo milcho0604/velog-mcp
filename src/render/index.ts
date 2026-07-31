@@ -77,7 +77,12 @@ async function render<A extends { w: number; h: number }>(
 	// 정리 실패가 렌더를 막으면 안 된다 — 청소는 부수적인 일이다.
 	await sweepOld().catch(() => {});
 	const dir = await mkdtemp(join(tmpdir(), RENDER_PREFIX));
-	const profileDir = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
+	// ★ 크롬 두 번에 **서로 다른 프로필**을 준다.
+	//   우리는 산출물이 나오면 크롬을 SIGKILL 하고 실제 종료를 기다리지 않는다.
+	//   그래서 같은 프로필을 재사용하면 앞선 크롬이 잠금을 놓기 전에 다음 크롬이
+	//   같은 폴더를 열게 된다 — 실패로 이어질 수 있는 경합이다.
+	const profileA = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
+	const profileB = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
 	const htmlPath = join(dir, `${args.basename}.html`);
 	const pngPath = join(dir, `${args.basename}.png`);
 
@@ -85,11 +90,11 @@ async function render<A extends { w: number; h: number }>(
 		await writeFile(htmlPath, args.html, 'utf8');
 		const fileUrl = pathToFileURL(htmlPath).href;
 
-		const dom = await dumpDom(fileUrl, { profileDir });
+		const dom = await dumpDom(fileUrl, { profileDir: profileA });
 		const audit = parse(dom);
 
 		await screenshot(fileUrl, pngPath, {
-			profileDir,
+			profileDir: profileB,
 			width: audit.w,
 			height: audit.h,
 			scale: args.scale,
@@ -115,7 +120,10 @@ async function render<A extends { w: number; h: number }>(
 	} finally {
 		// 크롬 프로필은 임시 산출물이라 항상 지운다. 렌더 결과(dir)는 남긴다 —
 		// 사용자가 HTML 을 열어 손보거나 PNG 를 다시 쓸 수 있어야 한다.
-		await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+		await Promise.all([
+			rm(profileA, { recursive: true, force: true }).catch(() => {}),
+			rm(profileB, { recursive: true, force: true }).catch(() => {}),
+		]);
 	}
 }
 

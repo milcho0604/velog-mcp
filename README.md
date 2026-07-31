@@ -221,9 +221,13 @@ a line crossing (or hiding behind) a node
 two lines overlapping · two nodes overlapping · a label sitting on a card
 ```
 
-**If the audit finds anything, nothing is uploaded.** Velog has no delete-image API and
-every upload counts against your quota, so a flawed diagram is worth redrawing rather
-than shipping. Pass `force_upload: true` to override.
+**If the audit finds anything, nothing is uploaded — and there is no flag to turn that
+off.** Velog has no delete-image API and every upload counts against your quota, so a
+flawed diagram is worth redrawing rather than shipping. An override that the model can
+set itself is not a safeguard (same reasoning as the publishing switch in
+[ADR 0004](docs/decisions/0004-capability-model.md)). If you really want a flawed
+diagram online, render with `upload: false`, look at the PNG, then pass its path to
+`velog_upload_image`.
 
 Icons are 28 built-in glyphs (`server`, `database`, `cloud`, `clock`, `alert`, …) drawn
 from primitive shapes. Nothing is fetched — the renderer runs with DNS disabled.

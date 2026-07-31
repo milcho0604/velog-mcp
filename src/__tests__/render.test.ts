@@ -16,7 +16,7 @@
 
 import { test, describe } from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { platform } from 'node:process';
@@ -98,17 +98,52 @@ describe('★ R1 — 페이지 스크립트는 문법이 맞는다', () => {
 describe('★ R2 — 입력은 데이터로만 들어간다 (스크립트 탈출 불가)', () => {
 	const EVIL = '</script><script>globalThis.pwned=1</script><!--';
 
-	test('제목·라벨에 마크업을 넣어도 스크립트가 늘어나지 않는다', () => {
+	// ★ 처음엔 제목·라벨 몇 개에만 넣었다. 그러면 나머지 필드 하나만 JSON 밖으로
+	//   직접 보간하도록 망가뜨려도 통과한다 — 코덱스가 정확히 그 점을 짚었다.
+	//   **문자열이 들어가는 자리를 전부** 오염시킨다.
+	test('문자열이 들어가는 모든 자리에 마크업을 넣어도 스크립트가 안 늘어난다', () => {
 		const clean = scripts(buildDiagramHtml(SAMPLE)).length;
 		const dirty = scripts(
 			buildDiagramHtml({
 				title: EVIL,
-				nodes: [{ id: 'a', x: 0, y: 0, title: EVIL, sub: EVIL, tag: EVIL }],
-				groups: [{ name: EVIL, sub: EVIL }],
-				edges: [{ points: [[0, 0], [10, 0]], label: EVIL }],
+				subtitle: EVIL,
+				planes: [{ key: 'p', name: EVIL, color: '#000', dash: EVIL }],
+				nodes: [
+					{ id: EVIL, x: 0, y: 0, title: EVIL, sub: EVIL, tag: EVIL, icon: EVIL, icon_tone: EVIL },
+					{ id: `${EVIL}2`, x: 300, y: 0, title: EVIL },
+				],
+				groups: [{ name: EVIL, sub: EVIL, tone: EVIL, members: [EVIL] }],
+				edges: [
+					{ plane: EVIL, from: EVIL, to: `${EVIL}2`, label: EVIL, label_anchor: 'start' },
+					{ points: [[0, 0], [10, 0]], label: EVIL },
+				],
 			}),
 		).length;
 		assert.equal(dirty, clean, '주입 문자열이 <script> 를 하나 더 만들었다');
+	});
+
+	// <script> 개수만 세면 iframe·이벤트 속성 같은 다른 실행 경로를 놓친다.
+	//
+	// ★ 처음엔 'onerror=' 같은 문자열이 HTML 에 있는지로 검사했는데, 그건 틀린
+	//   검사였다 — 그 글자는 JSON 문자열 **안**에 있고 `<` 가 이스케이프돼 있어
+	//   태그가 될 수 없다. 무해한 데이터를 보고 실패한 것이다.
+	//   의미 있는 불변식은 이것이다: **입력이 태그를 하나도 만들지 못한다.**
+	test('입력이 문서에 태그를 만들지 못한다', () => {
+		const html = buildDiagramHtml({
+			title: EVIL,
+			subtitle: '" onload="alert(1)',
+			nodes: [{ x: 0, y: 0, title: '<img src=x onerror=alert(1)>', sub: '</style><iframe>' }],
+			groups: [{ name: '<object data=x>' }],
+			edges: [{ points: [[0, 0], [10, 0]], label: '<embed src=x>' }],
+		});
+		const tags = [...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) =>
+			(m[1] ?? '').toLowerCase(),
+		);
+		const allowed = new Set([
+			'html', 'head', 'meta', 'title', 'style', 'body', 'div', 'svg', 'script',
+		]);
+		const unexpected = [...new Set(tags)].filter((t) => !allowed.has(t));
+		assert.deepEqual(unexpected, [], `입력이 태그를 만들었다: ${unexpected.join(', ')}`);
 	});
 
 	test('JSON 블록에는 < 가 남아 있지 않다', () => {
@@ -197,26 +232,41 @@ describe('★ R4 — 색은 입력 단계에서 좁혀져 있다', () => {
 
 describe('★ R5 — 이미지가 아닌 것은 올라가지 않는다', () => {
 	const bytes = (...v: number[]): Uint8Array => new Uint8Array(v);
+	const asBytes = (v: string): Uint8Array => new TextEncoder().encode(v);
+	const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+	const PNG_END = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
 
-	test('진짜 시그니처만 통과한다', () => {
-		assert.equal(sniffImage(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))?.mime, 'image/png');
-		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0))?.mime, 'image/jpeg');
-		assert.equal(sniffImage(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61))?.mime, 'image/gif');
+	// ★ 예전엔 '머리 8바이트짜리 PNG' 를 통과해야 하는 사례로 고정하고 있었다.
+	//   그건 이미지가 아니라 이미지처럼 시작하는 파일이다 — 그래서 시작 시그니처와
+	//   끝맺음을 함께 본다. 이 테스트도 온전한 파일로 바꿨다.
+	test('머리와 끝맺음이 모두 있어야 통과한다', () => {
+		assert.equal(sniffImage(bytes(...PNG_HEAD, 1, 2, 3, ...PNG_END))?.mime, 'image/png');
+		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 0xff, 0xd9))?.mime, 'image/jpeg');
+		assert.equal(sniffImage(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 0x3b))?.mime, 'image/gif');
 		assert.equal(
-			sniffImage(bytes(0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50))?.mime,
+			sniffImage(bytes(0x52, 0x49, 0x46, 0x46, 8, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4))
+				?.mime,
 			'image/webp',
 		);
 	});
 
+	test('머리만 베껴 붙인 파일은 막힌다', () => {
+		// 코덱스가 지적한 그대로의 재현: PNG 머리 + 아무 텍스트
+		assert.equal(sniffImage(bytes(...PNG_HEAD, ...asBytes('BEGIN PRIVATE KEY'))), null);
+		assert.equal(sniffImage(bytes(...PNG_HEAD)), null, '잘린 PNG');
+		// IEND 뒤에 데이터를 덧붙인 것도 정상 PNG 가 아니다 (polyglot 이 숨는 자리)
+		assert.equal(sniffImage(bytes(...PNG_HEAD, ...PNG_END, ...new Array(100).fill(65))), null);
+		assert.equal(sniffImage(bytes(0xff, 0xd8, 0xff, 0xe0, 1, 2, 3)), null, '끝나지 않은 JPEG');
+	});
+
 	test('비밀키·텍스트·SVG·빈 파일은 막힌다', () => {
-		const asBytes = (s: string): Uint8Array => new TextEncoder().encode(s);
 		assert.equal(sniffImage(asBytes('-----BEGIN OPENSSH PRIVATE KEY-----')), null);
 		assert.equal(sniffImage(asBytes('root:x:0:0:root:/root:/bin/bash')), null);
 		assert.equal(sniffImage(asBytes('<svg onload="fetch(1)"></svg>')), null, 'SVG 는 받지 않는다');
 		assert.equal(sniffImage(asBytes('{"a":1}')), null);
 		assert.equal(sniffImage(new Uint8Array(0)), null);
 		// 시그니처가 한 칸 밀린 것도 통과하면 안 된다
-		assert.equal(sniffImage(bytes(0x00, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)), null);
+		assert.equal(sniffImage(bytes(0x00, ...PNG_HEAD, ...PNG_END)), null);
 	});
 });
 
@@ -293,6 +343,21 @@ describe('★ R7 — 감사 항목이 늘면 업로드 차단 조건도 같이 �
 		const clean = /const clean =([\s\S]*?);/.exec(images)?.[1] ?? '';
 		for (const f of fields) {
 			assert.ok(clean.includes(`a.${f}.length === 0`), `clean 판정에 a.${f} 가 빠졌다`);
+		}
+	});
+
+	// 표지 감사도 같은 규율을 받아야 한다.
+	test('CoverAudit 의 배열 항목도 표지 clean 판정에 들어 있다', async () => {
+		const cover = await readFile(new URL('../render/cover.ts', import.meta.url), 'utf8');
+		const images = await readFile(new URL('../tools/images.ts', import.meta.url), 'utf8');
+		const block = /export interface CoverAudit \{([\s\S]*?)\n\}/.exec(cover)?.[1] ?? '';
+		const arrays = [...block.matchAll(/^\t(\w+): string\[\];/gm)].map((m) => m[1] ?? '');
+		assert.ok(arrays.length >= 1, 'CoverAudit 에 배열 항목이 없다');
+		for (const f of arrays) {
+			assert.ok(
+				images.includes(`result.audit.${f}.length === 0`),
+				`표지 clean 판정에 ${f} 가 빠졌다`,
+			);
 		}
 	});
 });
@@ -539,6 +604,15 @@ describe('★★ R13 — 서버가 죽으면 크롬도 같이 죽는다', () => 
 			await new Promise<void>((resolve) => setTimeout(resolve, 250));
 			left = alive();
 		}
+		// ★ 자식이 애초에 크롬을 안 띄웠다면 '고아 없음'은 아무 의미가 없다 —
+		//   종료 훅을 지워도 통과하는 위양성이 된다. 프로필 폴더가 생겼는지로
+		//   '크롬을 띄우는 데까지는 갔다'를 확인한다 (자식이 먼저 죽어 정리 코드가
+		//   안 돌았으므로 폴더는 남아 있다).
+		const spawned = (await readdir(sandbox).catch(() => [])).some((n) =>
+			n.startsWith('velog-mcp-chrome-'),
+		);
+		assert.ok(spawned, '자식이 크롬을 띄우지도 못했다 — 이 검사는 의미가 없다');
+
 		// 걸렸으면 치우고 실패시킨다 — 테스트가 쓰레기를 남기면 안 된다.
 		// 다만 pid 만 믿고 죽이지 않는다. 명령줄에 크롬이 보이는 것만 죽인다.
 		const stuck: string[] = [];
@@ -550,5 +624,109 @@ describe('★★ R13 — 서버가 죽으면 크롬도 같이 죽는다', () => 
 		}
 		await rm(sandbox, { recursive: true, force: true }).catch(() => {});
 		assert.deepEqual(stuck, [], `10초를 기다려도 크롬이 남아 있다:\n${stuck.join('\n')}`);
+	});
+});
+
+
+describe('★★ R14 — 감사에 걸린 그림은 실제로 업로드까지 가지 않는다 (크롬 필요)', () => {
+	// R7 은 clean 판정식에 필드가 들어 있는지만 본다 — 텍스트 검사다.
+	// 코덱스 지적대로 finish() 가 clean 을 무시해도 통과한다. 그래서 **실제로
+	// 도구를 호출해** 업로드 요청이 나가는지 아닌지를 본다.
+	// 음성만 보면 '무조건 안 올림'도 통과하므로 양성 경로를 함께 둔다.
+	async function harness(): Promise<{ client: Client; uploads: () => number }> {
+		let count = 0;
+		const velog = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'a.b.c', refreshToken: undefined },
+			},
+			fetchImpl: (async () => {
+				count += 1;
+				return new Response(
+					JSON.stringify({ path: 'https://velog.velcdn.com/images/x/y.png' }),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
+			}) as unknown as typeof fetch,
+		});
+		const server = new McpServer({ name: 't', version: '0' });
+		registerImageTools(server, velog);
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: 'gate-test', version: '0' });
+		await Promise.all([client.connect(a), server.connect(b)]);
+		return { client, uploads: () => count };
+	}
+
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+
+	test('겹친 그림은 upload:true 여도 올라가지 않는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const { client, uploads } = await harness();
+		const r = await client.callTool({
+			name: 'velog_render_diagram',
+			arguments: {
+				title: '일부러 겹치게',
+				nodes: [
+					{ id: 'x', x: 0, y: 0, w: 200, h: 90, title: '노드 하나' },
+					{ id: 'y', x: 100, y: 40, w: 200, h: 90, title: '겹치는 노드' },
+				],
+				upload: true,
+			},
+		});
+		const text = String((r.content as Array<{ text: string }>)[0]?.text);
+		assert.match(text, /올리지 않았습니다/);
+		assert.equal(uploads(), 0, '감사에 걸렸는데 업로드 요청이 나갔다');
+		await client.close();
+	});
+
+	test('깨끗한 그림은 실제로 올라간다 (양성 경로)', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const { client, uploads } = await harness();
+		const r = await client.callTool({
+			name: 'velog_render_diagram',
+			arguments: {
+				title: '깨끗한 그림',
+				nodes: [
+					{ id: 'x', x: 0, y: 0, title: '왼쪽' },
+					{ id: 'y', x: 320, y: 0, title: '오른쪽' },
+				],
+				edges: [{ from: 'x', to: 'y', label: '흐름' }],
+				upload: true,
+			},
+		});
+		const text = String((r.content as Array<{ text: string }>)[0]?.text);
+		assert.match(text, /velcdn/, `업로드 결과가 안 왔다: ${text.slice(0, 200)}`);
+		assert.equal(uploads(), 1, '깨끗한 그림인데 업로드가 안 됐다');
+		await client.close();
+	});
+
+	// 모델이 스스로 차단을 풀 수 있으면 방어가 아니다 (ADR 0004 와 같은 이유).
+	test('force_upload 같은 우회 파라미터가 존재하지 않는다', async () => {
+		const server = new McpServer({ name: 't', version: '0' });
+		registerImageTools(server, new VelogClient({ auth: { kind: 'anonymous' } }));
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: 'gate-test', version: '0' });
+		await Promise.all([client.connect(a), server.connect(b)]);
+
+		const tools = (await client.listTools()).tools;
+		for (const name of ['velog_render_diagram', 'velog_render_cover']) {
+			const tool = tools.find((v) => v.name === name);
+			assert.ok(tool, `${name} 이 없다`);
+			const props = Object.keys(
+				(tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {},
+			);
+			for (const bad of props) {
+				assert.ok(
+					!/force|override|skip|ignore|bypass/i.test(bad),
+					`${name} 에 감사를 우회할 수 있어 보이는 파라미터가 있다: ${bad}`,
+				);
+			}
+		}
+		await client.close();
 	});
 });
