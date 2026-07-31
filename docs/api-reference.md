@@ -238,6 +238,47 @@ const isLimit = await this.isPostLimitReached(signedUserId)   // ← 무조건 �
 카운트에 대한 파괴 동작(최근 5분 글 전부 비공개)을 **촉발할 수 있다.**
 '올리지 않는다'와 '유발하지 않는다'는 다르다.
 
+## 실계정 왕복 검증 (2026-07-31)
+
+희생용 초안 하나로 전 경로를 돌고 필드 보존을 확인했다.
+
+```
+create_draft → update_draft → publish_draft(비공개) → update_post → unpublish_post
+```
+
+| 단계 | is_temp | is_private | 본문 | 태그 | 시리즈 | 판정 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 생성 | true | true | 249자 | 2개 | **없음** | series_id 를 줬는데 안 붙음 |
+| update_draft | true | true | 249자 | 2개 | **DataBase** | 여기서 붙음 |
+| publish_draft | **false** | true | 249자 | 2개 | DataBase | 내용 전부 유지 |
+| update_post | false | true | 249자 | 2개 | DataBase | title 외 전부 유지 |
+| unpublish | **true** | **true** | 249자 | 2개 | DataBase | 내용 전부 유지 |
+
+**1→2 행이 위 D7 함정의 실물 증거다.** `create_draft` 에 `series_id` 를 줬는데
+붙지 않았고, 같은 값으로 `update_draft` 를 부르자 붙었다. 도구가 이 사실을 응답에
+경고로 알리는 것도 확인했다.
+
+`unpublish` 가 `is_private:true` 로 되돌리는 것도 확인 — 공개 상태를 유지했다면
+그 초안이 다시 벨로그 계수 대상이 됐을 것이다.
+
+남의 시리즈(@velopert) id 로 `update_draft` 를 부르면 거부된다:
+```
+series_id=96ffa520-… 는 @milcho0604 의 시리즈가 아닙니다
+```
+
+### `meta` 보존 — 실데이터로 확인
+
+왕복 초안의 `meta` 가 `{}` 라 처음엔 검증이 약했다. 그래서 벨로그 웹이 하는 것과
+같은 형태로 값을 직접 심고 다시 확인했다.
+
+```
+심기      {"cover":"none","short_description":"이 값이 보존돼야 한다"}
+update_draft 로 제목만 변경
+결과      {"cover":"none","short_description":"이 값이 보존돼야 한다"}   ← 그대로
+```
+
+`meta: {}` 를 보내던 시절이었다면 여기서 `short_description` 이 사라졌을 것이다.
+
 ## 스키마 변경 감지
 
 ```bash
