@@ -33,6 +33,12 @@ import { readAuthFromEnv } from '../auth.ts';
 import { readCapabilities } from '../capabilities.ts';
 import { findChrome, resetChromeCache } from '../render/chrome.ts';
 import { SERVER_VERSION, CHROME_TOOLS } from '../index.ts';
+import {
+	findPersonalEmails,
+	LOCAL_PATH_PATTERNS,
+	findLeaks,
+	looksTextual,
+} from '../../scripts/shipping-checks.ts';
 
 const execFile = promisify(execFileCb);
 
@@ -127,10 +133,12 @@ async function rpcTools(): Promise<Array<{ name: string }>> {
  */
 async function trackedFiles(cwd: string): Promise<string[]> {
 	const { stdout } = await execFile('git', ['ls-files'], { cwd, maxBuffer: 4 * 1024 * 1024 });
+	// ⚠️ 확장자로 거르면 `LICENSE`·`.gitignore` 같은 확장자 없는 파일을 통째로 놓친다.
+	//    실제로 64개 중 62개만 보고 있었다. 전부 받고 바이너리만 나중에 건너뛴다.
 	const candidates = stdout
 		.split('\n')
 		.map((line) => line.trim())
-		.filter((line) => /\.(ts|js|json|md|yml|yaml)$/.test(line));
+		.filter((line) => line.length > 0);
 
 	// 인덱스에는 남아 있지만 작업 트리에서 지워진 파일이 있을 수 있다
 	// (예: `npm shrinkwrap` 이 package-lock.json 을 없앤 직후). 그건 배포되지 않는다.
@@ -144,28 +152,6 @@ async function trackedFiles(cwd: string): Promise<string[]> {
 	);
 	return present.filter((value): value is string => value !== null);
 }
-
-/**
- * 실제 사람의 주소만 골라낸다.
- *
- * 예외는 **도메인 끝자리**로 판정한다. '문자열에 noreply 가 들어 있으면 통과'로
- * 두면 임의 도메인 주소에 그 낱말만 끼워 넣어 빠져나갈 수 있다.
- * 전각 `＠` 도 본다 — 눈으로는 같은 글자다.
- */
-const ALLOWED_EMAIL_DOMAINS = ['users.noreply.github.com', 'noreply.github.com'];
-
-function findPersonalEmails(text: string): string[] {
-	return [...text.matchAll(/[A-Za-z0-9._%+-]+[@＠][A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)]
-		.map((m) => m[0])
-		.filter((value) => !ALLOWED_EMAIL_DOMAINS.some((domain) => value.endsWith(domain)));
-}
-
-/** 개발 기계의 홈 경로. 남으면 사용자 계정명이 그대로 새 나간다. */
-const LOCAL_PATH_PATTERNS = [
-	['macOS', /\/Users\/(?!\.\.\.|<)[^\s/'")\]]+/],
-	['리눅스', /\/home\/(?!\.\.\.|<|user\b)[^\s/'")\]]+/],
-	['윈도우', /[A-Z]:\\Users\\(?!<)[^\s\\'")\]]+/],
-] as const;
 
 /** `src/` 전체를 훑는다. 소비 지점을 하나라도 빠뜨리면 P15 가 헛돈다. */
 async function readAllSources(dir: URL): Promise<Array<[string, string]>> {
@@ -752,21 +738,31 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		// ⚠️ 처음엔 파일 넷만 봤다. 코덱스가 짚었다 — `.mcp.json`·루트 README 둘·
 		//    `docs/` 를 통째로 놓치고, 예외가 '문자열에 noreply 가 들어 있으면 통과'라
 		//    너무 넓었다(임의 도메인 주소에 그 낱말만 끼워 넣으면 빠져나간다).
-		//    지금은 **git 이 추적하는 배포 표면 전체**를 훑고, 예외는 도메인 끝자리로 좁혔다.
+		//    지금은 **git 이 추적하는 것 전부**를 훑는다. 확장자로 거르던 것도 없앴다 —
+		//    그 필터가 `LICENSE`·`.gitignore` 를 통째로 빼먹어 64개 중 62개만 보고 있었다.
 		//    이 주석에 예시 주소를 적었다가 이 테스트에 잡혔다 — 그게 의도한 동작이다.
 		const shipped = await trackedFiles(fileURLToPath(ROOT));
-		assert.ok(shipped.length >= 20, `훑은 파일이 너무 적다: ${shipped.length}`);
 
-		for (const relative of shipped) {
-			const text = await readFile(new URL(relative, ROOT), 'utf8');
-
-			assert.deepEqual(findPersonalEmails(text), [], `${relative} 에 이메일 주소가 있다`);
-
-			for (const [label, pattern] of LOCAL_PATH_PATTERNS) {
-				const hit = pattern.exec(text);
-				assert.equal(hit, null, `${relative} 에 ${label} 로컬 경로가 있다: ${hit?.[0] ?? ''}`);
-			}
+		// 필터가 다시 좁아지면 여기서 걸린다. 확장자 없는 파일이 실제로 포함돼야 한다.
+		assert.ok(shipped.length >= 60, `훑은 파일이 너무 적다: ${shipped.length}`);
+		for (const extensionless of ['LICENSE', '.gitignore']) {
+			assert.ok(
+				shipped.includes(extensionless),
+				`${extensionless} 를 안 훑는다 — 확장자로 거르고 있다`,
+			);
 		}
+
+		const leaks = [];
+		for (const relative of shipped) {
+			const bytes = await readFile(new URL(relative, ROOT));
+			if (!looksTextual(bytes)) continue; // 바이너리는 이 규칙으로 못 본다
+			leaks.push(...findLeaks(relative, bytes.toString('utf8')));
+		}
+		assert.deepEqual(
+			leaks,
+			[],
+			`나가면 안 되는 것이 있다:\n${leaks.map((l) => `  ${l.file}: ${l.kind} ${l.value}`).join('\n')}`,
+		);
 	});
 
 	test('P21b — 그 걸러내는 규칙 자체를 시험한다', () => {
@@ -783,6 +779,9 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			// 도메인 아무 데나 그 낱말만 끼워 넣어 예외를 흉내내는 경우
 			['임의 도메인 + noreply 낱말', `a-noreply${at}evil-domain.test`],
 			['하위도메인만 흉내', `a${at}users.noreply.github.com.evil.test`],
+			// ★ 이게 `endsWith` 예외와 정확 일치 예외를 가르는 유일한 사례다.
+			//   `endsWith` 면 통과시켜 버린다 — 남의 도메인 밑에 허용 도메인을 달면 된다.
+			['허용 도메인을 접미로 단 남의 도메인', `a${at}evil.users.noreply.github.com`],
 			['전각 골뱅이', `someone${wideAt}gmail.com`],
 			['평범한 개인 주소', `someone${at}gmail.com`],
 		] as const;
@@ -803,6 +802,7 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		// 경로 규칙도 같이 시험한다. 문서의 자리표시자는 실제 경로가 아니다.
 		// 경로도 같은 이유로 조립한다 — 소스에 온전한 홈 경로를 적으면 P21 에 걸린다.
 		const [macos, linux, windows] = LOCAL_PATH_PATTERNS;
+		assert.ok(macos && linux && windows, '경로 규칙 세 개가 다 있어야 한다');
 		const who = 'some' + 'one';
 		const posix = (root: string): string => ['', root, who, 'dev'].join('/');
 		const win = ['C:', 'Users', who, 'dev'].join('\\');
@@ -831,14 +831,31 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			assert.ok(log.includes(tool), `기동 안내가 ${tool} 을 말하지 않는다:\n${log}`);
 		}
 
-		// 세 번째 도구가 렌더를 쓰기 시작하면 이 목록이 낡는다.
-		// 호출 지점 수를 세어 그때 실패하게 한다(완전한 증명은 아니고 표식이다).
-		const images = await readFile(new URL('tools/images.ts', new URL('../', import.meta.url)), 'utf8');
-		const callSites = [...images.matchAll(/await render(?:Diagram|Cover)\(/g)].length;
-		assert.equal(
-			callSites,
-			CHROME_TOOLS.length,
-			'렌더를 부르는 곳 수가 CHROME_TOOLS 와 다르다 — 목록과 안내를 갱신하라',
+		// ⚠️ 처음엔 '렌더 호출 지점 수'만 셌다. 코덱스가 반례를 냈다 —
+		//    CHROME_TOOLS 를 ['velog_render_diagram', 'velog_upload_image'] 로 바꿔도
+		//    둘 다 등록된 도구이고 개수도 2라 통과한다(실제로 통과시켜 확인했다).
+		//    그러면 크롬 없는 사용자에게 **엉뚱한 도구를 안내하고 진짜 실패할 도구는
+		//    빠진다.** 그래서 "어느 도구가 렌더를 부르는가"를 구조로 본다.
+		const images = await readFile(
+			new URL('tools/images.ts', new URL('../', import.meta.url)),
+			'utf8',
+		);
+
+		// `server.registerTool(` 로 잘라 각 조각의 도구 이름과 렌더 호출 여부를 본다.
+		const blocks = images.split(/\bserver\.registerTool\(/).slice(1);
+		const rendering = blocks
+			.map((block) => ({
+				name: /^\s*'([a-z_]+)'/.exec(block)?.[1],
+				usesChrome: /\brender(?:Diagram|Cover)\s*\(/.test(block),
+			}))
+			.filter((tool) => tool.usesChrome)
+			.map((tool) => tool.name);
+
+		assert.ok(blocks.length >= 3, `registerTool 블록을 못 찾았다: ${blocks.length}`);
+		assert.deepEqual(
+			rendering.sort(),
+			[...CHROME_TOOLS].sort(),
+			'렌더를 부르는 도구와 CHROME_TOOLS 가 다르다 — 목록과 기동 안내를 갱신하라',
 		);
 	});
 
@@ -852,9 +869,15 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		const pkg = await json(new URL('package.json', ROOT));
 		const scripts = pkg['scripts'] as Record<string, string>;
 
-		const gate = scripts['prepublishOnly'] ?? '';
-		assert.match(gate, /\bbuild\b/, '발행 전에 빌드하지 않으면 낡은 dist 가 나간다');
-		assert.match(gate, /verify:dist/, '발행 전에 dist 를 띄워보지 않는다');
+		// ⚠️ 처음엔 낱말만 봤다. 코덱스 반례 — `echo build verify:dist`,
+		//    `npm run build; npm run verify:dist`, `... || true` 가 전부 통과한다.
+		//    가운데 것은 **빌드가 실패해도** 낡은 dist 검증이 성공하면 발행이 계속된다.
+		//    그래서 정확한 명령을 못 박는다.
+		assert.equal(
+			scripts['prepublishOnly'],
+			'npm run build && npm run verify:dist',
+			'앞이 실패하면 멈춰야 한다 — `;` 나 `|| true` 는 관문이 아니다',
+		);
 
 		assert.match(
 			scripts['verify:dist'] ?? '',
@@ -880,7 +903,27 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			'files 에 없으면 발행물에 안 실려서 고정이 무의미해진다',
 		);
 
-		const packages = shrink['packages'] as Record<string, { dev?: boolean }>;
+		const packages = shrink['packages'] as Record<
+			string,
+			{ dev?: boolean; version?: string; integrity?: string }
+		>;
+
+		// 루트 버전은 두 곳에 있다. 하나만 맞으면 도구마다 다르게 읽는다.
+		assert.equal(packages['']?.version, pkg['version'], 'shrinkwrap 의 packages[""] 버전이 다르다');
+
+		// ⚠️ 처음엔 '운영 항목 수 > 50' 만 봤다. 코덱스 반례 — zod 항목을 통째로 지워도
+		//    92개라 통과한다. 개수가 아니라 **직접 의존성이 실제로 고정됐는지**를 본다.
+		for (const name of Object.keys(pkg['dependencies'] as Record<string, string>)) {
+			const entry = packages[`node_modules/${name}`];
+			assert.ok(entry, `${name} 이 shrinkwrap 에 없다 — 고정되지 않았다`);
+			assert.match(
+				entry.version ?? '',
+				/^\d+\.\d+\.\d+/,
+				`${name} 의 버전이 정확하지 않다: ${String(entry.version)}`,
+			);
+			assert.ok(entry.integrity, `${name} 에 integrity 가 없다 — 내용이 고정되지 않았다`);
+		}
+
 		const production = Object.keys(packages).filter((k) => k && !packages[k]?.dev);
 		assert.ok(production.length > 50, `고정된 운영 의존성이 너무 적다: ${production.length}`);
 	});

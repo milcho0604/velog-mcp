@@ -20,19 +20,32 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
+import { findLeaks, looksTextual } from './shipping-checks.ts';
+import { SERVER_NAME, CHROME_TOOLS } from '../src/index.ts';
 
 const ROOT = new URL('../', import.meta.url);
 const ENTRY = new URL('dist/index.js', ROOT);
+
+/** 핸드셰이크 뒤에도 얼마간 지켜본다. 지연 오염·조기 종료는 그 뒤에 온다. */
+const WATCH_MS = 2_000;
+
+/** 기본 등록 도구 수. 프로필 게이트를 켜면 늘어난다. */
+const MIN_TOOLS = 21;
 
 interface Outcome {
 	readonly responses: Array<Record<string, unknown>>;
 	readonly junk: string[];
 	readonly stderr: string;
+	/** 지켜보는 동안 스스로 죽었나. 죽었으면 그 코드/시그널. */
+	readonly died: string | null;
 }
 
 async function handshake(): Promise<Outcome> {
-	const child = spawn(process.execPath, [ENTRY.pathname], {
+	// ⚠️ `ENTRY.pathname` 은 공백을 `%20` 으로 남긴다(실측). 경로에 공백이 있으면 깨진다.
+	const child = spawn(process.execPath, [fileURLToPath(ENTRY)], {
 		stdio: ['pipe', 'pipe', 'pipe'],
 		// 토큰 없이 띄운다. 발행 검증이 실제 계정을 건드릴 이유가 없다.
 		env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
@@ -60,12 +73,22 @@ async function handshake(): Promise<Outcome> {
 	let stderr = '';
 
 	return await new Promise<Outcome>((resolve) => {
-		const done = (): void => {
-			clearTimeout(timer);
+		let died: string | null = null;
+		let settled = false;
+
+		const finish = (): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(hardTimer);
+			clearTimeout(watchTimer);
+			// 줄바꿈 없이 끝난 꼬리도 버리지 않는다 — 그것도 오염이다.
+			if (buffer.trim()) junk.push(buffer.trim());
 			child.kill('SIGKILL');
-			resolve({ responses, junk, stderr });
+			resolve({ responses, junk, stderr, died });
 		};
-		const timer = setTimeout(done, 20_000);
+
+		const hardTimer = setTimeout(finish, 30_000);
+		let watchTimer: NodeJS.Timeout = setTimeout(() => undefined, 0);
 
 		child.stderr.on('data', (chunk: Buffer) => {
 			stderr += chunk.toString('utf8');
@@ -82,10 +105,19 @@ async function handshake(): Promise<Outcome> {
 					junk.push(line);
 				}
 			}
-			if (responses.length >= 2) done();
+			// 응답을 다 받아도 **바로 죽이지 않는다.** 지연 stdout 과 조기 종료를
+			// 보려면 잠깐 살려둬야 한다 — 즉시 죽이면 둘 다 못 본다(코덱스 지적).
+			if (responses.length >= 2) {
+				clearTimeout(watchTimer);
+				watchTimer = setTimeout(finish, WATCH_MS);
+			}
 		});
-		child.on('error', done);
-		child.on('close', done);
+		child.on('error', finish);
+		child.on('exit', (code, signal) => {
+			// 우리가 죽이기 전에 스스로 끝났다면 그것 자체가 문제다.
+			if (!settled) died = signal ? `시그널 ${signal}` : `종료코드 ${String(code)}`;
+			finish();
+		});
 	});
 }
 
@@ -99,7 +131,14 @@ const pkg = JSON.parse(await readFile(new URL('package.json', ROOT), 'utf8')) as
 	version: string;
 };
 
-const { responses, junk, stderr } = await handshake();
+const { responses, junk, stderr, died } = await handshake();
+
+if (died) {
+	fail(
+		`dist 가 스스로 종료했습니다(${died}). MCP 서버는 클라이언트가 끊을 때까지 살아 있어야 합니다.\n` +
+			`   stderr: ${stderr.trim()}`,
+	);
+}
 
 if (junk.length > 0) {
 	fail(
@@ -112,6 +151,10 @@ const init = responses.find((r) => r['id'] === 1);
 if (!init) fail(`dist 가 initialize 에 응답하지 않았습니다.\n   stderr: ${stderr.trim()}`);
 
 const info = (init['result'] as { serverInfo?: { name?: string; version?: string } })?.serverInfo;
+// ⚠️ 주석에는 '이름·버전'이라 적어놓고 버전만 봤다(코덱스 지적). 둘 다 본다.
+if (info?.name !== SERVER_NAME) {
+	fail(`서버 이름이 ${String(info?.name)} 입니다. ${SERVER_NAME} 이어야 합니다.`);
+}
 if (info?.version !== pkg.version) {
 	fail(
 		`빌드 산출물이 낡았습니다 — dist 는 ${String(info?.version)}, package.json 은 ${pkg.version}.\n` +
@@ -121,8 +164,75 @@ if (info?.version !== pkg.version) {
 
 const list = responses.find((r) => r['id'] === 2);
 const tools = (list?.['result'] as { tools?: Array<{ name: string }> })?.tools ?? [];
-if (tools.length < 20) fail(`도구가 ${tools.length}개뿐입니다. 등록이 빠졌습니다.`);
+if (tools.length < MIN_TOOLS) {
+	fail(`도구가 ${tools.length}개뿐입니다(최소 ${MIN_TOOLS}). 등록이 빠졌습니다.`);
+}
+for (const required of CHROME_TOOLS) {
+	if (!tools.some((tool) => tool.name === required)) {
+		fail(`${required} 이 등록되지 않았습니다.`);
+	}
+}
+
+// ── 실제로 tarball 에 실리는 것들을 훑는다 ────────────────────────────────
+//
+// P21 은 **git 이 추적하는 것**을 본다. 그런데 `dist/` 는 gitignore 대상이라
+// 거기 안 잡히고, `tsc` 는 기존 산출물을 지우지 않아 삭제된 소스의 낡은 파일이
+// 남을 수 있다. 그 둘이 겹치면 옛 코드나 개인 경로가 npm 에 영구히 올라간다.
+async function walk(dir: URL, prefix = ''): Promise<string[]> {
+	const out: string[] = [];
+	for (const entry of await readdir(dir, { withFileTypes: true })) {
+		const child = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir);
+		if (entry.isDirectory()) out.push(...(await walk(child, `${prefix}${entry.name}/`)));
+		else out.push(`${prefix}${entry.name}`);
+	}
+	return out;
+}
+
+const shipped: Array<[string, URL]> = [];
+for (const [label, base] of [
+	['dist', new URL('dist/', ROOT)],
+	['docs', new URL('docs/', ROOT)],
+] as const) {
+	for (const relative of await walk(base)) {
+		shipped.push([`${label}/${relative}`, new URL(relative, base)]);
+	}
+}
+for (const name of ['package.json', 'README.md', 'README.ko.md', 'LICENSE', 'npm-shrinkwrap.json']) {
+	shipped.push([name, new URL(name, ROOT)]);
+}
+
+const leaks = [];
+for (const [label, url] of shipped) {
+	const bytes = await readFile(url);
+	if (!looksTextual(bytes)) continue;
+	leaks.push(...findLeaks(label, bytes.toString('utf8')));
+}
+if (leaks.length > 0) {
+	fail(
+		`발행물에 나가면 안 되는 것이 있습니다(${leaks.length}건):\n` +
+			leaks.map((leak) => `   ${leak.file}: ${leak.kind} ${leak.value}`).join('\n'),
+	);
+}
+
+// 삭제된 소스의 낡은 산출물이 남았는지 — dist 의 .js 는 src 에 짝이 있어야 한다.
+const sources = new Set(
+	(await walk(new URL('src/', ROOT)))
+		.filter((f) => f.endsWith('.ts') && !f.startsWith('__tests__/'))
+		.map((f) => f.replace(/\.ts$/, '.js')),
+);
+const orphans = shipped
+	.map(([label]) => label)
+	.filter((label) => label.startsWith('dist/') && label.endsWith('.js'))
+	.map((label) => label.slice('dist/'.length))
+	.filter((relative) => !sources.has(relative));
+if (orphans.length > 0) {
+	fail(
+		`dist 에 소스가 없는 산출물이 남아 있습니다(${orphans.length}개): ${orphans.join(', ')}\n` +
+			'   `npm run build` 는 dist 를 비우고 시작합니다 — 수동으로 지우고 다시 도세요.',
+	);
+}
 
 process.stdout.write(
-	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · stdout 순수\n`,
+	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · ` +
+		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존 · 발행물 ${shipped.length}개 개인정보 0건\n`,
 );

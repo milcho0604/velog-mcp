@@ -18,6 +18,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.build.json",
     "verify:dist": "node scripts/verify-dist.ts",
     "watch": "tsc -p tsconfig.build.json --watch",
