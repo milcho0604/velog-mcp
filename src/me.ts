@@ -47,7 +47,8 @@ export async function resolveMyUsername(client: VelogClient): Promise<string> {
 	return me.username;
 }
 
-/** 테스트에서 캐시를 비운다. */
-export function __clearCache(client: VelogClient): void {
+/** 프로필을 바꾼 뒤 캐시를 비운다. 테스트에서도 쓴다. */
+export function invalidateMe(client: VelogClient): void {
 	cache.delete(client);
 }
+

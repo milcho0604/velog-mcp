@@ -46,9 +46,10 @@ function codeOnly(src: string): string {
 		.join('\n');
 }
 
-async function connect(publicPublish = false): Promise<Client> {
+async function connect(publicPublish = false, editProfile = false): Promise<Client> {
 	const server = createServer(new VelogClient({ auth: { kind: 'anonymous' } }), {
 		publicPublish,
+		editProfile,
 	});
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 	const client = new Client({ name: 'safety-test', version: '0' });
@@ -138,12 +139,16 @@ describe('A2 — 초안 도구는 어떤 설정에서도 발행하지 않는다'
 });
 
 describe('A3 — 구현하지 않기로 한 mutation 은 여전히 없다', () => {
-	// 되돌릴 수 없거나 남에게 영향을 주는 것들. 설정으로도 열지 않는다.
+	// 되돌릴 수 없거나 남에게 영향을 주는 것들. **설정으로도 열지 않는다.**
+	//
+	// ★ 프로필 계열(updateProfile/About/VelogTitle/SocialInfo/Thumbnail)은 이 목록에서
+	//   빠졌다. 되돌릴 수 있고 본인 계정에만 영향이며 배포도 안 되기 때문이다.
+	//   대신 VELOG_ALLOW_PROFILE=1 게이트를 뒀다 — 아래 A10 이 그걸 검사한다.
+	//   updateEmailRules 와 이메일 변경은 계속 금지다(계정 탈취 경로).
 	const NEVER_CALLED = [
 		'unregister', 'logout(', 'sendMail', 'createNotification',
 		'removeAllNotifications', 'initiateChangeEmail', 'confirmChangeEmail',
 		'likePost', 'unlikePost', 'follow(', 'unfollow(',
-		'updateProfile', 'updateAbout', 'updateVelogTitle', 'updateSocialInfo',
 		'updateEmailRules', 'acceptIntegration',
 	];
 
@@ -346,5 +351,102 @@ describe('★★ A9 — editPost 는 기존 meta 를 보존한다', () => {
 				`${name} 이 editPost 를 보내는데 사전조회에 meta 가 없다 — 병합할 값이 없다`,
 			);
 		}
+	});
+});
+
+describe('★ A10 — 프로필 수정은 VELOG_ALLOW_PROFILE 없이는 불가능하다', () => {
+	const PROFILE_TOOLS = [
+		'velog_update_profile',
+		'velog_update_about',
+		'velog_update_blog_title',
+		'velog_update_social_links',
+		'velog_update_profile_image',
+	];
+
+	test('기본값은 프로필 수정 불가다', () => {
+		assert.equal(readCapabilities({}).editProfile, false);
+	});
+
+	test('설정이 꺼져 있으면 도구가 아예 등록되지 않는다', async () => {
+		// 목록에 없으면 부를 수도 없다 — 파라미터를 막는 것보다 강하다.
+		const client = await connect(false, false);
+		const names = (await client.listTools()).tools.map((t) => t.name);
+		for (const tool of PROFILE_TOOLS) {
+			assert.ok(!names.includes(tool), `${tool} 이 설정 없이 노출됐다`);
+		}
+		await client.close();
+	});
+
+	test('설정을 켜면 5개가 등록된다', async () => {
+		const client = await connect(false, true);
+		const names = (await client.listTools()).tools.map((t) => t.name);
+		for (const tool of PROFILE_TOOLS) {
+			assert.ok(names.includes(tool), `${tool} 이 등록되지 않았다`);
+		}
+		await client.close();
+	});
+
+	test('환경변수는 좁게 해석한다', () => {
+		assert.equal(readCapabilities({ VELOG_ALLOW_PROFILE: '1' }).editProfile, true);
+		assert.equal(readCapabilities({ VELOG_ALLOW_PROFILE: 'yes' }).editProfile, true);
+		for (const off of ['0', 'false', '', 'y', 'enabled']) {
+			assert.equal(
+				readCapabilities({ VELOG_ALLOW_PROFILE: off }).editProfile,
+				false,
+				`'${off}' 로 켜졌다`,
+			);
+		}
+	});
+
+	test('공개 발행 스위치와 독립이다', () => {
+		assert.deepEqual(readCapabilities({ VELOG_ALLOW_PUBLIC: '1' }), {
+			publicPublish: true,
+			editProfile: false,
+		});
+		assert.deepEqual(readCapabilities({ VELOG_ALLOW_PROFILE: '1' }), {
+			publicPublish: false,
+			editProfile: true,
+		});
+	});
+
+	test('프로필 도구도 destructive 로 표시한다 — 기존 값을 덮어쓴다', async () => {
+		const client = await connect(false, true);
+		const { tools } = await client.listTools();
+		for (const tool of PROFILE_TOOLS) {
+			assert.equal(
+				tools.find((t) => t.name === tool)?.annotations?.destructiveHint,
+				true,
+				`${tool} 이 destructive 로 표시되지 않았다`,
+			);
+		}
+		await client.close();
+	});
+});
+
+describe('★★ A11 — series_id 를 보내는 모든 곳에 시리즈 소유권 검증이 있다', () => {
+	// 벨로그는 '처음 시리즈에 붙일 때' 소유권을 확인하지 않는다:
+	//   if (!prevSeriesPost && series_id) { appendToSeries(...) }   ← 검사 없음
+	//   if (prevSeriesPost && ...) { checkSeriesOwnership(...) }    ← 여기만
+	// velog_list_series 로 남의 공개 시리즈 id 를 얻을 수 있으므로,
+	// 글 소유권(assertOwned)만으로는 못 막는다 — 글은 내 것이기 때문이다.
+	test('series_id 를 input 에 싣는 파일은 assertOwnsSeries 를 쓴다', async () => {
+		for (const [name, rawSrc] of await readAllSources()) {
+			const src = codeOnly(rawSrc);
+			if (name === 'ownership.ts') continue;
+			if (!/input\['series_id'\]|series_id:\s*\w/.test(src)) continue;
+			assert.match(
+				src,
+				/assertOwnsSeries\(/,
+				`${name} 이 series_id 를 보내는데 시리즈 소유권을 확인하지 않는다`,
+			);
+		}
+	});
+
+	test('시리즈 소유권 구현도 단일하다', async () => {
+		const defs = (await readAllSources()).filter(([, src]) =>
+			/export\s+async\s+function\s+assertOwnsSeries/.test(src),
+		);
+		assert.equal(defs.length, 1);
+		assert.equal(defs[0]?.[0], 'ownership.ts');
 	});
 });

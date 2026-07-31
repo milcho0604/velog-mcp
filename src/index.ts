@@ -23,13 +23,14 @@ import { registerStatsTools } from './tools/stats.ts';
 import { registerExportTools } from './tools/export.ts';
 import { registerProfileTools } from './tools/profile.ts';
 import { registerPublishTools } from './tools/publish.ts';
+import { registerProfileEditTools } from './tools/profile-edit.ts';
 
 export const SERVER_NAME = 'velog-mcp';
 export const SERVER_VERSION = '0.2.0';
 
 export function createServer(
 	client: VelogClient,
-	capabilities: Capabilities = { publicPublish: false },
+	capabilities: Capabilities = { publicPublish: false, editProfile: false },
 ): McpServer {
 	const server = new McpServer(
 		{ name: SERVER_NAME, version: SERVER_VERSION },
@@ -53,6 +54,7 @@ export function createServer(
 	registerExportTools(server, client);
 	registerProfileTools(server, client);
 	registerPublishTools(server, client, capabilities, limiter);
+	registerProfileEditTools(server, client, capabilities);
 
 	return server;
 }

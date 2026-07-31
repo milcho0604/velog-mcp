@@ -98,13 +98,17 @@ and blog stats all work unauthenticated.
 
 | Environment | What you get |
 | --- | --- |
-| *(nothing set)* | Read everything · create drafts · **publish privately** |
-| `VELOG_ALLOW_PUBLIC=1` | All of the above **plus public publishing** |
+| *(nothing set)* | Read everything · create drafts · **publish privately** — 18 tools |
+| `VELOG_ALLOW_PUBLIC=1` | …plus **public publishing** (adds an `is_private` parameter) |
+| `VELOG_ALLOW_PROFILE=1` | …plus **profile editing** (adds 5 tools) |
+
+The two switches are independent — enable either, both, or neither.
 
 ```json
 "env": {
   "VELOG_REFRESH_TOKEN": "...",
-  "VELOG_ALLOW_PUBLIC": "1"
+  "VELOG_ALLOW_PUBLIC": "1",
+  "VELOG_ALLOW_PROFILE": "1"
 }
 ```
 
@@ -129,10 +133,15 @@ if (count >= 10) {
 }
 ```
 
-Private posts never enter that count, so they can't trigger it. Public posts can — and
-once a post is public it has already gone out through RSS, search indexes, and
-subscriber email, none of which a delete reaches. That asymmetry is what deserves an
-explicit opt-in.
+Private posts don't **increment** that count. But `isPostLimitReached()` runs
+unconditionally, *before* privacy is examined — so if ten public posts already exist in
+the last five minutes, even a private draft request can trigger the sweep. "Doesn't
+increment" is not "can't trigger." That's why write retries stay disabled and the local
+limiter stays in place.
+
+Public posts do increment it, and once a post is public it has already gone out through
+RSS, search indexes, and subscriber email, none of which a delete reaches. That
+asymmetry is what deserves an explicit opt-in.
 
 Full reasoning: [docs/security.md](docs/security.md)
 
@@ -186,6 +195,21 @@ Full reasoning: [docs/security.md](docs/security.md)
 Tools that take a `username` — `velog_list_drafts`, `velog_blog_stats`,
 `velog_export_posts`, `velog_search_posts` — fall back to your own account when you
 omit it.
+
+### Profile editing — `VELOG_ALLOW_PROFILE=1`
+
+Five more tools appear: `velog_update_profile` (display name, bio),
+`velog_update_about`, `velog_update_blog_title`, `velog_update_social_links`,
+`velog_update_profile_image`. Without the flag they aren't registered at all.
+
+The gate isn't about danger — these are reversible, affect only your own account, and
+aren't distributed anywhere. It's about **confusion**: a profile's `short_bio` and a
+post's `short_description` sound alike. "Fix my description" is ambiguous, and with the
+switch off a wrong guess can't reach your profile.
+
+`velog_update_profile` **keeps what you omit.** Velog's `UpdateProfileInput` requires
+both `display_name` and `short_bio`, so sending one alone would blank the other — the
+tool reads your current values and fills them in.
 
 ---
 
@@ -241,7 +265,7 @@ npm run build         # tsconfig.build.json (tests excluded from dist)
 npm run schema:dump   # dump Velog's current GraphQL schema
 ```
 
-148 tests. The ones in `src/__tests__/safety.test.ts` pin the security invariants —
+161 tests. The ones in `src/__tests__/safety.test.ts` pin the security invariants —
 if that file fails, find out why instead of working around it.
 
 ## Documentation

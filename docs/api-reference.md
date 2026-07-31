@@ -49,8 +49,11 @@ Cookie: access_token=<...>; refresh_token=<...>
 `*` = 이 프로젝트가 구현하는 것. 나머지는 **의도적으로 미구현** (사유는 `security.md`)
 
 ```
-* writePost(input: WritePostInput)          글 작성 — is_temp:true 로만 호출
-* editPost(input: EditPostInput)            글 수정 — is_temp:true 로만 호출
+* writePost(input: WritePostInput)          글 작성 (초안=is_temp:true / 발행=false)
+* editPost(input: EditPostInput)            글 수정·발행·발행취소
+* updateProfile / updateAbout               프로필·소개글  ┐ VELOG_ALLOW_PROFILE=1
+* updateVelogTitle / updateSocialInfo       제목·SNS링크    │ 일 때만 도구로 노출
+* updateThumbnail                           프로필 사진    ┘
 
   likePost / unlikePost                     ✗ 소셜 행위
   follow / unfollow                         ✗ 소셜 행위
@@ -59,9 +62,7 @@ Cookie: access_token=<...>; refresh_token=<...>
   readNotification / readAllNotifications   ✗ 상태 변경
   removeAllNotifications                    ✗ 되돌릴 수 없음
   updateNotNoticeNotification               ✗ 상태 변경
-  updateAbout / updateThumbnail             ✗ 계정 설정
-  updateProfile / updateVelogTitle          ✗ 계정 설정
-  updateSocialInfo / updateEmailRules       ✗ 계정 설정
+  updateEmailRules                          ✗ 계정 설정
   initiateChangeEmail / confirmChangeEmail  ✗ 계정 설정
   acceptIntegration                         ✗ 계정 설정
   logout                                    ✗ 세션 파괴
@@ -196,6 +197,46 @@ take: limit
 
 또한 서버가 `limit > 100` 을 `BadRequestError` 로 막는다. 우리 도구는 50 을
 상한으로 두므로 걸리지 않는다.
+
+### ★ 소유권 검사가 없는 두 곳
+
+**① `editPost` 는 글 소유자를 확인하지 않는다.**
+
+```ts
+// initializePostProcess
+if (type === 'write') { ... fk_user_id: signedUserId ... }   // 생성은 내 것으로
+if (type === 'edit')  { post = findUnique({ where: { id } }) } // ← 소유자 비교 없음
+```
+
+공개 글은 누구나 id 로 조회할 수 있으므로 **남의 글을 수정·비공개화할 수 있다.**
+
+**② 시리즈도 '처음 붙일 때'는 확인하지 않는다.**
+
+```ts
+if (!prevSeriesPost && series_id) {
+  await this.seriesService.appendToSeries(series_id, post.id)   // ← 검사 없음
+}
+if (prevSeriesPost && prevSeriesPost.fk_series_id !== series_id) {
+  if (series_id) {
+    await this.checkSeriesOwnership(series_id, userId)          // ← 여기만 검사
+```
+
+`velog_list_series` 로 남의 공개 시리즈 id 를 얻을 수 있으므로, **내 글을 남의
+시리즈에 붙일 수 있다.** 글 소유권 검사로는 못 막는다 — 글은 내 것이기 때문이다.
+
+→ 우리 쪽 대응: `src/ownership.ts` 의 `assertOwned` / `assertOwnsSeries`.
+   `safety.test.ts` 의 A8·A11 이 모든 호출 경로에 적용됐는지 소스를 읽어 강제한다.
+
+### 발행 제한 검사는 공개 여부보다 먼저 돈다
+
+```ts
+const isPublish = !data.is_temp && !data.is_private
+const isLimit = await this.isPostLimitReached(signedUserId)   // ← 무조건 실행
+```
+
+`is_private:true` 글은 카운터를 **올리지 않지만**, 그 글을 만드는 요청이 이미 쌓인
+카운트에 대한 파괴 동작(최근 5분 글 전부 비공개)을 **촉발할 수 있다.**
+'올리지 않는다'와 '유발하지 않는다'는 다르다.
 
 ## 스키마 변경 감지
 

@@ -51,6 +51,7 @@ async function callTool(
 	args: Record<string, unknown>,
 	options: {
 		publicPublish?: boolean;
+		editProfile?: boolean;
 		post?: typeof EXISTING;
 		/** 서버가 요청과 다르게 저장하는 상황을 만든다 (발행 제한 등) */
 		serverOverride?: Partial<typeof EXISTING>;
@@ -98,7 +99,10 @@ async function callTool(
 			return json({ post: after });
 		}) as unknown as typeof fetch,
 	});
-	const server = createServer(client, { publicPublish: options.publicPublish ?? false });
+	const server = createServer(client, {
+		publicPublish: options.publicPublish ?? false,
+		editProfile: options.editProfile ?? false,
+	});
 	const [ct, st] = InMemoryTransport.createLinkedPair();
 	const mcp = new Client({ name: 'publish-test', version: '0' });
 	await Promise.all([mcp.connect(ct), server.connect(st)]);

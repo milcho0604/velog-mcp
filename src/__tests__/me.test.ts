@@ -9,7 +9,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { VelogClient } from '../client.ts';
-import { fetchCurrentUser, resolveMyUsername, __clearCache } from '../me.ts';
+import { fetchCurrentUser, resolveMyUsername, invalidateMe } from '../me.ts';
 
 function clientReturning(currentUser: unknown, onCall?: () => void) {
 	return new VelogClient({
@@ -70,7 +70,7 @@ describe('resolveMyUsername', () => {
 		let calls = 0;
 		const client = clientReturning({ username: 'me' }, () => calls++);
 		await resolveMyUsername(client);
-		__clearCache(client);
+		invalidateMe(client);
 		await resolveMyUsername(client);
 		assert.equal(calls, 2);
 	});

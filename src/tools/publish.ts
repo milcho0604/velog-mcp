@@ -17,7 +17,7 @@ import type { VelogClient } from '../client.ts';
 import type { Capabilities } from '../capabilities.ts';
 import { textResult } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
-import { assertOwned } from '../ownership.ts';
+import { assertOwned, assertOwnsSeries } from '../ownership.ts';
 import type { PublishRateLimiter } from '../ratelimit.ts';
 
 const MUTATION_WRITE_POST = `
@@ -236,6 +236,9 @@ export function registerPublishTools(
 			client.requireAuth('velog_publish_post');
 			const { title, body, tags, url_slug, thumbnail, series_id } = args;
 			const isPrivate = resolvePrivacy(args.is_private);
+			if (series_id) await assertOwnsSeries(client, series_id, 'velog_publish_post');
+			// ★ 상한은 '검증을 다 통과한 뒤' 소비한다. 앞에 두면 잘못된 입력으로
+			//   5번 실패해도 5분간 공개 발행이 막힌다.
 			guardIfPublic(isPrivate, limiter);
 
 			const input: Record<string, unknown> = {
@@ -277,7 +280,6 @@ export function registerPublishTools(
 			client.requireAuth('velog_publish_draft');
 			const { id } = args;
 			const isPrivate = resolvePrivacy(args.is_private);
-			guardIfPublic(isPrivate, limiter);
 
 			// ★ 저장된 내용을 그대로 살려 발행한다. 호출자가 본문을 다시 넘기게
 			//   하면 그 과정에서 태그·슬러그·시리즈가 날아간다(editPost 는 전체 교체).
@@ -293,6 +295,8 @@ export function registerPublishTools(
 					`id=${id} 는 이미 발행된 글입니다. 공개 범위만 바꾸려면 velog_update_post 를 쓰세요.`,
 				);
 			}
+			// 검증을 다 통과한 뒤에 상한을 소비한다.
+			guardIfPublic(isPrivate, limiter);
 
 			const input: Record<string, unknown> = {
 				id,
@@ -417,12 +421,17 @@ export function registerPublishTools(
 			await assertOwned(client, post, 'velog_update_post');
 			// 초안은 velog_update_draft 담당이다. 여기로 오면 is_temp:false 를 보내
 			// 의도치 않게 발행되므로 막는다.
-			if (post.is_temp === true) {
+			// ★ `=== true` 만 막으면 null·누락이 '발행글'로 통과해 is_temp:false 가
+			//   나간다(fail-open). is_temp 는 스키마상 nullable 이므로
+			//   '확실히 false 인 경우'만 진행한다.
+			if (post.is_temp !== false) {
 				throw new Error(
-					`id=${id} 는 임시저장 글입니다. 초안 수정은 velog_update_draft 를 쓰세요. ` +
-						'(이 도구로 처리하면 의도치 않게 발행됩니다.)',
+					`id=${id} 의 발행 상태를 확인할 수 없거나 임시저장 글입니다 ` +
+						`(is_temp=${post.is_temp}). 초안 수정은 velog_update_draft 를 쓰세요.`,
 				);
 			}
+
+			if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_post');
 
 			const requested = args.is_private;
 			const isPrivate = capabilities.publicPublish

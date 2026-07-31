@@ -34,6 +34,17 @@
 export interface Capabilities {
 	/** 공개 발행 (`is_private: false`). VELOG_ALLOW_PUBLIC=1 */
 	readonly publicPublish: boolean;
+	/**
+	 * 프로필 수정 (이름·한줄소개·소개글·블로그제목·SNS링크·프로필사진).
+	 * VELOG_ALLOW_PROFILE=1
+	 *
+	 * 위험해서 막는 게 아니다 — 전부 되돌릴 수 있고 본인 계정에만 영향이며
+	 * RSS·메일로 나가지도 않는다. 게이트를 둔 이유는 **혼동 위험**이다:
+	 * 프로필의 `short_bio` 와 글의 `short_description` 은 이름이 비슷하다.
+	 * "소개 좀 고쳐줘" 가 어느 쪽인지 모호할 때, 스위치가 꺼져 있으면
+	 * 모델이 프로필을 건드릴 수 없으므로 잘못 짚어도 사고가 안 난다.
+	 */
+	readonly editProfile: boolean;
 }
 
 /** '켠다'로 인정하는 값. 오타로 조용히 켜지지 않게 좁게 받는다. */
@@ -46,12 +57,24 @@ function flag(value: string | undefined): boolean {
 export function readCapabilities(
 	env: NodeJS.ProcessEnv = process.env,
 ): Capabilities {
-	return { publicPublish: flag(env['VELOG_ALLOW_PUBLIC']) };
+	return {
+		publicPublish: flag(env['VELOG_ALLOW_PUBLIC']),
+		editProfile: flag(env['VELOG_ALLOW_PROFILE']),
+	};
 }
 
 /** 기동 로그용 한 줄 요약. 사용자가 지금 뭐가 열렸는지 즉시 알 수 있어야 한다. */
 export function describeCapabilities(capabilities: Capabilities): string {
-	return capabilities.publicPublish
-		? '읽기 + 초안 + 발행(공개/비공개 선택 가능)'
-		: '읽기 + 초안 + 비공개 발행 (공개 발행은 VELOG_ALLOW_PUBLIC=1 필요)';
+	const parts = [
+		capabilities.publicPublish
+			? '읽기 + 초안 + 발행(공개/비공개 선택)'
+			: '읽기 + 초안 + 비공개 발행',
+	];
+	if (capabilities.editProfile) parts.push('프로필 수정');
+
+	const off: string[] = [];
+	if (!capabilities.publicPublish) off.push('공개 발행=VELOG_ALLOW_PUBLIC');
+	if (!capabilities.editProfile) off.push('프로필 수정=VELOG_ALLOW_PROFILE');
+
+	return parts.join(' + ') + (off.length ? ` (꺼짐: ${off.join(', ')})` : '');
 }

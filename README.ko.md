@@ -92,13 +92,17 @@ claude mcp add velog -- node /절대경로/velog-mcp/dist/index.js
 
 | 환경변수 | 되는 것 |
 | --- | --- |
-| *(설정 없음)* | 전체 읽기 · 초안 작성 · **비공개 발행** |
-| `VELOG_ALLOW_PUBLIC=1` | 위 전부 **+ 공개 발행** |
+| *(설정 없음)* | 전체 읽기 · 초안 작성 · **비공개 발행** — 도구 18개 |
+| `VELOG_ALLOW_PUBLIC=1` | …**공개 발행** 추가 (`is_private` 파라미터가 생김) |
+| `VELOG_ALLOW_PROFILE=1` | …**프로필 수정** 추가 (도구 5개) |
+
+두 스위치는 독립이다 — 하나만 켜도 되고 둘 다 켜도 된다.
 
 ```json
 "env": {
   "VELOG_REFRESH_TOKEN": "...",
-  "VELOG_ALLOW_PUBLIC": "1"
+  "VELOG_ALLOW_PUBLIC": "1",
+  "VELOG_ALLOW_PROFILE": "1"
 }
 ```
 
@@ -123,9 +127,13 @@ if (count >= 10) {
 }
 ```
 
-비공개 글은 이 계수에 아예 안 들어가므로 이 조치를 유발할 수 없다. 공개 글은
-들어간다 — 그리고 한번 공개되면 RSS·검색 색인·구독 메일로 이미 나간 뒤라 지워도
-회수가 안 된다. 명시적 opt-in 을 둘 만한 비대칭은 여기에 있다.
+비공개 글은 이 계수를 **올리지 않는다.** 다만 `isPostLimitReached()` 는 공개 여부를
+보기 **전에** 무조건 실행되므로, 이미 최근 5분에 공개 글이 10건 쌓여 있으면 비공개
+초안 요청도 그 파괴 동작을 촉발할 수 있다 — '올리지 않는다'와 '유발하지 않는다'는
+다르다. 그래서 쓰기 무재시도와 자체 상한을 함께 유지한다.
+
+공개 글은 계수를 올리고, 한번 공개되면 RSS·검색 색인·구독 메일로 이미 나간 뒤라
+지워도 회수가 안 된다. 명시적 opt-in 을 둘 만한 비대칭은 여기에 있다.
 
 자세한 내용: [docs/security.md](docs/security.md)
 
@@ -178,6 +186,21 @@ if (count >= 10) {
 
 `username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·
 `velog_export_posts`·`velog_search_posts` 는 생략하면 **내 계정**을 쓴다.
+
+### 프로필 수정 — `VELOG_ALLOW_PROFILE=1`
+
+도구 5개가 추가된다: `velog_update_profile`(이름·한줄소개), `velog_update_about`,
+`velog_update_blog_title`, `velog_update_social_links`, `velog_update_profile_image`.
+설정이 없으면 **등록조차 되지 않는다.**
+
+게이트를 둔 건 위험해서가 아니다 — 전부 되돌릴 수 있고 본인 계정에만 영향이며
+어디로도 배포되지 않는다. 이유는 **혼동**이다: 프로필의 `short_bio` 와 글의
+`short_description` 은 이름이 비슷하다. "소개 좀 고쳐줘" 가 어느 쪽인지 모호할 때,
+스위치가 꺼져 있으면 잘못 짚어도 프로필에 손이 닿지 않는다.
+
+`velog_update_profile` 은 **생략한 항목을 유지한다.** 벨로그의 `UpdateProfileInput`
+은 `display_name` 과 `short_bio` 를 둘 다 필수로 받아서 한쪽만 보내면 다른 쪽이
+빈 문자열로 덮인다 — 그래서 현재 값을 읽어 채워 보낸다.
 
 ---
 
@@ -233,7 +256,7 @@ npm run build         # tsconfig.build.json (dist 에 테스트 미포함)
 npm run schema:dump   # 현재 벨로그 GraphQL 스키마 덤프
 ```
 
-테스트 148건. `src/__tests__/safety.test.ts` 는 보안 불변식을 고정한다 —
+테스트 161건. `src/__tests__/safety.test.ts` 는 보안 불변식을 고정한다 —
 이 파일이 깨지면 우회하지 말고 왜 깨졌는지부터 볼 것.
 
 ## 문서

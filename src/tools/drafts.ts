@@ -17,7 +17,7 @@ import { QUERY_POSTS } from '../graphql.ts';
 import { formatPostList, textResult } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { resolveMyUsername } from '../me.ts';
-import { assertOwned } from '../ownership.ts';
+import { assertOwned, assertOwnsSeries } from '../ownership.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
 
@@ -42,7 +42,7 @@ const MUTATION_EDIT_POST = `
 /** 수정 전 상태 확인용. 필요한 필드만 받는다. */
 const QUERY_POST_STATE = `
   query PostState($input: ReadPostInput!) {
-    post(input: $input) { id is_temp meta user { username } }
+    post(input: $input) { id title is_temp meta user { username } }
   }
 `;
 
@@ -118,6 +118,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 		},
 		async ({ title, body, tags, url_slug, thumbnail, series_id }) => {
 			client.requireAuth('velog_create_draft');
+			if (series_id) await assertOwnsSeries(client, series_id, 'velog_create_draft');
 			// ★ 초안은 is_private:true 라 벨로그 계수(is_private:false 만 셈)에
 			//   잡히지 않는다. 그래서 상한을 걸지 않는다 — 상한은 '공개 발행' 쪽에 있다.
 
@@ -201,6 +202,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				);
 			}
 			await assertOwned(client, before.post, 'velog_update_draft');
+			if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_draft');
 			if (before.post.is_temp !== true) {
 				throw new Error(
 					`id=${id} 는 이미 발행된 글입니다. 이 도구로 수정하면 임시저장으로 내려가 ` +
@@ -233,13 +235,20 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			//   (apps/server/src/services/PostApiService/index.mts).
 			//   그래서 응답의 is_temp 는 '수정 전' 값이다 — 그걸 검사해봐야 사전확인을
 			//   한 번 더 하는 것에 불과하다. 진짜 사후 확인은 재조회뿐이다.
-			const after = await client.request<{ post: { is_temp?: boolean } | null }>(
-				QUERY_POST_STATE,
-				{ input: { id } },
-			);
-			if (after.post && after.post.is_temp !== true) {
+			// ★ 재조회 결과를 '보기만' 하면 검증이 아니다. null 도 실패로 처리한다.
+			const after = await client.request<{
+				post: { id: string; is_temp?: boolean; title?: string | null } | null;
+			}>(QUERY_POST_STATE, { input: { id } });
+			if (!after.post) {
 				throw new Error(
-					`⚠️ 수정 후 확인 결과 이 글이 임시저장이 아닙니다 (id=${id}). ` +
+					`velog_update_draft: 수정 후 글(id=${id})을 다시 찾지 못했습니다. ` +
+						'벨로그에서 상태를 직접 확인하세요.',
+				);
+			}
+			if (after.post.is_temp !== true) {
+				throw new Error(
+					`⚠️ 수정 후 확인 결과 이 글이 임시저장이 아닙니다 ` +
+						`(id=${id}, is_temp=${after.post.is_temp}). ` +
 						'수정 직전에 다른 곳에서 발행됐을 수 있습니다. 벨로그에서 상태를 확인하세요.',
 				);
 			}

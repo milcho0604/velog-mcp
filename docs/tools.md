@@ -1,11 +1,14 @@
 # 도구 카탈로그
 
-18개. 벨로그 상태를 바꾸는 건 **6개**다.
+기본 18개 + 프로필 수정 5개(설정 시).
 
 ```
-기본 (설정 없음)        읽기 + 초안 + 비공개 발행
-VELOG_ALLOW_PUBLIC=1   공개 발행
+기본 (설정 없음)         읽기 + 초안 + 비공개 발행        도구 18개
+VELOG_ALLOW_PUBLIC=1    공개 발행                        (파라미터만 추가)
+VELOG_ALLOW_PROFILE=1   프로필·소개글·블로그제목·SNS·사진  도구 5개 추가
 ```
+
+두 스위치는 **독립**이다. 프로필만 켜도 되고 발행만 켜도 된다.
 
 설정이 꺼져 있으면 `is_private` 파라미터가 **어느 도구에도 없다.**
 → [ADR 0004](decisions/0004-capability-model.md)
@@ -231,10 +234,37 @@ velog_publish_draft(id, is_private?)
 
 ---
 
+## 프로필 수정 (`VELOG_ALLOW_PROFILE=1`)
+
+꺼져 있으면 **도구가 등록조차 되지 않는다** — 목록에 없으니 부를 수도 없다.
+
+| 도구 | 바꾸는 것 |
+| --- | --- |
+| `velog_update_profile` | 표시 이름 · 한줄 소개 |
+| `velog_update_about` | "소개" 탭의 긴 글 (전체 교체) |
+| `velog_update_blog_title` | 블로그 제목 |
+| `velog_update_social_links` | github · twitter · facebook · url · email |
+| `velog_update_profile_image` | 프로필 사진 (http(s) URL) |
+
+**왜 게이트가 있나** — 위험해서가 아니다. 전부 되돌릴 수 있고 본인 계정에만 영향이며
+RSS·메일로 나가지도 않는다. 이유는 **혼동**이다: 프로필의 `short_bio` 와 글의
+`short_description` 은 이름이 비슷하다. "소개 좀 고쳐줘" 가 어느 쪽인지 모호할 때,
+스위치가 꺼져 있으면 모델이 프로필을 건드릴 수 없어 잘못 짚어도 사고가 안 난다.
+
+> `velog_update_profile` 은 **생략한 항목을 유지**한다. 벨로그의
+> `UpdateProfileInput` 은 `display_name` 과 `short_bio` 를 둘 다 필수로 받아서,
+> 한쪽만 보내면 다른 쪽이 빈 문자열로 덮인다. 그래서 현재 값을 읽어 채워 보낸다.
+> 실측 확인: 한줄소개만 바꿔도 이름이 그대로 남는다.
+
+`velog_update_about` 은 **전체 교체**다. 덧붙이려면 `velog_get_user` 로 먼저 읽어
+합친 뒤 넘겨야 한다.
+
+---
+
 ## 구현하지 않은 것
 
-좋아요·팔로우·댓글·프로필 변경·계정 탈퇴·로그아웃·메일 발송.
-목록에서 뺀 게 아니라 **호출 코드를 쓰지 않았다.** 설정으로도 안 열린다.
+좋아요·팔로우·댓글·계정 탈퇴·로그아웃·메일 발송·이메일 변경·알림 조작.
+목록에서 뺀 게 아니라 **호출 코드를 쓰지 않았다.** 어떤 설정으로도 안 열린다.
 
 글 삭제는 애초에 불가능하다 — v3 mutation 목록에 `deletePost` 가 없다.
 

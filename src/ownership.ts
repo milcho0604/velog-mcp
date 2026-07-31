@@ -44,3 +44,46 @@ export async function assertOwned(
 		);
 	}
 }
+
+const QUERY_MY_SERIES = `
+  query MySeries($input: GetSeriesListInput!) {
+    seriesList(input: $input) { id name }
+  }
+`;
+
+/**
+ * ★ 시리즈 소유권. `series_id` 를 보내기 전에 반드시 통과시킨다.
+ *
+ * 벨로그 서버는 **처음 시리즈에 붙일 때** 소유권을 확인하지 않는다:
+ *
+ *   // apps/server/src/services/PostApiService/index.mts (edit 경로)
+ *   if (!prevSeriesPost && series_id) {
+ *     await this.seriesService.appendToSeries(series_id, post.id)   // ← 검사 없음
+ *   }
+ *   if (prevSeriesPost && prevSeriesPost.fk_series_id !== series_id) {
+ *     if (series_id) {
+ *       await this.checkSeriesOwnership(series_id, userId)          // ← 여기만 검사
+ *
+ * `velog_list_series` 로 남의 공개 시리즈 id 를 얻을 수 있으므로, 내 글을 남의
+ * 시리즈에 붙이고 그 시리즈의 updated_at 까지 건드릴 수 있다.
+ * 글 소유권(assertOwned)만으로는 못 막는다 — 글은 내 것이기 때문이다.
+ */
+export async function assertOwnsSeries(
+	client: VelogClient,
+	seriesId: string,
+	toolName: string,
+): Promise<void> {
+	const me = await resolveMyUsername(client);
+	const data = await client.request<{ seriesList: Array<{ id: string }> | null }>(
+		QUERY_MY_SERIES,
+		{ input: { username: me } },
+	);
+	const mine = data.seriesList ?? [];
+	if (!mine.some((s) => s.id === seriesId)) {
+		throw new Error(
+			`${toolName}: series_id=${seriesId} 는 @${me} 의 시리즈가 아닙니다. ` +
+				'velog_list_series 로 내 시리즈 id 를 확인하세요. ' +
+				'(남의 시리즈에 글을 붙이면 그 시리즈가 변경됩니다.)',
+		);
+	}
+}

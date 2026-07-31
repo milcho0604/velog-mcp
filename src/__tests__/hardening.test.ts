@@ -392,19 +392,30 @@ describe('D7 — 초안 생성 시 series_id 가 버려지는 것을 알린다 (
 		const client = new VelogClient({
 			auth: authed,
 			sleepImpl: async () => {},
-			fetchImpl: jsonFetch(() => ({
-				body: {
-					data: {
-						writePost: {
-							id: 'x',
-							title: 't',
-							url_slug: 's',
-							is_temp: true,
-							user: { username: 'u' },
+			// 시리즈 소유권 검증이 currentUser 와 seriesList 를 조회하므로
+			// 목도 그걸 답해야 한다. 주어진 series_id 를 '내 것'으로 둔다.
+			fetchImpl: jsonFetch((body) => {
+				const query = (body as { query: string }).query;
+				if (query.includes('currentUser')) {
+					return { body: { data: { currentUser: { id: 'u1', username: 'u' } } } };
+				}
+				if (query.includes('seriesList')) {
+					return { body: { data: { seriesList: [{ id: 'sid', name: 's' }] } } };
+				}
+				return {
+					body: {
+						data: {
+							writePost: {
+								id: 'x',
+								title: 't',
+								url_slug: 's',
+								is_temp: true,
+								user: { username: 'u' },
+							},
 						},
 					},
-				},
-			})),
+				};
+			}),
 		});
 		const server = createServer(client);
 		const [ct, st] = InMemoryTransport.createLinkedPair();
