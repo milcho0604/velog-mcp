@@ -5,7 +5,6 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "outDir": "dist",
-    "rootDir": "src",
 
     // Node 24 는 .ts 를 직접 실행한다(타입 스트리핑). 그래서 소스는 '.ts' 로 import 하고,
     // tsc 로 빌드할 때만 상대경로 확장자를 .js 로 바꿔 내보낸다.
@@ -29,6 +28,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/__tests__/**"]
+  // ★ 테스트도 포함한다. 종전엔 제외해서 `tsc --noEmit` 이 테스트의 타입 오류를
+  //   못 잡았다 — 검증 코드가 검증에서 빠져 있던 셈이다.
+  //   빌드는 tsconfig.build.json 이 테스트를 제외하고 수행한다.
+  "include": ["src/**/*.ts", "scripts/**/*.ts"]
 }

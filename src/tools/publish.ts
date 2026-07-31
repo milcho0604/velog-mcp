@@ -175,7 +175,7 @@ async function verifyAfter(
 	if (post.is_private !== expected.is_private) {
 		mismatches.push(
 			`공개 범위가 예상과 다릅니다 (기대 is_private=${expected.is_private}, 실제 ${post.is_private})` +
-				(expected.is_private === false && post.is_private === true
+				(!expected.is_private && post.is_private === true
 					? ' — 벨로그 발행 제한에 걸려 비공개로 전환됐을 수 있습니다'
 					: ''),
 		);
@@ -461,7 +461,7 @@ export function registerPublishTools(
 				? (requested ?? post.is_private ?? true)
 				: true;
 			// 비공개 → 공개로 바뀌는 경우에만 계수 대상이 된다.
-			if (post.is_private !== false && isPrivate === false) limiter.check();
+			if (post.is_private !== false && !isPrivate) limiter.check();
 
 			const nextTitle = title ?? post.title ?? '(제목 없음)';
 			const input: Record<string, unknown> = {

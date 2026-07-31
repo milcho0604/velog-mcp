@@ -17,19 +17,24 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc --watch",
+    "build": "tsc -p tsconfig.build.json",
+    "watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
     "test": "node --test 'src/__tests__/*.test.ts'",
-    "schema:dump": "node scripts/dump-schema.ts"
+    "schema:dump": "node scripts/dump-schema.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.3",
-    "typescript": "^5.9.3"
+    "eslint": "^10.8.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0"
   },
   "keywords": [
     "mcp",

@@ -227,12 +227,13 @@ views: 16323
 
 ```bash
 npm test              # node:test 로 .ts 직접 실행 — jest·ts-node 없음
-npm run typecheck
-npm run build
+npm run typecheck     # 테스트 포함 — 종전엔 제외돼 실제 오류가 숨어 있었다
+npm run lint          # typescript-eslint (타입 기반)
+npm run build         # tsconfig.build.json (dist 에 테스트 미포함)
 npm run schema:dump   # 현재 벨로그 GraphQL 스키마 덤프
 ```
 
-테스트 120건. `src/__tests__/safety.test.ts` 는 보안 불변식을 고정한다 —
+테스트 148건. `src/__tests__/safety.test.ts` 는 보안 불변식을 고정한다 —
 이 파일이 깨지면 우회하지 말고 왜 깨졌는지부터 볼 것.
 
 ## 문서

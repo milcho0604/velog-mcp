@@ -235,12 +235,13 @@ Post body in Markdown…
 
 ```bash
 npm test              # node:test, runs .ts directly — no jest, no ts-node
-npm run typecheck
-npm run build
+npm run typecheck     # includes tests — they used to be excluded, which hid real errors
+npm run lint          # typescript-eslint, type-aware
+npm run build         # tsconfig.build.json (tests excluded from dist)
 npm run schema:dump   # dump Velog's current GraphQL schema
 ```
 
-120 tests. The ones in `src/__tests__/safety.test.ts` pin the security invariants —
+148 tests. The ones in `src/__tests__/safety.test.ts` pin the security invariants —
 if that file fails, find out why instead of working around it.
 
 ## Documentation

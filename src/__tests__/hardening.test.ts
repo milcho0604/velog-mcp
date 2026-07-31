@@ -208,7 +208,8 @@ describe('D4 — 발행된 글을 임시저장으로 끌어내리지 않는다',
 describe('★ 발행 차단 — 실제 전송 payload 로 검증한다', () => {
 	// 도구 스키마 검사만으로는 부족하다. 벨로그로 나가는 variables 를 직접 본다.
 	async function captureDraftPayload(args: Record<string, unknown>) {
-		let sent: { variables: { input: Record<string, unknown> } } | null = null;
+		// 클로저 안에서 대입되므로 TS 제어흐름이 null 로 좁힌다. 명시적으로 넓힌다.
+		let sent = null as { variables: { input: Record<string, unknown> } } | null;
 		const client = new VelogClient({
 			auth: authed,
 			sleepImpl: async () => {},
@@ -235,7 +236,8 @@ describe('★ 발행 차단 — 실제 전송 payload 로 검증한다', () => {
 		await Promise.all([mcp.connect(ct), server.connect(st)]);
 		await mcp.callTool({ name: 'velog_create_draft', arguments: args });
 		await mcp.close();
-		return sent!.variables.input;
+		if (!sent) throw new Error('mutation 이 전송되지 않았다');
+		return sent.variables.input;
 	}
 
 	test('정상 호출은 is_temp:true 로 나간다', async () => {

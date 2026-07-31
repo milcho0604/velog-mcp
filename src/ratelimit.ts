@@ -70,11 +70,15 @@ export class PublishRateLimiter {
 	check(): void {
 		const now = this.#now();
 		const cutoff = now - this.#windowMs;
-		while (this.#timestamps.length > 0 && this.#timestamps[0]! <= cutoff) {
+		// 창 밖으로 나간 기록을 버린다. shift() 의 반환으로 판정하면
+		// non-null 단언 없이 첫 원소를 다룰 수 있다.
+		for (let head = this.#timestamps[0]; head !== undefined && head <= cutoff; ) {
 			this.#timestamps.shift();
+			head = this.#timestamps[0];
 		}
-		if (this.#timestamps.length >= this.#limit) {
-			const oldest = this.#timestamps[0]!;
+
+		const oldest = this.#timestamps[0];
+		if (oldest !== undefined && this.#timestamps.length >= this.#limit) {
 			throw new PublishRateLimitError(oldest + this.#windowMs - now);
 		}
 		this.#timestamps.push(now);

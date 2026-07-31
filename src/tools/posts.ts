@@ -35,14 +35,15 @@ export function registerPostTools(server: McpServer, client: VelogClient): void 
 			annotations: READ_ONLY,
 		},
 		async ({ username, url_slug, id }) => {
-			if (!id && !(username && url_slug)) {
-				throw new Error('id 를 주거나, username 과 url_slug 를 함께 주세요.');
-			}
+			// 분기 안에서 값을 쓰면 타입이 그대로 좁혀져 단언이 필요 없다.
 			const input: Record<string, string> = {};
-			if (id) input['id'] = id;
-			else {
-				input['username'] = username!;
-				input['url_slug'] = url_slug!;
+			if (id) {
+				input['id'] = id;
+			} else if (username && url_slug) {
+				input['username'] = username;
+				input['url_slug'] = url_slug;
+			} else {
+				throw new Error('id 를 주거나, username 과 url_slug 를 함께 주세요.');
 			}
 
 			const data = await client.request<{ post: VelogPostDetail | null }>(QUERY_POST, {

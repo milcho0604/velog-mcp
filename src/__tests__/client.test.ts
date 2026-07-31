@@ -11,7 +11,7 @@ const noSleep = async (): Promise<void> => {};
 function fakeFetch(responses: Array<{ status?: number; body: unknown }>) {
 	let calls = 0;
 	const impl = async (): Promise<Response> => {
-		const r = responses[Math.min(calls++, responses.length - 1)]!;
+		const r = responses[Math.min(calls++, responses.length - 1)] ?? { body: {} };
 		return new Response(JSON.stringify(r.body), {
 			status: r.status ?? 200,
 			headers: { 'Content-Type': 'application/json' },
@@ -126,6 +126,6 @@ describe('requireAuth', () => {
 	test('무인증 클라이언트는 쓰기 도구를 막는다', () => {
 		const client = new VelogClient({ auth: anon });
 		assert.equal(client.isAuthenticated, false);
-		assert.throws(() => client.requireAuth('velog_create_draft'), /인증이 필요/);
+		assert.throws(() => { client.requireAuth('velog_create_draft'); }, /인증이 필요/);
 	});
 });

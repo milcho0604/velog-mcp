@@ -41,7 +41,7 @@ describe('초안 생성 속도 제한', () => {
 	});
 
 	test('상한까지는 통과한다', () => {
-		let now = 0;
+		const now = 0;
 		const limiter = new PublishRateLimiter({ limit: 3, windowMs: 1000, now: () => now });
 		limiter.check();
 		limiter.check();
@@ -50,15 +50,15 @@ describe('초안 생성 속도 제한', () => {
 	});
 
 	test('상한을 넘으면 막는다', () => {
-		let now = 0;
+		const now = 0;
 		const limiter = new PublishRateLimiter({ limit: 2, windowMs: 1000, now: () => now });
 		limiter.check();
 		limiter.check();
-		assert.throws(() => limiter.check(), PublishRateLimitError);
+		assert.throws(() => { limiter.check(); }, PublishRateLimitError);
 	});
 
 	test('★ 막을 때 왜 막는지와 언제 풀리는지를 말한다', () => {
-		let now = 0;
+		const now = 0;
 		const limiter = new PublishRateLimiter({ limit: 1, windowMs: 60_000, now: () => now });
 		limiter.check();
 		try {
@@ -76,7 +76,7 @@ describe('초안 생성 속도 제한', () => {
 		let now = 0;
 		const limiter = new PublishRateLimiter({ limit: 1, windowMs: 1000, now: () => now });
 		limiter.check();
-		assert.throws(() => limiter.check());
+		assert.throws(() => { limiter.check(); });
 		now += 1001;
 		limiter.check(); // 통과해야 한다
 		assert.equal(limiter.count, 1);

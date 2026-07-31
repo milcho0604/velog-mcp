@@ -1,0 +1,9 @@
+{
+  // 배포 산출물용. 테스트와 스크립트는 dist 에 넣지 않는다.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/__tests__/**"]
+}

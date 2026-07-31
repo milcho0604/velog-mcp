@@ -45,11 +45,16 @@ const QUERY_POST_STATE = `
   }
 `;
 
+/**
+ * 벨로그 응답. ★ 공식 스키마에서 title·url_slug·is_temp 는 nullable 이다
+ * (Post.gql). 선언을 낙관적으로 적으면 `!== true` 같은 방어가 '불필요한 비교'로
+ * 보여 지워지고, 그러면 실제 null 에 그대로 당한다. updated_at 으로 겪은 일이다.
+ */
 interface WrittenPost {
 	id: string;
-	title: string;
-	url_slug: string;
-	is_temp: boolean;
+	title?: string | null;
+	url_slug?: string | null;
+	is_temp?: boolean | null;
 	user?: { username?: string } | null;
 }
 

@@ -14,6 +14,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 interface Sent {
+	meta?: unknown;
 	is_private?: boolean;
 	is_temp?: boolean;
 	title?: string;
@@ -57,7 +58,8 @@ async function callTool(
 		me?: string;
 	} = {},
 ) {
-	let sent: Sent | null = null;
+	// 클로저 안에서 대입되므로 TS 제어흐름이 null 로 좁힌다. 명시적으로 넓힌다.
+	let sent = null as Sent | null;
 	const initial = options.post ?? EXISTING;
 	const me = options.me ?? 'me';
 	const client = new VelogClient({
@@ -102,10 +104,11 @@ async function callTool(
 	await Promise.all([mcp.connect(ct), server.connect(st)]);
 	const result = await mcp.callTool({ name: tool, arguments: args });
 	await mcp.close();
+	const captured: Sent | null = sent;
 	return {
-		sent,
+		sent: captured,
 		isError: result.isError === true,
-		text: String((result.content as Array<{ text?: string }>)?.[0]?.text ?? ''),
+		text: (result.content as Array<{ text?: string }>)[0]?.text ?? '',
 	};
 }
 
@@ -323,7 +326,7 @@ describe('★ meta 를 지우지 않는다 (코덱스 2차 [중간])', () => {
 		test(`${tool} 이 기존 meta 를 실어 보낸다`, async () => {
 			const { sent } = await callTool(tool, args, { publicPublish: true, post });
 			assert.deepEqual(
-				(sent as { meta?: unknown })?.meta,
+				sent?.meta,
 				{ short_description: '요약문' },
 				'meta 가 비워져 나갔다 — 글 요약이 지워진다',
 			);
