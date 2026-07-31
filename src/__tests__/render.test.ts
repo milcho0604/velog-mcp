@@ -458,3 +458,20 @@ describe('★ R11 — 자가감사 실동작 (크롬 필요)', () => {
 		);
 	});
 });
+
+
+describe('★ R12 — 페이지에 URL 을 받는 자리가 없다', () => {
+	// 이게 1차 방어다. 크롬의 DNS 차단은 2차이고, 그 플래그는 이름 풀이를 막는 것이라
+	// IP 를 직접 적은 주소까지 막아주지 않는다. 그러니 '구멍이 없다'가 본질이다.
+	test('href/src/fetch 가 없고 url() 은 문서 내부 참조뿐이다', async () => {
+		for (const name of ['page.ts', 'cover.ts']) {
+			const src = codeOnly(await readFile(new URL(`../render/${name}`, import.meta.url), 'utf8'));
+			for (const sink of ['href', "'src'", '"src"', 'xlink', 'fetch(', 'XMLHttpRequest', 'import(']) {
+				assert.ok(!src.includes(sink), `${name} 에 URL 을 받는 자리가 생겼다: ${sink}`);
+			}
+			for (const use of src.match(/url\([^)]*/g) ?? []) {
+				assert.ok(use.startsWith('url(#'), `${name} 의 url() 이 문서 밖을 가리킨다: ${use})`);
+			}
+		}
+	});
+});
