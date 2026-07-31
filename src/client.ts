@@ -16,6 +16,16 @@ import {
 export const VELOG_ENDPOINT = 'https://v3.velog.io/graphql';
 
 /**
+ * 이미지 업로드만 GraphQL 이 아니다.
+ *
+ * v3 의 mutation 23개 어디에도 업로드가 없다. 벨로그 서버는 파일을 fastify REST
+ * 라우트로 받는다 — `routes/index.mts` 가 `/api` 아래에 `/files` 를 붙이고,
+ * `routes/files/index.mts` 가 다시 `/v3` 를 붙여 아래 경로가 된다.
+ * 폼 필드 이름이 `image` 인 것도 서버 쪽 `multer.single('image')` 에서 온다.
+ */
+export const VELOG_UPLOAD_ENDPOINT = 'https://v3.velog.io/api/files/v3/upload';
+
+/**
  * 벨로그가 비정상 응답을 줬을 때. 메시지는 마스킹을 거친 뒤 담긴다.
  *
  * ★ 파라미터 프로퍼티(`constructor(readonly x: T)`)를 쓰지 않는다.
@@ -68,6 +78,7 @@ interface GraphQLResponse<T> {
 export interface ClientOptions {
 	readonly auth: AuthState;
 	readonly endpoint?: string;
+	readonly uploadEndpoint?: string;
 	readonly timeoutMs?: number;
 	readonly fetchImpl?: typeof fetch;
 	readonly maxRetries?: number;
@@ -123,6 +134,7 @@ const AUTH_HINT =
 export class VelogClient {
 	readonly #tokens: TokenStore;
 	readonly #endpoint: string;
+	readonly #uploadEndpoint: string;
 	readonly #timeoutMs: number;
 	readonly #fetch: typeof fetch;
 	readonly #maxRetries: number;
@@ -132,6 +144,7 @@ export class VelogClient {
 	constructor(options: ClientOptions) {
 		this.#tokens = new TokenStore(options.auth);
 		this.#endpoint = options.endpoint ?? VELOG_ENDPOINT;
+		this.#uploadEndpoint = options.uploadEndpoint ?? VELOG_UPLOAD_ENDPOINT;
 		this.#timeoutMs = options.timeoutMs ?? 20_000;
 		this.#fetch = options.fetchImpl ?? fetch;
 		this.#maxRetries = options.maxRetries ?? 2;
@@ -197,6 +210,99 @@ export class VelogClient {
 		variables: Record<string, unknown> = {},
 	): Promise<T> {
 		return this.#requestOnce<T>(query, variables);
+	}
+
+	/**
+	 * 이미지 업로드. **재시도하지 않는다.**
+	 *
+	 * 벨로그는 업로드 횟수를 사용자 단위로 센다 (`ImageService.detectAbuse`):
+	 * 1시간 100건 초과 또는 1분 20건 이상이면 그 계정을 막고 슬랙으로 알린다.
+	 * 응답만 유실됐을 때 자동 재시도하면 실제로는 두 번 올라가 이 한도를 앞당긴다.
+	 * mutate() 와 같은 이유로 한 번만 친다.
+	 *
+	 * `refId` 를 주면 서버가 "그 글이 내 글인지" 확인한다 (남의 글이면 403).
+	 * 벨로그에 몇 없는 실제 소유권 검사라 쓸 수 있으면 쓴다.
+	 *
+	 * @returns 업로드된 이미지의 공개 URL (`https://velog.velcdn.com/...`)
+	 */
+	async uploadImage(
+		bytes: Uint8Array,
+		filename: string,
+		options: {
+			readonly type: 'post' | 'profile';
+			readonly contentType: string;
+			readonly refId?: string;
+		},
+	): Promise<string> {
+		const auth = this.#tokens.state;
+		if (auth.kind !== 'authenticated') throw new AuthRequiredError('velog_upload_image');
+
+		// GraphQL 경로와 같은 규율 — 자격증명은 벨로그 정규 주소로만 나간다.
+		const headers: Record<string, string> = { Accept: 'application/json' };
+		if (this.#uploadEndpoint === VELOG_UPLOAD_ENDPOINT) {
+			headers['Cookie'] = buildCookieHeader(auth.credentials);
+		} else if (!this.#allowInsecureEndpoint) {
+			throw new VelogApiError(
+				`이미지는 ${VELOG_UPLOAD_ENDPOINT} 로만 보낼 수 있습니다. ` +
+					'다른 주소로는 파일도 토큰도 보내지 않습니다.',
+			);
+		}
+
+		const form = new FormData();
+		form.append('type', options.type);
+		if (options.refId) form.append('ref_id', options.refId);
+		// ★ 필드 이름은 반드시 'image'. 서버가 multer.single('image') 로 받는다.
+		//   Content-Type 헤더는 손대지 않는다 — fetch 가 multipart 경계를 붙인다.
+		form.append('image', new Blob([bytes], { type: options.contentType }), filename);
+
+		let response: Response;
+		try {
+			response = await this.#fetch(this.#uploadEndpoint, {
+				method: 'POST',
+				headers,
+				body: form,
+				// 이미지는 GraphQL 질의보다 오래 걸린다. 최소 60초는 준다.
+				signal: AbortSignal.timeout(Math.max(this.#timeoutMs, 60_000)),
+			});
+		} catch (cause) {
+			const reason = cause instanceof Error ? cause.message : String(cause);
+			const codes = collectCauseCodes(cause);
+			throw new VelogApiError(
+				`이미지 업로드 실패: ${this.#mask(reason)}${codes.length ? ` (${codes.join('/')})` : ''}`,
+				{ networkCodes: codes },
+			);
+		}
+
+		this.#tokens.update(parseSetCookie(response.headers.get('set-cookie')));
+
+		if (!response.ok) {
+			const body = this.#mask(await response.text().catch(() => ''));
+			let hint = '';
+			if (response.status === 401 || response.status === 403) hint = AUTH_HINT;
+			if (response.status === 429) {
+				hint =
+					' — 벨로그가 업로드를 일시 차단했습니다. 1시간 100건 / 1분 20건이 한도입니다.';
+			}
+			if (response.status === 413) hint = ' — 파일이 너무 큽니다 (서버 상한 30MB).';
+			throw new VelogApiError(
+				`이미지 업로드 HTTP ${response.status}: ${truncate(body, 300)}${hint}`,
+				{ status: response.status },
+			);
+		}
+
+		let payload: { path?: unknown };
+		try {
+			payload = (await response.json()) as { path?: unknown };
+		} catch (cause) {
+			throw new VelogApiError(
+				'업로드 응답을 JSON 으로 읽지 못했습니다: ' +
+					this.#mask(cause instanceof Error ? cause.message : String(cause)),
+			);
+		}
+		if (typeof payload.path !== 'string' || payload.path === '') {
+			throw new VelogApiError('업로드는 됐는데 서버가 이미지 주소를 주지 않았습니다.');
+		}
+		return payload.path;
 	}
 
 	async #requestOnce<T>(
