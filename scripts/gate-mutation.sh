@@ -88,7 +88,10 @@ check() {
   #       그걸 '겹침'으로 오판한다 — protocolVersion 변이가 실제로 그랬다
   #       (루프를 비우니 정상 dist 도 막혔는데 겹침으로 보고됨. 9차 반영 검토 반례).
   break_gate "$gate_find" "$gate_repl" || { echo "  ??  $label — 관문 변이 패턴 불일치"; fail=$((fail+1)); return; }
+  # ⚠️ dist/index.js 만 복원하면 '낡은 산출물' 변이가 만든 side file 이 남아
+  #    기준선이 "정상 dist" 가 아니게 된다(10차 반례). 부산물도 함께 치운다.
   cp "$BAK.js" dist/index.js
+  rm -f dist/stale-orphan.js
   local sane; sane=$(run_gate)
 
   # ③ 그 검사만 없앤 관문 + 같은 불량 dist → 통과해야 한다

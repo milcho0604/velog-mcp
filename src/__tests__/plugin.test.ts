@@ -1161,6 +1161,19 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			/if \[ "\$sane" -ne 0 \]; then/,
 			'변이 관문의 정상 dist 기준선을 확인하지 않는다 — 관문 파괴를 겹침으로 오판한다',
 		);
+
+		// ⚠️ 플래그 4조합 행렬 자체도 고정한다 — 두 독립 행(프로필만·공개만)을 지워
+		//    {0,0}·{1,1} 만 남겨도 모든 검증이 초록이었다(10차 반례). 독립 플래그는
+		//    `PROFILE || PUBLIC` 같은 오계산을 조합 {1,0}·{0,1} 에서만 드러낸다.
+		const gateSource = await readFile(new URL('scripts/verify-dist.ts', ROOT), 'utf8');
+		for (const row of [
+			"['기본', {}]",
+			"['프로필만', { VELOG_ALLOW_PROFILE: '1' }]",
+			"['공개만', { VELOG_ALLOW_PUBLIC: '1' }]",
+			"['모든 옵션', { VELOG_ALLOW_PROFILE: '1', VELOG_ALLOW_PUBLIC: '1' }]",
+		]) {
+			assert.ok(gateSource.includes(row), `소스-dist 대조 모드 행렬에 ${row} 가 없다`);
+		}
 	});
 
 	test('P23 — 의존성 트리 전체를 고정해서 발행한다', async () => {

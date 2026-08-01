@@ -51,6 +51,10 @@ const WATCH_MS = 2_000;
  *   넣어보니 관문이 **끝나지 않았다**(120초에 손으로 끊음). 발행이 멈추는 게 아니라
  *   그냥 매달린다 — 실패보다 나쁘다.
  *   그래서 **절대 시한은 절대 연장하지 않는다.** 감시창도 한 번만 건다.
+ *
+ * ⚠️ 이 시한은 **handshake 한 번**에만 걸린다(관문 전체가 아니다). 뒤의 SDK 탐침은
+ *   SDK 의 요청별 timeout(기본 60초)이 각각 지킨다. 전부 실패 방향(발행을 막음)이라
+ *   잘못된 발행을 허용하는 구멍은 아니다 — 10차에서 확인.
  */
 const DEADLINE_MS = 45_000;
 
@@ -65,7 +69,10 @@ interface Outcome {
 	readonly died: string | null;
 }
 
-async function handshake(binLink: string): Promise<Outcome> {
+async function handshake(
+	binLink: string,
+	extraEnv: Record<string, string> = {},
+): Promise<Outcome> {
 	// ★★ **npm 이 실제로 쓰는 모양 그대로 띄운다 — 링크를 '직접 실행'한다.**
 	//
 	//   `npx`·`npm i -g` 는 `node_modules/.bin/velog-mcp` 링크를 만들고 대상에
@@ -84,7 +91,11 @@ async function handshake(binLink: string): Promise<Outcome> {
 		child = spawn(binLink, [], {
 		stdio: ['pipe', 'pipe', 'pipe'],
 			// 토큰 없이 띄운다. 발행 검증이 실제 계정을 건드릴 이유가 없다.
-			env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
+			env: {
+				PATH: process.env['PATH'] ?? '',
+				HOME: process.env['HOME'] ?? '',
+				...extraEnv,
+			},
 		});
 	} catch (error: unknown) {
 		const code = (error as { code?: string }).code ?? '';
@@ -439,6 +450,21 @@ const MODES: ReadonlyArray<[string, Record<string, string>]> = [
 	...OPTION_MODES,
 ];
 for (const [mode, extraEnv] of MODES) {
+	// 조건부 분기에서만 터지는 stdout 오염·조기 종료는 기본 모드 검사가 못 본다
+	// (10차 반례 — SDK 탐침은 listTools 직후 닫혀 지연 오염을 놓친다).
+	// 옵션 모드에서도 raw handshake 로 순도·생존을 본다.
+	if (mode !== '기본') {
+		const opt = await handshake(binLink, extraEnv);
+		if (opt.died) {
+			fail(`[${mode}] dist 가 스스로 종료했습니다(${opt.died}).\n   stderr: ${opt.stderr.trim()}`);
+		}
+		if (opt.junk.length > 0) {
+			fail(
+				`[${mode}] dist 가 stdout 에 프로토콜 아닌 줄을 냈습니다(${opt.junk.length}줄).\n` +
+					`   첫 줄: ${opt.junk[0] ?? ''}`,
+			);
+		}
+	}
 	const distTools = await toolsVia(`dist(${mode})`, binLink, [], extraEnv);
 	const srcTools = await toolsVia(`소스(${mode})`, process.execPath, [sourceEntry], extraEnv);
 	// 개수 대조는 실제 클라이언트 다리의 일부다 — 루프 밖에 두면, 관문 변이가
@@ -473,5 +499,5 @@ cleanupLink();
 process.stdout.write(
 	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · ` +
 		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존 · **실제 SDK 클라이언트 연결 OK** · ` +
-		`소스와 도구 스냅샷 일치(기본·모든 옵션) · 발행물 ${shipped.length}개 개인정보 0건\n`,
+		`소스와 도구 스냅샷 일치(플래그 4조합) · 발행물 ${shipped.length}개 개인정보 0건\n`,
 );
