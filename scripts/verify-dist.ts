@@ -20,7 +20,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, readdir, mkdtemp, symlink, rm, chmod } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, symlink, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -196,8 +196,16 @@ const pkg = JSON.parse(await readFile(new URL('package.json', ROOT), 'utf8')) as
  */
 const linkDir = await mkdtemp(join(tmpdir(), 'velog-mcp-verify-'));
 const binLink = join(linkDir, 'velog-mcp');
-// npm 이 설치할 때 하는 것: 대상에 실행 권한을 붙이고 링크를 건다.
-await chmod(fileURLToPath(ENTRY), 0o755);
+// ⚠️ 한때 여기서 `chmod(ENTRY, 0o755)` 를 했다. 그러면 **검증이 검증 대상을 바꾼다** —
+//    실측으로 tarball 안 모드가 `-rw-r--r--` 에서 `-rwxr-xr-x` 로 달라졌다.
+//    실행 권한은 `postbuild` 가 붙인다. 관문은 **확인만** 한다.
+const entryMode = (await stat(fileURLToPath(ENTRY))).mode;
+if ((entryMode & 0o111) === 0) {
+	fail(
+		`dist/index.js 에 실행 권한이 없습니다(${(entryMode & 0o777).toString(8)}).\n` +
+			'   `bin` 은 실행 파일입니다 — `npm run build` 의 postbuild 가 붙입니다.',
+	);
+}
 await symlink(fileURLToPath(ENTRY), binLink);
 
 const { responses, junk, stderr, died } = await handshake(binLink).finally(async () => {
