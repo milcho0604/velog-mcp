@@ -20,12 +20,15 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, readdir, mkdtemp, symlink, rm, stat } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, symlink, stat } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { scanFiles } from './shipping-checks.ts';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
 	JSONRPCMessageSchema,
 	InitializeResultSchema,
@@ -219,9 +222,15 @@ if ((entryMode & 0o111) === 0) {
 }
 await symlink(fileURLToPath(ENTRY), binLink);
 
-const { responses, junk, stderr, died } = await handshake(binLink).finally(async () => {
-	await rm(linkDir, { recursive: true, force: true });
-});
+// ⚠️ 한때 여기서 바로 지웠는데, 아래 **실제 클라이언트 연결**도 이 링크를 쓴다.
+//    그래서 그 검사가 `ENOENT` 로 죽었다. 링크는 둘 다 끝난 뒤에 지운다.
+//    프로세스가 어떻게 끝나든 치우도록 종료 훅에도 건다.
+const cleanupLink = (): void => {
+	rmSync(linkDir, { recursive: true, force: true });
+};
+process.on('exit', cleanupLink);
+
+const { responses, junk, stderr, died } = await handshake(binLink);
 
 if (died) {
 	fail(
@@ -254,12 +263,12 @@ if (!initResult.success) {
 }
 
 const info = initResult.data.serverInfo;
-if (info?.name !== SERVER_NAME) {
-	fail(`서버 이름이 ${String(info?.name)} 입니다. ${SERVER_NAME} 이어야 합니다.`);
+if (info.name !== SERVER_NAME) {
+	fail(`서버 이름이 ${info.name} 입니다. ${SERVER_NAME} 이어야 합니다.`);
 }
-if (info?.version !== pkg.version) {
+if (info.version !== pkg.version) {
 	fail(
-		`빌드 산출물이 낡았습니다 — dist 는 ${String(info?.version)}, package.json 은 ${pkg.version}.\n` +
+		`빌드 산출물이 낡았습니다 — dist 는 ${info.version}, package.json 은 ${pkg.version}.\n` +
 			'   `npm run build` 를 다시 도세요.',
 	);
 }
@@ -349,7 +358,81 @@ if (orphans.length > 0) {
 	);
 }
 
+// ── ★ 마지막으로 **진짜 SDK 클라이언트**로 붙어본다 ──────────────────────
+//
+// 여기까지의 검사는 우리가 프로토콜을 흉내 낸 것이다. 그러다 두 번 데였다:
+//   6차 — `jsonrpc:'2.0'` + id/method 만 봤더니 SDK 가 거부하는 JSON 을 통과시켰다
+//   7차 — 외피 스키마만 봤더니 `inputSchema` 가 빠진 도구를 통과시켰다
+//   8차 — 결과 스키마도 `protocolVersion` **값**은 안 본다. SDK 클라이언트는
+//         `SUPPORTED_PROTOCOL_VERSIONS` 포함 여부를 따로 검사한다.
+//
+// 흉내를 정교하게 만드는 건 끝이 없다. **진짜 클라이언트를 한 번 붙여보는 게**
+// 그 부류 전체를 닫는다. 위의 raw 검사는 stdout 순도·생존처럼 클라이언트가
+// 안 보여주는 것을 위해 남긴다.
+const client = new Client({ name: 'verify-dist', version: '0' });
+const transport = new StdioClientTransport({
+	command: binLink,
+	args: [],
+	env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
+	stderr: 'ignore',
+});
+
+try {
+	await client.connect(transport);
+} catch (error: unknown) {
+	fail(
+		`실제 MCP 클라이언트가 붙지 못했습니다 — ${error instanceof Error ? error.message : String(error)}\n` +
+			'   우리 검사는 통과했는데 진짜 클라이언트가 거부했다면, 흉내가 부족한 것입니다.',
+	);
+}
+
+const clientTools = await client.listTools().catch((error: unknown) => {
+	fail(`실제 클라이언트가 도구 목록을 못 받았습니다 — ${String(error)}`);
+});
+await client.close().catch(() => undefined);
+cleanupLink();
+
+if (clientTools.tools.length !== tools.length) {
+	fail(
+		`도구 수가 다릅니다 — raw ${tools.length}개, 실제 클라이언트 ${clientTools.tools.length}개.`,
+	);
+}
+
+// ── dist 의 도구 이름이 소스와 같은지 ─────────────────────────────────────
+//
+// ⚠️ 개수와 크롬 도구 두 이름만 봤더니, `velog_list_posts` → `velog_list_postz` 로
+//    바꿔도 관문이 통과했다(8차 반례). 이름 목록을 여기 적어두면 또 손으로 맞춰야 하니
+//    **소스를 직접 띄워 대조한다.** 발행 시점에는 둘 다 손에 있다.
+const source = new Client({ name: 'verify-dist-source', version: '0' });
+const sourceEntry = fileURLToPath(new URL('src/index.ts', ROOT));
+try {
+	await source.connect(
+		new StdioClientTransport({
+			command: process.execPath,
+			args: [sourceEntry],
+			env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
+			stderr: 'ignore',
+		}),
+	);
+} catch (error: unknown) {
+	fail(`대조용 소스 서버가 안 떴습니다 — ${error instanceof Error ? error.message : String(error)}`);
+}
+const sourceTools = await source.listTools();
+await source.close().catch(() => undefined);
+
+const distNames = clientTools.tools.map((tool) => tool.name).sort();
+const sourceNames = sourceTools.tools.map((tool) => tool.name).sort();
+if (JSON.stringify(distNames) !== JSON.stringify(sourceNames)) {
+	const onlyDist = distNames.filter((n) => !sourceNames.includes(n));
+	const onlySource = sourceNames.filter((n) => !distNames.includes(n));
+	fail(
+		'dist 의 도구 이름이 소스와 다릅니다 — 빌드 산출물이 소스를 반영하지 않았습니다.\n' +
+			`   dist 에만: ${onlyDist.join(', ') || '(없음)'}\n` +
+			`   소스에만: ${onlySource.join(', ') || '(없음)'}`,
+	);
+}
+
 process.stdout.write(
 	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · ` +
-		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존(심볼릭 링크 실행) · 발행물 ${shipped.length}개 개인정보 0건\n`,
+		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존 · **실제 SDK 클라이언트 연결 OK** · 소스와 도구 이름 일치 · 발행물 ${shipped.length}개 개인정보 0건\n`,
 );

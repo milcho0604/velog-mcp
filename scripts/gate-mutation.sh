@@ -24,12 +24,19 @@ GATE=scripts/verify-dist.ts
 BAK=$(mktemp -d)/gate
 mkdir -p "$(dirname "$BAK")"
 
-npm run build >/dev/null 2>&1
 cp "$GATE" "$BAK.ts"
-cp dist/index.js "$BAK.js"
 
-restore() { cp "$BAK.ts" "$GATE"; cp "$BAK.js" dist/index.js; }
+# ⚠️ trap 을 첫 build **뒤에** 걸었더니, 그 build 중 끊기면 관문 파일이 변이된 채 남을
+#    수 있었다. 백업을 먼저 뜨고 trap 을 먼저 건다. orphan 파일도 함께 치운다.
+restore() {
+  cp "$BAK.ts" "$GATE"
+  [ -f "$BAK.js" ] && cp "$BAK.js" dist/index.js
+  rm -f dist/stale-orphan.js
+}
 trap 'restore; rm -rf "$(dirname "$BAK")"' EXIT
+
+npm run build >/dev/null 2>&1 || { echo "  빌드 실패 — 중단"; exit 1; }
+cp dist/index.js "$BAK.js"
 
 # 불량 dist 를 만든다. 인자는 python 조각이며 `s` 를 고친다.
 break_dist() {
@@ -56,8 +63,10 @@ PY
 
 run_gate() { timeout 120 npm run verify:dist >/dev/null 2>&1; echo $?; }
 
-pass=0
+EXPECTED=7
+ran=0
 fail=0
+overlap=0
 
 check() {
   local label="$1" dist_break="$2" gate_find="$3" gate_repl="$4"
@@ -73,15 +82,17 @@ check() {
 
   restore
 
-  if [ "$caught" -ne 0 ] && [ "$slipped" -eq 0 ]; then
-    echo "  OK  $label"
-    pass=$((pass+1))
-  elif [ "$caught" -eq 0 ]; then
-    echo "  X   $label — **온전한 관문이 이 불량을 못 잡는다** (①이 통과)"
+  if [ "$caught" -eq 0 ]; then
+    echo "  X   $label — **온전한 관문이 이 불량을 못 잡는다**"
     fail=$((fail+1))
+    return
+  fi
+  ran=$((ran+1))
+  if [ "$slipped" -eq 0 ]; then
+    echo "  OK  $label — 잡는다 / 이 검사가 유일한 그물"
   else
-    echo "  ~   $label — 검사를 빼도 막힌다 (다른 검사가 겹쳐 잡음, 이 검사는 중복)"
-    fail=$((fail+1))
+    echo "  OK  $label — 잡는다 / 다른 검사와 겹침(더 나은 메시지를 위해 유지)"
+    overlap=$((overlap+1))
   fi
 }
 
@@ -120,6 +131,29 @@ check "낡은 산출물" \
   "if (false) {"
 
 rm -f dist/stale-orphan.js
-echo "── 결과: 통과 ${pass} / 실패 ${fail} ──"
-npm run build >/dev/null 2>&1
+
+# ── 관문이 **검증 대상을 바꾸지 않는지** ────────────────────────────────
+# 한때 관문이 npm 을 흉내내려 `chmod` 를 해서 tarball 모드가 달라졌다.
+cp "$BAK.ts" "$GATE"
+cp "$BAK.js" dist/index.js
+before=$(ls -l dist/index.js | awk '{print $1}')
+timeout 120 npm run verify:dist >/dev/null 2>&1
+after=$(ls -l dist/index.js | awk '{print $1}')
+if [ "$before" = "$after" ]; then
+  echo "  OK  관문이 대상을 바꾸지 않음 ($before)"
+  ran=$((ran+1))
+else
+  echo "  X   관문이 대상을 바꿈 ($before → $after) — 검증이 검증 대상을 바꾸면 안 된다"
+  fail=$((fail+1))
+fi
+
+echo "── 결과: 검사 ${ran}/${EXPECTED} 통과 · 실패 ${fail} · 겹침 ${overlap} ──"
+npm run build >/dev/null 2>&1 || { echo "  마지막 재빌드 실패"; exit 1; }
+
+# ⚠️ `fail == 0` 만 보면 **검사를 통째로 건너뛰어도** 0/0 으로 성공한다(8차 반례).
+#    기대한 개수만큼 실제로 통과했는지 함께 요구한다.
+if [ "$ran" -ne "$EXPECTED" ]; then
+  echo "  실행된 검사가 ${ran}개뿐이다 (기대 ${EXPECTED}) — 검사가 건너뛰어졌다"
+  exit 1
+fi
 [ "$fail" -eq 0 ]

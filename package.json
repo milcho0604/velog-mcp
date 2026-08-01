@@ -28,6 +28,7 @@
     "schema:dump": "node scripts/dump-schema.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build && npm run verify:dist",
     "prepublishOnly": "npm run build && npm run verify:dist"
   },
   "dependencies": {
@@ -37,7 +38,9 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.3",
+    "@types/semver": "^7.7.1",
     "eslint": "^10.8.0",
+    "semver": "^7.8.5",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.65.0"
   },

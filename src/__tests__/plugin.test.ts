@@ -25,6 +25,8 @@ import { spawn, execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
+import { satisfies } from 'semver';
+
 import {
 	looksUnsubstituted,
 	isBlank,
@@ -170,69 +172,22 @@ async function readAllSources(dir: URL): Promise<Array<[string, string]>> {
 }
 
 
+
 /**
- * 최소 semver 범위 판정 — shrinkwrap 이 **호환되는** 버전을 가리키는지 보려고 쓴다.
+ * `integrity` 가 온전한가 — **디코딩된 digest 바이트 수**로 본다.
  *
- * ★ 왜 직접 쓰나 — 이 저장소는 런타임 의존성 2개를 유지한다. 테스트를 위해
- *   `semver` 를 들이는 건 그 규율과 맞바꾸는 일이라, 우리 lock 에 **실제로 나오는
- *   표기만** 처리한다(실측: `^x.y.z` 234 / `x.y.z` 29 / `~x.y.z` 11 / `^x` 2 /
- *   `a || b` 2 / `>= a < b` 1 / `x` 1).
- *
- * ★ 모르는 표기를 만나면 **던진다.** 조용히 true 를 돌려주면 검사가 있는 척만 한다 —
- *   이 저장소에서 그 실수를 여러 번 했다.
+ * ⚠️ 세 번 헐렁했다. `sha512-====` → 문자 길이 요구 → `sha512-A×20` 통과 →
+ *    `sha512-A×88` 통과(디코딩하면 66바이트). base64 **문자 수**는 답이 아니다.
+ *    이 함수를 따로 뺀 이유는 **규칙 자체에 나쁜 값을 먹여 시험하려고**다 —
+ *    실제 lock 만 훑으면 규칙을 느슨하게 되돌려도 안 걸린다(실제로 그랬다).
  */
-function parseVersion(value: string): [number, number, number] {
-	const core = value.split('-')[0] ?? '';
-	const parts = core.split('.').map((n) => Number.parseInt(n, 10));
-	return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
-}
-
-function compare(a: readonly number[], b: readonly number[]): number {
-	for (let i = 0; i < 3; i += 1) {
-		const diff = (a[i] ?? 0) - (b[i] ?? 0);
-		if (diff !== 0) return diff;
-	}
-	return 0;
-}
-
-function satisfiesOne(version: string, range: string): boolean {
-	const v = parseVersion(version);
-	const trimmed = range.trim();
-
-	if (trimmed === '' || trimmed === '*' || trimmed === 'latest') return true;
-
-	const between = /^>=\s*([0-9.]+)\s*<\s*([0-9.]+)$/.exec(trimmed);
-	if (between) {
-		return (
-			compare(v, parseVersion(between[1] as string)) >= 0 &&
-			compare(v, parseVersion(between[2] as string)) < 0
-		);
-	}
-
-	const ranged = /^([\^~]?)v?([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?(?:-[0-9A-Za-z.-]+)?$/.exec(
-		trimmed,
-	);
-	if (!ranged) throw new Error(`처리할 수 없는 버전 표기: ${range}`);
-
-	const [, op, major, minor, patch] = ranged;
-	const low = parseVersion([major, minor ?? '0', patch ?? '0'].join('.'));
-	if (compare(v, low) < 0) return false;
-
-	if (op === '^') {
-		// 0.x 는 마이너가 메이저 노릇을 한다.
-		if (low[0] === 0 && minor !== undefined) return v[0] === 0 && v[1] === low[1];
-		return v[0] === low[0];
-	}
-	if (op === '~') return v[0] === low[0] && (minor === undefined || v[1] === low[1]);
-
-	// 연산자 없음 = 적은 자릿수까지 정확히 일치
-	if (minor === undefined) return v[0] === low[0];
-	if (patch === undefined) return v[0] === low[0] && v[1] === low[1];
-	return compare(v, low) === 0;
-}
-
-function satisfies(version: string, range: string): boolean {
-	return range.split('||').some((alternative) => satisfiesOne(version, alternative));
+export function integrityLooksValid(integrity: string | undefined): boolean {
+	const BYTES: Record<string, number> = { sha256: 32, sha384: 48, sha512: 64 };
+	const [algorithm = '', digest = ''] = (integrity ?? '').split('-');
+	const want = BYTES[algorithm];
+	if (want === undefined) return false;
+	if (!/^[A-Za-z0-9+/]+={0,2}$/.test(digest)) return false;
+	return Buffer.from(digest, 'base64').length === want;
 }
 
 /**
@@ -1094,6 +1049,49 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		await access(new URL('scripts/verify-dist.ts', ROOT), constants.R_OK);
 	});
 
+	test('P23b — 범위 판정을 흉내 내지 않고 실제 semver 를 쓴다', () => {
+		// ⚠️ 최소 semver 를 직접 썼었다. 이 lock 의 (범위,버전) 280쌍과는 전부 일치했지만,
+		//    코덱스가 **lock 에 없는 모양**으로 네 개의 불일치를 찾았다:
+		//      0.0.4 vs ^0.0.3 / prerelease 세 경우.
+		//    "흉내를 정교하게 만드는 건 끝이 없다" — 관문에서 SDK 스키마 대신 **실제
+		//    클라이언트**를 붙인 것과 같은 판단으로, 여기도 실제 `semver` 를 쓴다.
+		//    이 사례들은 그 교체가 되돌아가면 깨지라고 남긴다.
+		for (const [version, range] of [
+			['0.0.4', '^0.0.3'],
+			['1.3.0-beta.1', '^1.2.3'],
+			['1.3.0-beta.1', '>=1.2.3 <2.0.0'],
+			['2.1.0-beta.1', '^1.2.3 || ^2.0.0'],
+		] as const) {
+			assert.equal(satisfies(version, range), false, `${version} 은 ${range} 에 안 맞는다`);
+		}
+
+		// integrity 규칙도 **직접 나쁜 값을 먹여** 시험한다. 실제 lock 만 훑으면
+		// 규칙을 되돌려도 안 걸린다(변이 검증에서 실제로 살아남았다).
+		const realDigest = 'A'.repeat(86) + '=='; // 디코딩하면 정확히 64바이트
+		assert.equal(integrityLooksValid(`sha512-${realDigest}`), true, '정상 sha512 를 거부한다');
+		for (const bad of [
+			undefined,
+			'',
+			'sha512-',
+			'sha512-====',
+			'sha512-AAAAAAAAAAAAAAAAAAAA', // 20자 — 15바이트
+			`sha512-${'A'.repeat(88)}`, // 88자지만 디코딩하면 66바이트
+			`sha256-${realDigest}`, // sha256 인데 64바이트
+			'md5-AAAAAAAAAAAAAAAAAAAAAA==',
+		]) {
+			assert.equal(integrityLooksValid(bad), false, `못 잡았다: ${String(bad)}`);
+		}
+
+		// 맞는 것도 함께 본다 — '무조건 false' 로 바꿔도 통과하면 안 되니까.
+		for (const [version, range] of [
+			['0.0.3', '^0.0.3'],
+			['1.2.4', '^1.2.3'],
+			['8.20.0', '^8.17.1'],
+		] as const) {
+			assert.equal(satisfies(version, range), true, `${version} 은 ${range} 에 맞는다`);
+		}
+	});
+
 	test('P26 — 관문 자체를 검증하는 장치가 저장소에 있다', async () => {
 		// ⚠️ 관문 변이 검증을 한동안 세션 스크래치패드에서만 돌렸다. 코덱스 지적 —
 		//    저장소에 없으면 그 논리를 감사할 수 없고, 관문 회귀가 274개를 그대로 통과한다.
@@ -1106,12 +1104,29 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		assert.match(script, /slipped/, '검사를 빼면 통과하는지 안 본다');
 		assert.match(
 			script,
-			/\[ "\$caught" -ne 0 \] && \[ "\$slipped" -eq 0 \]/,
-			'두 방향을 함께 요구하지 않는다 — 한쪽만 보면 오판한다',
+			/if \[ "\$caught" -eq 0 \]; then/,
+			'①(온전한 관문이 못 잡음)을 실패로 세지 않는다',
+		);
+
+		// ⚠️ `fail == 0` 만 요구하면 **검사를 통째로 건너뛰어도** 0/0 으로 성공한다(8차 반례).
+		//    실제로 몇 개가 돌았는지 함께 요구해야 한다.
+		assert.match(script, /EXPECTED=\d+/, '기대 검사 수를 안 정한다');
+		assert.match(
+			script,
+			/if \[ "\$ran" -ne "\$EXPECTED" \]; then/,
+			'실행된 검사 수를 요구하지 않는다 — 건너뛰어도 성공한다',
 		);
 
 		// 관문의 주요 검사가 전부 대상인지. 하나라도 빠지면 그 검사는 회귀해도 안 걸린다.
-		for (const covered of ['shebang', '외피 스키마', '결과 스키마', '개인정보', '조기 종료', '낡은 산출물']) {
+		for (const covered of [
+			'shebang',
+			'외피 스키마',
+			'결과 스키마',
+			'개인정보',
+			'조기 종료',
+			'낡은 산출물',
+			'대상을 바꾸지 않',
+		]) {
 			assert.ok(script.includes(covered), `관문 변이 목록에 '${covered}' 가 없다`);
 		}
 	});
@@ -1157,13 +1172,7 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			const entry = packages[key];
 			// 정확한 버전만 인정한다 — 끝을 고정하지 않으면 `9.9.9-not-real` 도 통과한다.
 			if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(entry?.version ?? '')) return true;
-			// ⚠️ 두 번 헐렁했다. `sha512-====` → 길이를 요구했더니 이번엔
-			//    `sha512-AAAAAAAAAAAAAAAAAAAA`(20자) 가 통과했다(7차 반례).
-			//    **알고리즘별 실제 digest 길이**를 못 박는다(base64, 패딩 포함).
-			const DIGEST: Record<string, number> = { sha256: 44, sha384: 64, sha512: 88 };
-			const [algorithm = '', digest = ''] = (entry?.integrity ?? '').split('-');
-			if (DIGEST[algorithm] !== digest.length) return true;
-			return !/^[A-Za-z0-9+/]+={0,2}$/.test(digest);
+			return !integrityLooksValid(entry?.integrity);
 		});
 		assert.deepEqual(broken, [], `버전이나 integrity 가 온전치 않은 항목이 있다`);
 

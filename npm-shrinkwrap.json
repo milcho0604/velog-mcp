@@ -18,7 +18,9 @@
       "devDependencies": {
         "@eslint/js": "^10.0.1",
         "@types/node": "^24.13.3",
+        "@types/semver": "^7.7.1",
         "eslint": "^10.8.0",
+        "semver": "^7.8.5",
         "typescript": "^5.9.3",
         "typescript-eslint": "^8.65.0"
       },
@@ -302,6 +304,13 @@
       "dependencies": {
         "undici-types": "~7.18.0"
       }
+    },
+    "node_modules/@types/semver": {
+      "version": "7.7.1",
+      "resolved": "https://registry.npmjs.org/@types/semver/-/semver-7.7.1.tgz",
+      "integrity": "sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA==",
+      "dev": true,
+      "license": "MIT"
     },
     "node_modules/@typescript-eslint/eslint-plugin": {
       "version": "8.65.0",
