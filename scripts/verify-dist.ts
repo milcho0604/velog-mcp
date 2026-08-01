@@ -196,7 +196,9 @@ function describeIssues(issues: ReadonlyArray<{ path: PropertyKey[]; message: st
 
 function fail(message: string): never {
 	process.stderr.write(`\n❌ 발행 중단 — ${message}\n`);
-	process.exit(1);
+	// ⚠️ exit 1 은 node 크래시(구문 오류·미처리 예외)와 구분이 안 된다 — 관문 변이
+	//    검증이 "검사가 잡았다"와 "관문이 죽었다"를 가르려면 코드가 달라야 한다.
+	process.exit(2);
 }
 
 const pkg = JSON.parse(await readFile(new URL('package.json', ROOT), 'utf8')) as {
@@ -423,16 +425,27 @@ async function toolsVia(
 //       `VELOG_ALLOW_PUBLIC=1` 에서 달라지는 `is_private` 스키마는 아무도 안
 //       봤다(9차 반례 — 그 산출물이 깨져도 관문이 통과한다). → **옵션을 켠 모드도
 //       똑같이 대조한다.** 이름 집합만이 아니라 도구 스냅샷(스키마 포함) 전체를 본다.
+//    ③ {0,0}·{1,1} 두 조합만 봤더니, dist 가 조건을 `PUBLIC` 대신 `PROFILE || PUBLIC`
+//       으로 잘못 계산해도 두 조합에서는 소스와 같아 통과한다(9차 반영 검토 반례).
+//       독립 플래그는 **네 조합 전부** 돈다.
 const sourceEntry = fileURLToPath(new URL('src/index.ts', ROOT));
-const MODES: ReadonlyArray<[string, Record<string, string>]> = [
-	['기본', {}],
+const OPTION_MODES: ReadonlyArray<[string, Record<string, string>]> = [
+	['프로필만', { VELOG_ALLOW_PROFILE: '1' }],
+	['공개만', { VELOG_ALLOW_PUBLIC: '1' }],
 	['모든 옵션', { VELOG_ALLOW_PROFILE: '1', VELOG_ALLOW_PUBLIC: '1' }],
 ];
-let defaultDistCount = 0;
+const MODES: ReadonlyArray<[string, Record<string, string>]> = [
+	['기본', {}],
+	...OPTION_MODES,
+];
 for (const [mode, extraEnv] of MODES) {
 	const distTools = await toolsVia(`dist(${mode})`, binLink, [], extraEnv);
 	const srcTools = await toolsVia(`소스(${mode})`, process.execPath, [sourceEntry], extraEnv);
-	if (mode === '기본') defaultDistCount = distTools.length;
+	// 개수 대조는 실제 클라이언트 다리의 일부다 — 루프 밖에 두면, 관문 변이가
+	// 루프를 비웠을 때 이 검사만 남아 "정상 dist 도 막는 깨진 변이 관문"이 된다.
+	if (mode === '기본' && distTools.length !== tools.length) {
+		fail(`도구 수가 다릅니다 — raw ${tools.length}개, 실제 클라이언트 ${distTools.length}개.`);
+	}
 
 	const distNames = distTools.map((tool) => tool.name);
 	const srcNames = srcTools.map((tool) => tool.name);
@@ -456,10 +469,6 @@ for (const [mode, extraEnv] of MODES) {
 	}
 }
 cleanupLink();
-
-if (defaultDistCount !== tools.length) {
-	fail(`도구 수가 다릅니다 — raw ${tools.length}개, 실제 클라이언트 ${defaultDistCount}개.`);
-}
 
 process.stdout.write(
 	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · ` +

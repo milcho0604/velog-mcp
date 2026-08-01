@@ -351,7 +351,7 @@ npm run schema:dump   # dump Velog's current GraphQL schema
 packaging ones (P1–P26) — if any fails, find out why instead of working around it.
 
 Every guard here was checked by **breaking it on purpose**: 54 mutations against the
-source, plus 11 against the publish gate itself (`scripts/gate-mutation.sh`), each of
+source, plus 12 against the publish gate itself (`scripts/gate-mutation.sh`), each of
 which must make exactly one check fail. A test that still passes with the guard removed
 is not a test. Several in this repo did pass at first, and that is how they got fixed.
 

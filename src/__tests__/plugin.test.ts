@@ -1140,15 +1140,26 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			'소스 대조: 스냅샷 드리프트',
 			'실제 클라이언트 (protocolVersion)',
 			'조건부 모드 (ALLOW_PROFILE)',
+			'조건부 모드 (ALLOW_PUBLIC)',
 		]) {
 			assert.ok(script.includes(covered), `관문 변이 목록에 '${covered}' 가 없다`);
 		}
 
-		// timeout(124)·명령 부재(127)를 '잡았다'로 세면 관문이 매달려도 초록이다(9차 반례).
+		// timeout(124)·명령 부재(127)·node 크래시(1)를 '잡았다'로 세면 관문이 매달리거나
+		// 죽어도 초록이다(9차 + 반영 검토 반례). fail() 은 exit 2 로 구분한다.
 		assert.match(
 			script,
-			/if \[ "\$caught" -ne 1 \]; then/,
-			'관문 실패(exit 1)와 실행 이상(124·127)을 구분하지 않는다',
+			/if \[ "\$caught" -ne "\$GATE_FAIL" \]; then/,
+			'관문 실패(GATE_FAIL=2)와 실행 이상(1·124·127)을 구분하지 않는다',
+		);
+		assert.match(script, /GATE_FAIL=2/, '관문 실패 코드가 크래시(1)와 같아 구분 불가다');
+
+		// 변이 관문이 **정상 dist 를 통과시키는지** 기준선을 안 보면, 관문을 파괴하는
+		// 변이도 '겹침' 으로 오판한다(9차 반영 검토 반례 — protocolVersion 이 그랬다).
+		assert.match(
+			script,
+			/if \[ "\$sane" -ne 0 \]; then/,
+			'변이 관문의 정상 dist 기준선을 확인하지 않는다 — 관문 파괴를 겹침으로 오판한다',
 		);
 	});
 
