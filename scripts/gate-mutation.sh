@@ -61,9 +61,13 @@ p.write_text(s.replace(sys.argv[1], sys.argv[2], 1))
 PY
 }
 
+# ⚠️ 종료코드를 **정확히** 본다. 관문의 fail() 은 exit 1 이고 npm run 은 그 코드를
+#    그대로 전파한다(실측: exit 3 스크립트 → rc=3). 한때 `caught != 0` 이면 전부
+#    "잡았다"로 셌는데, 그러면 timeout(124)·timeout 명령 부재(127)·관문 크래시도
+#    성공으로 둔갑한다 — 관문 전체가 매달려도 7/7 통과가 된다(9차 반례).
 run_gate() { timeout 120 npm run verify:dist >/dev/null 2>&1; echo $?; }
 
-EXPECTED=7
+EXPECTED=11
 ran=0
 fail=0
 overlap=0
@@ -84,6 +88,16 @@ check() {
 
   if [ "$caught" -eq 0 ]; then
     echo "  X   $label — **온전한 관문이 이 불량을 못 잡는다**"
+    fail=$((fail+1))
+    return
+  fi
+  if [ "$caught" -ne 1 ]; then
+    echo "  X   $label — 관문 실행 이상(rc=$caught) — timeout·실행실패는 '잡았다'가 아니다"
+    fail=$((fail+1))
+    return
+  fi
+  if [ "$slipped" -ne 0 ] && [ "$slipped" -ne 1 ]; then
+    echo "  X   $label — 변이 관문 실행 이상(rc=$slipped) — 판정 불가"
     fail=$((fail+1))
     return
   fi
@@ -132,14 +146,55 @@ check "낡은 산출물" \
 
 rm -f dist/stale-orphan.js
 
+# ── 9차에서 추가된 관문 2종 + 조건부 분기도 변이 대상에 넣는다 ──────────────
+# ⚠️ 8차의 핵심 수정(실제 클라이언트·소스 대조)이 정작 여기 없었다(9차 반례).
+#    "이름 집합→개수" 로 약화하거나 실제 클라이언트를 우회해도 7/7 이 그대로였다.
+
+# 소스 대조(이름): tools/list 응답에서 velog_whoami 를 개수 그대로 개명한 dist.
+# 관문을 "집합 동일→개수 동일"로 약화하면 이 개명이 안 잡혀야 정상.
+check "소스 대조: 이름 약화" \
+  "inject = 'await server.connect(new StdioServerTransport());' + chr(10) + '    { const w = process.stdout.write.bind(process.stdout); process.stdout.write = (c, ...a) => { try { const o = JSON.parse(String(c)); if (o?.result?.tools) { o.result.tools = o.result.tools.map(t => t.name === \"velog_whoami\" ? {...t, name: \"velog_whoamz\"} : t); return w(JSON.stringify(o) + String.fromCharCode(10), ...a); } } catch {} return w(c, ...a); }; }'
+s = s.replace('await server.connect(new StdioServerTransport());', inject)" \
+  "	if (JSON.stringify(distNames) !== JSON.stringify(srcNames)) {" \
+  "	if (distNames.length !== srcNames.length) {"
+
+# 소스 대조(스냅샷): 이름·개수는 그대로 두고 설명만 바꾼 dist.
+# 스냅샷(스키마·설명) 대조를 없애면 이 드리프트를 아무도 못 잡아야 정상.
+check "소스 대조: 스냅샷 드리프트" \
+  "inject = 'await server.connect(new StdioServerTransport());' + chr(10) + '    { const w = process.stdout.write.bind(process.stdout); process.stdout.write = (c, ...a) => { try { const o = JSON.parse(String(c)); if (o?.result?.tools) { o.result.tools = o.result.tools.map(t => t.name === \"velog_whoami\" ? {...t, description: (t.description || \"\") + \" X\"} : t); return w(JSON.stringify(o) + String.fromCharCode(10), ...a); } } catch {} return w(c, ...a); }; }'
+s = s.replace('await server.connect(new StdioServerTransport());', inject)" \
+  "	if (drifted.length > 0) {" \
+  "	if (false) {"
+
+# 실제 클라이언트: 지원하지 않는 protocolVersion 을 돌려주는 dist.
+# 외피·결과 스키마는 값을 안 보므로, 실제 SDK 클라이언트 연결만 이걸 잡는다.
+check "실제 클라이언트 (protocolVersion)" \
+  "inject = 'await server.connect(new StdioServerTransport());' + chr(10) + '    { const w = process.stdout.write.bind(process.stdout); process.stdout.write = (c, ...a) => { try { const o = JSON.parse(String(c)); if (o?.result?.protocolVersion) { o.result.protocolVersion = \"1999-01-01\"; return w(JSON.stringify(o) + String.fromCharCode(10), ...a); } } catch {} return w(c, ...a); }; }'
+s = s.replace('await server.connect(new StdioServerTransport());', inject)" \
+  "for (const [mode, extraEnv] of MODES) {" \
+  "for (const [mode, extraEnv] of [] as typeof MODES) {"
+
+# 조건부 모드: VELOG_ALLOW_PROFILE=1 일 때**만** 깨지는 dist.
+# '모든 옵션' 모드를 관문에서 빼면 이 불량은 기본 분기만 봐서는 영원히 못 잡는다 —
+# 9차 발견 1(조건부 도구가 대조에서 빠짐)을 정확히 재현하는 변이다.
+check "조건부 모드 (ALLOW_PROFILE)" \
+  "inject = 'await server.connect(new StdioServerTransport());' + chr(10) + '    if (process.env.VELOG_ALLOW_PROFILE === \"1\") { const w = process.stdout.write.bind(process.stdout); process.stdout.write = (c, ...a) => { try { const o = JSON.parse(String(c)); if (o?.result?.tools) { o.result.tools = o.result.tools.map(t => t.name === \"velog_update_profile\" ? {...t, name: \"velog_update_profilz\"} : t); return w(JSON.stringify(o) + String.fromCharCode(10), ...a); } } catch {} return w(c, ...a); }; }'
+s = s.replace('await server.connect(new StdioServerTransport());', inject)" \
+  "	['모든 옵션', { VELOG_ALLOW_PROFILE: '1', VELOG_ALLOW_PUBLIC: '1' }]," \
+  ""
+
 # ── 관문이 **검증 대상을 바꾸지 않는지** ────────────────────────────────
 # 한때 관문이 npm 을 흉내내려 `chmod` 를 해서 tarball 모드가 달라졌다.
+# ⚠️ 여기서도 rc 를 본다 — 관문이 아예 안 돌았으면(127 등) 모드가 같은 건 당연하다.
 cp "$BAK.ts" "$GATE"
 cp "$BAK.js" dist/index.js
 before=$(ls -l dist/index.js | awk '{print $1}')
-timeout 120 npm run verify:dist >/dev/null 2>&1
+clean_rc=$(run_gate)
 after=$(ls -l dist/index.js | awk '{print $1}')
-if [ "$before" = "$after" ]; then
+if [ "$clean_rc" -ne 0 ]; then
+  echo "  X   온전한 관문이 온전한 dist 를 통과 못 시킴(rc=$clean_rc) — 기준선 자체가 깨짐"
+  fail=$((fail+1))
+elif [ "$before" = "$after" ]; then
   echo "  OK  관문이 대상을 바꾸지 않음 ($before)"
   ran=$((ran+1))
 else

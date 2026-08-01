@@ -346,13 +346,14 @@ npm run build         # tsconfig.build.json (tests excluded from dist)
 npm run schema:dump   # dump Velog's current GraphQL schema
 ```
 
-234 tests. `src/__tests__/safety.test.ts` pins the security invariants (A1–A11) and
-`render.test.ts` pins the drawing ones (R1–R23) — if either fails, find out why instead
-of working around it.
+276 tests. `src/__tests__/safety.test.ts` pins the security invariants (A1–A11),
+`render.test.ts` pins the drawing ones (R1–R23), and `plugin.test.ts` pins the
+packaging ones (P1–P26) — if any fails, find out why instead of working around it.
 
-Every guard here was checked by **breaking it on purpose**: 20 mutations, each of which
-must make exactly one test fail. A test that still passes with the guard removed is not
-a test. Several in this repo did pass at first, and that is how they got fixed.
+Every guard here was checked by **breaking it on purpose**: 54 mutations against the
+source, plus 11 against the publish gate itself (`scripts/gate-mutation.sh`), each of
+which must make exactly one check fail. A test that still passes with the guard removed
+is not a test. Several in this repo did pass at first, and that is how they got fixed.
 
 ## Documentation
 

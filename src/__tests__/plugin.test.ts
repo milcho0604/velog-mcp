@@ -183,7 +183,13 @@ async function readAllSources(dir: URL): Promise<Array<[string, string]>> {
  */
 export function integrityLooksValid(integrity: string | undefined): boolean {
 	const BYTES: Record<string, number> = { sha256: 32, sha384: 48, sha512: 64 };
-	const [algorithm = '', digest = ''] = (integrity ?? '').split('-');
+	// ⚠️ `split('-')` 의 첫 두 조각만 쓰면 두 번째 `-` 뒤가 **조용히 버려진다** —
+	//    `sha512-<정상digest>-garbage` 가 통과했다(9차 반례, ssri strict 는 거부).
+	//    첫 `-` 에서만 가르고 나머지 전부를 digest 로 본다.
+	const raw = integrity ?? '';
+	const cut = raw.indexOf('-');
+	const algorithm = cut === -1 ? '' : raw.slice(0, cut);
+	const digest = cut === -1 ? '' : raw.slice(cut + 1);
 	const want = BYTES[algorithm];
 	if (want === undefined) return false;
 	if (!/^[A-Za-z0-9+/]+={0,2}$/.test(digest)) return false;
@@ -1078,6 +1084,8 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			`sha512-${'A'.repeat(88)}`, // 88자지만 디코딩하면 66바이트
 			`sha256-${realDigest}`, // sha256 인데 64바이트
 			'md5-AAAAAAAAAAAAAAAAAAAAAA==',
+			`sha512-${realDigest}-garbage`, // 정상 digest 뒤에 꼬리 — ssri strict 는 거부한다
+
 		]) {
 			assert.equal(integrityLooksValid(bad), false, `못 잡았다: ${String(bad)}`);
 		}
@@ -1118,6 +1126,8 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		);
 
 		// 관문의 주요 검사가 전부 대상인지. 하나라도 빠지면 그 검사는 회귀해도 안 걸린다.
+		// ⚠️ 8차의 핵심 수정(실제 클라이언트·소스 대조)이 정작 이 목록에 없었다(9차 반례) —
+		//    그 관문을 약화해도 변이 검증이 계속 초록이었다. 새 검사를 넣으면 여기도 넣는다.
 		for (const covered of [
 			'shebang',
 			'외피 스키마',
@@ -1126,9 +1136,20 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			'조기 종료',
 			'낡은 산출물',
 			'대상을 바꾸지 않',
+			'소스 대조: 이름 약화',
+			'소스 대조: 스냅샷 드리프트',
+			'실제 클라이언트 (protocolVersion)',
+			'조건부 모드 (ALLOW_PROFILE)',
 		]) {
 			assert.ok(script.includes(covered), `관문 변이 목록에 '${covered}' 가 없다`);
 		}
+
+		// timeout(124)·명령 부재(127)를 '잡았다'로 세면 관문이 매달려도 초록이다(9차 반례).
+		assert.match(
+			script,
+			/if \[ "\$caught" -ne 1 \]; then/,
+			'관문 실패(exit 1)와 실행 이상(124·127)을 구분하지 않는다',
+		);
 	});
 
 	test('P23 — 의존성 트리 전체를 고정해서 발행한다', async () => {

@@ -369,70 +369,100 @@ if (orphans.length > 0) {
 // 흉내를 정교하게 만드는 건 끝이 없다. **진짜 클라이언트를 한 번 붙여보는 게**
 // 그 부류 전체를 닫는다. 위의 raw 검사는 stdout 순도·생존처럼 클라이언트가
 // 안 보여주는 것을 위해 남긴다.
-const client = new Client({ name: 'verify-dist', version: '0' });
-const transport = new StdioClientTransport({
-	command: binLink,
-	args: [],
-	env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
-	stderr: 'ignore',
-});
 
-try {
-	await client.connect(transport);
-} catch (error: unknown) {
-	fail(
-		`실제 MCP 클라이언트가 붙지 못했습니다 — ${error instanceof Error ? error.message : String(error)}\n` +
-			'   우리 검사는 통과했는데 진짜 클라이언트가 거부했다면, 흉내가 부족한 것입니다.',
-	);
+/** 키 순서에 흔들리지 않게 정렬해서 찍는다 — 스키마 비교용. */
+function canonical(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+	if (value !== null && typeof value === 'object') {
+		const entries = Object.entries(value as Record<string, unknown>)
+			.filter(([, v]) => v !== undefined)
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`);
+		return `{${entries.join(',')}}`;
+	}
+	return JSON.stringify(value);
 }
 
-const clientTools = await client.listTools().catch((error: unknown) => {
-	fail(`실제 클라이언트가 도구 목록을 못 받았습니다 — ${String(error)}`);
-});
-await client.close().catch(() => undefined);
+async function toolsVia(
+	label: string,
+	command: string,
+	args: string[],
+	extraEnv: Record<string, string>,
+): Promise<Array<{ name: string; snapshot: string }>> {
+	const probe = new Client({ name: 'verify-dist', version: '0' });
+	try {
+		await probe.connect(
+			new StdioClientTransport({
+				command,
+				args,
+				env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '', ...extraEnv },
+				stderr: 'ignore',
+			}),
+		);
+	} catch (error: unknown) {
+		fail(
+			`실제 MCP 클라이언트가 ${label} 에 붙지 못했습니다 — ${error instanceof Error ? error.message : String(error)}\n` +
+				'   우리 검사는 통과했는데 진짜 클라이언트가 거부했다면, 흉내가 부족한 것입니다.',
+		);
+	}
+	const listed = await probe.listTools().catch((error: unknown) => {
+		fail(`실제 클라이언트가 ${label} 의 도구 목록을 못 받았습니다 — ${String(error)}`);
+	});
+	await probe.close().catch(() => undefined);
+	return listed.tools
+		.map((tool) => ({ name: tool.name, snapshot: canonical(tool) }))
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ── dist 가 소스와 같은지 — **이름만이 아니라 스키마까지, 조건부 분기까지** ──
+//
+// ⚠️ 두 번 좁았다.
+//    ① 개수와 크롬 도구 두 이름만 봤더니 `velog_list_posts` → `velog_list_postz` 로
+//       바꿔도 통과했다(8차 반례). → 소스를 직접 띄워 이름을 대조한다.
+//    ② 기본 분기만 봤더니 `VELOG_ALLOW_PROFILE=1` 에서만 등록되는 5개 도구와
+//       `VELOG_ALLOW_PUBLIC=1` 에서 달라지는 `is_private` 스키마는 아무도 안
+//       봤다(9차 반례 — 그 산출물이 깨져도 관문이 통과한다). → **옵션을 켠 모드도
+//       똑같이 대조한다.** 이름 집합만이 아니라 도구 스냅샷(스키마 포함) 전체를 본다.
+const sourceEntry = fileURLToPath(new URL('src/index.ts', ROOT));
+const MODES: ReadonlyArray<[string, Record<string, string>]> = [
+	['기본', {}],
+	['모든 옵션', { VELOG_ALLOW_PROFILE: '1', VELOG_ALLOW_PUBLIC: '1' }],
+];
+let defaultDistCount = 0;
+for (const [mode, extraEnv] of MODES) {
+	const distTools = await toolsVia(`dist(${mode})`, binLink, [], extraEnv);
+	const srcTools = await toolsVia(`소스(${mode})`, process.execPath, [sourceEntry], extraEnv);
+	if (mode === '기본') defaultDistCount = distTools.length;
+
+	const distNames = distTools.map((tool) => tool.name);
+	const srcNames = srcTools.map((tool) => tool.name);
+	if (JSON.stringify(distNames) !== JSON.stringify(srcNames)) {
+		const onlyDist = distNames.filter((n) => !srcNames.includes(n));
+		const onlySource = srcNames.filter((n) => !distNames.includes(n));
+		fail(
+			`[${mode}] dist 의 도구 이름이 소스와 다릅니다 — 빌드 산출물이 소스를 반영하지 않았습니다.\n` +
+				`   dist 에만: ${onlyDist.join(', ') || '(없음)'}\n` +
+				`   소스에만: ${onlySource.join(', ') || '(없음)'}`,
+		);
+	}
+	const drifted = distTools.filter(
+		(tool, i) => tool.snapshot !== (srcTools[i]?.snapshot ?? ''),
+	);
+	if (drifted.length > 0) {
+		fail(
+			`[${mode}] dist 도구의 스키마·설명이 소스와 다릅니다(${drifted.length}개): ` +
+				`${drifted.map((t) => t.name).join(', ')}\n   빌드 산출물이 낡았거나 손이 탔습니다.`,
+		);
+	}
+}
 cleanupLink();
 
-if (clientTools.tools.length !== tools.length) {
-	fail(
-		`도구 수가 다릅니다 — raw ${tools.length}개, 실제 클라이언트 ${clientTools.tools.length}개.`,
-	);
-}
-
-// ── dist 의 도구 이름이 소스와 같은지 ─────────────────────────────────────
-//
-// ⚠️ 개수와 크롬 도구 두 이름만 봤더니, `velog_list_posts` → `velog_list_postz` 로
-//    바꿔도 관문이 통과했다(8차 반례). 이름 목록을 여기 적어두면 또 손으로 맞춰야 하니
-//    **소스를 직접 띄워 대조한다.** 발행 시점에는 둘 다 손에 있다.
-const source = new Client({ name: 'verify-dist-source', version: '0' });
-const sourceEntry = fileURLToPath(new URL('src/index.ts', ROOT));
-try {
-	await source.connect(
-		new StdioClientTransport({
-			command: process.execPath,
-			args: [sourceEntry],
-			env: { PATH: process.env['PATH'] ?? '', HOME: process.env['HOME'] ?? '' },
-			stderr: 'ignore',
-		}),
-	);
-} catch (error: unknown) {
-	fail(`대조용 소스 서버가 안 떴습니다 — ${error instanceof Error ? error.message : String(error)}`);
-}
-const sourceTools = await source.listTools();
-await source.close().catch(() => undefined);
-
-const distNames = clientTools.tools.map((tool) => tool.name).sort();
-const sourceNames = sourceTools.tools.map((tool) => tool.name).sort();
-if (JSON.stringify(distNames) !== JSON.stringify(sourceNames)) {
-	const onlyDist = distNames.filter((n) => !sourceNames.includes(n));
-	const onlySource = sourceNames.filter((n) => !distNames.includes(n));
-	fail(
-		'dist 의 도구 이름이 소스와 다릅니다 — 빌드 산출물이 소스를 반영하지 않았습니다.\n' +
-			`   dist 에만: ${onlyDist.join(', ') || '(없음)'}\n` +
-			`   소스에만: ${onlySource.join(', ') || '(없음)'}`,
-	);
+if (defaultDistCount !== tools.length) {
+	fail(`도구 수가 다릅니다 — raw ${tools.length}개, 실제 클라이언트 ${defaultDistCount}개.`);
 }
 
 process.stdout.write(
 	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · ` +
-		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존 · **실제 SDK 클라이언트 연결 OK** · 소스와 도구 이름 일치 · 발행물 ${shipped.length}개 개인정보 0건\n`,
+		`stdout 순수 · ${String(WATCH_MS / 1000)}초 생존 · **실제 SDK 클라이언트 연결 OK** · ` +
+		`소스와 도구 스냅샷 일치(기본·모든 옵션) · 발행물 ${shipped.length}개 개인정보 0건\n`,
 );
