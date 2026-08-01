@@ -169,6 +169,72 @@ async function readAllSources(dir: URL): Promise<Array<[string, string]>> {
 	return out;
 }
 
+
+/**
+ * 최소 semver 범위 판정 — shrinkwrap 이 **호환되는** 버전을 가리키는지 보려고 쓴다.
+ *
+ * ★ 왜 직접 쓰나 — 이 저장소는 런타임 의존성 2개를 유지한다. 테스트를 위해
+ *   `semver` 를 들이는 건 그 규율과 맞바꾸는 일이라, 우리 lock 에 **실제로 나오는
+ *   표기만** 처리한다(실측: `^x.y.z` 234 / `x.y.z` 29 / `~x.y.z` 11 / `^x` 2 /
+ *   `a || b` 2 / `>= a < b` 1 / `x` 1).
+ *
+ * ★ 모르는 표기를 만나면 **던진다.** 조용히 true 를 돌려주면 검사가 있는 척만 한다 —
+ *   이 저장소에서 그 실수를 여러 번 했다.
+ */
+function parseVersion(value: string): [number, number, number] {
+	const core = value.split('-')[0] ?? '';
+	const parts = core.split('.').map((n) => Number.parseInt(n, 10));
+	return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+}
+
+function compare(a: readonly number[], b: readonly number[]): number {
+	for (let i = 0; i < 3; i += 1) {
+		const diff = (a[i] ?? 0) - (b[i] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	return 0;
+}
+
+function satisfiesOne(version: string, range: string): boolean {
+	const v = parseVersion(version);
+	const trimmed = range.trim();
+
+	if (trimmed === '' || trimmed === '*' || trimmed === 'latest') return true;
+
+	const between = /^>=\s*([0-9.]+)\s*<\s*([0-9.]+)$/.exec(trimmed);
+	if (between) {
+		return (
+			compare(v, parseVersion(between[1] as string)) >= 0 &&
+			compare(v, parseVersion(between[2] as string)) < 0
+		);
+	}
+
+	const ranged = /^([\^~]?)v?([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?(?:-[0-9A-Za-z.-]+)?$/.exec(
+		trimmed,
+	);
+	if (!ranged) throw new Error(`처리할 수 없는 버전 표기: ${range}`);
+
+	const [, op, major, minor, patch] = ranged;
+	const low = parseVersion([major, minor ?? '0', patch ?? '0'].join('.'));
+	if (compare(v, low) < 0) return false;
+
+	if (op === '^') {
+		// 0.x 는 마이너가 메이저 노릇을 한다.
+		if (low[0] === 0 && minor !== undefined) return v[0] === 0 && v[1] === low[1];
+		return v[0] === low[0];
+	}
+	if (op === '~') return v[0] === low[0] && (minor === undefined || v[1] === low[1]);
+
+	// 연산자 없음 = 적은 자릿수까지 정확히 일치
+	if (minor === undefined) return v[0] === low[0];
+	if (patch === undefined) return v[0] === low[0] && v[1] === low[1];
+	return compare(v, low) === 0;
+}
+
+function satisfies(version: string, range: string): boolean {
+	return range.split('||').some((alternative) => satisfiesOne(version, alternative));
+}
+
 /**
  * ★ 실측한 모양 그대로 쓴다 (Claude Code 2.1.220, `--plugin-dir`, 값 미입력)
  *
@@ -863,6 +929,8 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		const win = ['C:', 'Users', who, 'dev'].join('\\');
 
 		assert.notEqual(macos[1].exec(posix('Users')), null, 'macOS 홈 경로를 놓쳤다');
+		// 이 기계에서는 `/users/...` 도 실제 홈 경로로 해석된다(대소문자 무시 파일시스템).
+		assert.notEqual(macos[1].exec(posix('users')), null, '소문자 users 를 놓쳤다');
 		assert.notEqual(linux[1].exec(posix('home')), null, '리눅스 홈 경로를 놓쳤다');
 		assert.notEqual(windows[1].exec(win), null, '윈도우 홈 경로를 놓쳤다');
 
@@ -957,9 +1025,10 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			// ⚠️ named import 만 보면 `import * as R` 이나 동적 import 를 못 본다(6차).
 			//    그런 경로는 **이 검사가 감당 못 한다**는 뜻이므로 조용히 넘기지 않고 실패시킨다.
 			for (const [shape, pattern] of [
-				['namespace import', /import\s+\*\s+as\s+\w+\s+from\s*'[^']*render\/index\.ts'/],
-				['동적 import', /import\s*\(\s*'[^']*render\/index\.ts'\s*\)/],
-				['re-export', /export\s*\*\s*from\s*'[^']*render\/index\.ts'/],
+				// ⚠️ 작은따옴표만 보다가 큰따옴표 변형을 놓쳤다(7차). 둘 다 본다.
+				['namespace import', /import\s+\*\s+as\s+\w+\s+from\s*['"][^'"]*render\/index\.ts['"]/],
+				['동적 import', /import\s*\(\s*['"][^'"]*render\/index\.ts['"]\s*\)/],
+				['re-export', /export\s*\*\s*from\s*['"][^'"]*render\/index\.ts['"]/],
 			] as const) {
 				assert.equal(
 					pattern.test(code),
@@ -969,7 +1038,7 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 				);
 			}
 
-			const importBlock = /import\s*\{([^}]*)\}\s*from\s*'[^']*render\/index\.ts'/s.exec(code);
+			const importBlock = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*render\/index\.ts['"]/s.exec(code);
 			const localNames = (importBlock?.[1] ?? '')
 				.split(',')
 				.map((part) => part.trim())
@@ -1025,6 +1094,28 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		await access(new URL('scripts/verify-dist.ts', ROOT), constants.R_OK);
 	});
 
+	test('P26 — 관문 자체를 검증하는 장치가 저장소에 있다', async () => {
+		// ⚠️ 관문 변이 검증을 한동안 세션 스크래치패드에서만 돌렸다. 코덱스 지적 —
+		//    저장소에 없으면 그 논리를 감사할 수 없고, 관문 회귀가 274개를 그대로 통과한다.
+		//    그리고 그때는 **한 방향만** 봤다: 검사를 빼서 불량이 통과하는지.
+		//    그것만으로는 **원래 관문도 그 불량을 못 잡던 경우**를 구분 못 한다.
+		const script = await readFile(new URL('scripts/gate-mutation.sh', ROOT), 'utf8');
+
+		// 양방향을 다 보는지 — 온전한 관문이 막는지(①)와 검사를 빼면 통과하는지(②).
+		assert.match(script, /caught/, '온전한 관문이 불량을 막는지 안 본다');
+		assert.match(script, /slipped/, '검사를 빼면 통과하는지 안 본다');
+		assert.match(
+			script,
+			/\[ "\$caught" -ne 0 \] && \[ "\$slipped" -eq 0 \]/,
+			'두 방향을 함께 요구하지 않는다 — 한쪽만 보면 오판한다',
+		);
+
+		// 관문의 주요 검사가 전부 대상인지. 하나라도 빠지면 그 검사는 회귀해도 안 걸린다.
+		for (const covered of ['shebang', '외피 스키마', '결과 스키마', '개인정보', '조기 종료', '낡은 산출물']) {
+			assert.ok(script.includes(covered), `관문 변이 목록에 '${covered}' 가 없다`);
+		}
+	});
+
 	test('P23 — 의존성 트리 전체를 고정해서 발행한다', async () => {
 		// 코덱스 지적: `@milcho0604/velog-mcp@0.4.0` 을 정확히 핀해도 **그 안의 의존성은
 		// 안 고정된다**(`^1.30.0`, `^4.4.3`). 나중 콜드 설치는 같은 0.4.0 이어도 더 새
@@ -1066,9 +1157,13 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			const entry = packages[key];
 			// 정확한 버전만 인정한다 — 끝을 고정하지 않으면 `9.9.9-not-real` 도 통과한다.
 			if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(entry?.version ?? '')) return true;
-			// ⚠️ `sha512-A` 나 `sha512-====` 도 통과하던 정규식이었다(코덱스 6차).
-			//    해시 길이를 요구하고, npm 이 쓸 수 있는 세 종류를 다 받는다.
-			return !/^sha(?:256|384|512)-[A-Za-z0-9+/]{20,}={0,2}$/.test(entry?.integrity ?? '');
+			// ⚠️ 두 번 헐렁했다. `sha512-====` → 길이를 요구했더니 이번엔
+			//    `sha512-AAAAAAAAAAAAAAAAAAAA`(20자) 가 통과했다(7차 반례).
+			//    **알고리즘별 실제 digest 길이**를 못 박는다(base64, 패딩 포함).
+			const DIGEST: Record<string, number> = { sha256: 44, sha384: 64, sha512: 88 };
+			const [algorithm = '', digest = ''] = (entry?.integrity ?? '').split('-');
+			if (DIGEST[algorithm] !== digest.length) return true;
+			return !/^[A-Za-z0-9+/]+={0,2}$/.test(digest);
 		});
 		assert.deepEqual(broken, [], `버전이나 integrity 가 온전치 않은 항목이 있다`);
 
@@ -1082,13 +1177,21 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 
 		// ★ 전이 의존성까지 **풀리는지** 본다. 개수만 세면 `ajv` 를 지워도 92개라 통과한다.
 		//   node_modules 해석 규칙대로 위로 올라가며 찾는다.
-		const resolves = (fromPath: string, name: string): boolean => {
+		// ⚠️ 처음엔 '항목이 있기만 하면' 통과였다. 코덱스 7차 반례 —
+		//    ① 찾은 항목이 `dev:true` 여도 통과 ② 선언한 범위와 **안 맞는** 버전이어도 통과.
+		//    실제로 `body-parser` 가 요구하는 `content-type@^2.0.0` 의 중첩 항목을 지우면
+		//    호환되지 않는 루트 `1.0.5` 를 찾아 정상이라고 했다.
+		const resolves = (fromPath: string, name: string, range: string): boolean => {
 			// `node_modules/a/node_modules/b` → 후보: 그 안 → 바깥 → … → 루트
 			const segments = fromPath === '' ? [] : fromPath.split('/node_modules/');
 			for (let depth = segments.length; depth >= 0; depth -= 1) {
 				const prefix = segments.slice(0, depth).join('/node_modules/');
 				const candidate = prefix ? `${prefix}/node_modules/${name}` : `node_modules/${name}`;
-				if (packages[candidate]) return true;
+				const entry = packages[candidate];
+				if (!entry) continue;
+				// node_modules 해석은 **처음 만난 것**을 쓴다. 그게 안 맞으면 못 쓰는 것이다.
+				if (entry.dev === true) return false;
+				return satisfies(entry.version ?? '', range);
 			}
 			return false;
 		};
@@ -1096,8 +1199,10 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		const unresolved: string[] = [];
 		for (const key of ['', ...production]) {
 			const entry = packages[key] as { dependencies?: Record<string, string> } | undefined;
-			for (const name of Object.keys(entry?.dependencies ?? {})) {
-				if (!resolves(key, name)) unresolved.push(`${key || '<루트>'} → ${name}`);
+			for (const [name, range] of Object.entries(entry?.dependencies ?? {})) {
+				if (!resolves(key, name, range)) {
+					unresolved.push(`${key || '<루트>'} → ${name}@${range}`);
+				}
 			}
 		}
 		assert.deepEqual(unresolved, [], '풀리지 않는 의존성이 있다 — 트리가 온전히 고정되지 않았다');

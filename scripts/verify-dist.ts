@@ -26,7 +26,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { scanFiles } from './shipping-checks.ts';
-import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+	JSONRPCMessageSchema,
+	InitializeResultSchema,
+	ListToolsResultSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import { SERVER_NAME, CHROME_TOOLS } from '../src/index.ts';
 
@@ -180,6 +184,13 @@ async function handshake(binLink: string): Promise<Outcome> {
 	});
 }
 
+/** 스키마 오류는 개수가 많다. 앞 세 개만 보이고 나머지는 세어서 말한다. */
+function describeIssues(issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string {
+	const head = issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`);
+	const rest = issues.length - head.length;
+	return head.join(' / ') + (rest > 0 ? ` (외 ${rest}건)` : '');
+}
+
 function fail(message: string): never {
 	process.stderr.write(`\n❌ 발행 중단 — ${message}\n`);
 	process.exit(1);
@@ -229,8 +240,20 @@ if (junk.length > 0) {
 const init = responses.find((r) => r['id'] === 1);
 if (!init) fail(`dist 가 initialize 에 응답하지 않았습니다.\n   stderr: ${stderr.trim()}`);
 
-const info = (init['result'] as { serverInfo?: { name?: string; version?: string } })?.serverInfo;
-// ⚠️ 주석에는 '이름·버전'이라 적어놓고 버전만 봤다(코덱스 지적). 둘 다 본다.
+// ⚠️ `JSONRPCMessageSchema` 는 **전송 외피만** 본다. 실제 SDK 클라이언트는 그 위에
+//    결과 스키마를 한 번 더 적용한다 — `protocolVersion`·`capabilities` 가 없거나
+//    도구에 `inputSchema` 가 없어도 외피 검사는 통과한다(실측).
+//    그러면 관문은 통과하는데 진짜 클라이언트가 초기화에서 연결을 거부한다.
+//    **클라이언트가 쓰는 그 스키마를 그대로 쓴다.**
+const initResult = InitializeResultSchema.safeParse(init['result']);
+if (!initResult.success) {
+	fail(
+		`initialize 응답이 MCP 규격에 안 맞습니다 — 실제 클라이언트는 연결을 거부합니다.\n` +
+			`   ${describeIssues(initResult.error.issues)}`,
+	);
+}
+
+const info = initResult.data.serverInfo;
 if (info?.name !== SERVER_NAME) {
 	fail(`서버 이름이 ${String(info?.name)} 입니다. ${SERVER_NAME} 이어야 합니다.`);
 }
@@ -242,7 +265,15 @@ if (info?.version !== pkg.version) {
 }
 
 const list = responses.find((r) => r['id'] === 2);
-const tools = (list?.['result'] as { tools?: Array<{ name: string }> })?.tools ?? [];
+const listResult = ListToolsResultSchema.safeParse(list?.['result']);
+if (!listResult.success) {
+	fail(
+		`tools/list 응답이 MCP 규격에 안 맞습니다 — 도구에 inputSchema 가 빠졌을 수 있습니다.\n` +
+			`   ${describeIssues(listResult.error.issues)}`,
+	);
+}
+
+const tools = listResult.data.tools;
 if (tools.length < MIN_TOOLS) {
 	fail(`도구가 ${tools.length}개뿐입니다(최소 ${MIN_TOOLS}). 등록이 빠졌습니다.`);
 }

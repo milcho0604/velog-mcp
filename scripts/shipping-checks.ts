@@ -40,7 +40,7 @@ export function findPersonalEmails(text: string): string[] {
  * 아니므로 뺀다. 윈도우는 역슬래시·슬래시 둘 다 본다 — 도구마다 다르게 뱉는다.
  */
 export const LOCAL_PATH_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-	['macOS', /\/Users\/(?!\.\.\.|<)[^\s/'")\]]+/],
+	['macOS', /\/[Uu][Ss][Ee][Rr][Ss]\/(?!\.\.\.|<)[^\s/'")\]]+/],
 	['리눅스', /\/home\/(?!\.\.\.|<|user\b)[^\s/'")\]]+/],
 	['윈도우', /[A-Za-z]:[\\/][Uu][Ss][Ee][Rr][Ss][\\/](?!<)[^\s\\/'")\]]+/],
 ];
