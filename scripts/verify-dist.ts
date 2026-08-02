@@ -88,7 +88,7 @@ async function handshake(
 	// 그냥 두면 스택 트레이스로 터진다. 막기는 하지만 **왜** 막혔는지는 안 알려준다.
 	let child;
 	try {
-		child = spawn(binLink, [], {
+		child = spawn(process.execPath, [binLink], {
 		stdio: ['pipe', 'pipe', 'pipe'],
 			// 토큰 없이 띄운다. 발행 검증이 실제 계정을 건드릴 이유가 없다.
 			env: {
