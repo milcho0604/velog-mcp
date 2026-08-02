@@ -1,5 +1,6 @@
 # velog-mcp
 
+[![npm](https://img.shields.io/npm/v/@milcho0604/velog-mcp)](https://www.npmjs.com/package/@milcho0604/velog-mcp)
 [![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-2-lightgrey)](package.json)
@@ -55,6 +56,18 @@ HTTP·테스트 러너·타입스크립트 실행은 전부 Node 24 내장을 �
 
 값을 나중에 바꾸려면 `/plugin manage`.
 
+### 그냥 MCP 서버로
+
+npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 띄운다. 설정 블록과
+클라이언트 지원 범위는 [설정](#설정) 을 볼 것.
+
+```bash
+claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
+  -- npx -y @milcho0604/velog-mcp@0.4.0
+```
+
+이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
+
 ### 직접 빌드해서
 
 ```bash
@@ -71,8 +84,8 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
 {
   "mcpServers": {
     "velog": {
-      "command": "node",
-      "args": ["/절대경로/velog-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@milcho0604/velog-mcp@0.4.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
@@ -84,9 +97,19 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
 Claude Code CLI 라면:
 
 ```bash
-claude mcp add velog -- node /절대경로/velog-mcp/dist/index.js
-# 생성된 항목에 "env" 블록을 추가
+claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
+  -- npx -y @milcho0604/velog-mcp@0.4.0
 ```
+
+로컬 체크아웃으로 돌리려면 command 를
+`node /절대경로/velog-mcp/dist/index.js` 로 바꾼다.
+
+> **어떤 클라이언트에서 되나?** 이건 stdio 서버다 — 클라이언트가 로컬 프로세스로 띄운다.
+> Claude Code·Claude Desktop·Cursor 처럼 MCP 서버를 로컬에서 실행하는 클라이언트에서 된다.
+> **claude.ai 와 ChatGPT 웹앱에서는 안 된다** — 둘 다 HTTP 로 접근 가능한 원격 MCP 서버만
+> 받는다. 연결이 내 기계가 아니라 그쪽 서버에서 출발하기 때문이다. 웹에서 쓰려면 서버를
+> 공개 호스팅하고 벨로그 토큰을 그 배포본에 넘겨야 하는데, 그러면 토큰을 내 기계에만
+> 두려던 이유가 사라진다.
 
 ### 토큰 얻는 법
 

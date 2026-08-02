@@ -1,5 +1,6 @@
 # velog-mcp
 
+[![npm](https://img.shields.io/npm/v/@milcho0604/velog-mcp)](https://www.npmjs.com/package/@milcho0604/velog-mcp)
 [![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-2-lightgrey)](package.json)
@@ -60,6 +61,19 @@ that declaration (P7).
 
 Change values later with `/plugin manage`.
 
+### As a plain MCP server
+
+Published on npm, so nothing to clone â€” your MCP client runs it via `npx`. See
+[Configure](#configure) for the config block and the client-support note.
+
+```bash
+claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
+  -- npx -y @milcho0604/velog-mcp@0.4.0
+```
+
+The token stays in your client's config file here. The plugin route above puts it in
+the Keychain instead.
+
 ### From source
 
 ```bash
@@ -76,8 +90,8 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, â
 {
   "mcpServers": {
     "velog": {
-      "command": "node",
-      "args": ["/absolute/path/to/velog-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@milcho0604/velog-mcp@0.4.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
@@ -89,9 +103,20 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, â
 With the Claude Code CLI:
 
 ```bash
-claude mcp add velog -- node /absolute/path/to/velog-mcp/dist/index.js
-# then add the "env" block to the entry it created
+claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
+  -- npx -y @milcho0604/velog-mcp@0.4.0
 ```
+
+To run a local checkout instead, swap the command for
+`node /absolute/path/to/velog-mcp/dist/index.js`.
+
+> **Which clients can run this?** This is a stdio server: the client starts it as a
+> local process. That works in Claude Code, Claude Desktop, Cursor, and other clients
+> that run MCP servers locally. It does **not** work in the claude.ai or ChatGPT web
+> apps â€” both accept only remote MCP servers reachable over HTTP, since the connection
+> originates from their servers rather than your machine. Using it there would mean
+> hosting it publicly and handing your Velog token to that deployment, which defeats
+> the point of keeping the token on your own machine.
 
 ### Getting your token
 
