@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "velog-mcp": "./dist/index.js"
+    "velog-mcp": "dist/index.js"
   },
   "files": [
     "dist",
