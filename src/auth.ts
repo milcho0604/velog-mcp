@@ -13,6 +13,14 @@
  *   여전히 디스크에는 쓰지 않는다 — 프로세스 수명만큼만 산다.
  */
 
+/**
+ * 마스킹용으로 기억해 둘 옛 토큰의 최대 개수.
+ *
+ * 갱신 전 토큰도 계속 가려야 해서 누적하는데, 상한이 없으면 프로세스 수명 내내
+ * 자란다. 40개면 갱신 20회 분량이라 지연 도착한 응답을 가리기에 충분하다.
+ */
+const MAX_REMEMBERED_TOKENS = 40;
+
 export interface Credentials {
 	readonly accessToken: string | undefined;
 	readonly refreshToken: string | undefined;
@@ -127,7 +135,27 @@ export class TokenStore {
 			state.credentials.refreshToken,
 		]) {
 			// 너무 짧은 값을 치환하면 본문이 훼손된다. 토큰은 항상 이보다 길다.
-			if (secret && secret.length >= 8) this.#seen.add(secret);
+			if (!secret || secret.length < 8) continue;
+			// ★★ 이미 있어도 **지웠다 다시 넣는다.** Set.add 는 기존 값의 순서를
+			//   바꾸지 않는데, 여기서는 삽입 순서가 곧 '오래된 순서'다.
+			//   벨로그는 access_token 만 자주 재발급하고 refresh_token 은 그대로
+			//   두는 일이 흔하다. 그러면 **지금 쓰는 refresh_token 이 가장 오래된
+			//   항목이 되어 축출된다** — 살아 있는 자격증명이 오류 문자열에 그대로
+			//   드러난다는 뜻이다. 코덱스 교차검증에서 잡았다(access 40회 갱신 후
+			//   refresh 가 마스킹 목록에서 사라짐).
+			this.#seen.delete(secret);
+			this.#seen.add(secret);
+		}
+		// ★ 상한이 없으면 계속 자란다. 벨로그는 access_token 수명이 30분 밑으로
+		//   내려가면 재발급하므로 하루 약 48쌍이 쌓인다. 오래 켜두면 메모리도
+		//   메모리지만 mask() 가 본 토큰 수만큼 문자열을 훑는다
+		//   (실측: 30일치 2,880개 누적 시 mask() 1회 0.18ms — 절대량은 작지만
+		//    상한 없이 자라는 것 자체가 잘못이다).
+		//   가장 오래된 것부터 버린다. 현재 쓰는 토큰은 방금 넣은 두 개라 안전하다.
+		while (this.#seen.size > MAX_REMEMBERED_TOKENS) {
+			const oldest = this.#seen.values().next();
+			if (oldest.done === true) break;
+			this.#seen.delete(oldest.value);
 		}
 	}
 }

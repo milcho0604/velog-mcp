@@ -44,6 +44,13 @@ export interface VelogApiErrorDetail {
 	 *   전부 실패한다 — 실측으로 확인함.
 	 */
 	readonly networkCodes?: readonly string[];
+	/**
+	 * 서버가 `errors` 와 `data` 를 **함께** 준 경우.
+	 *
+	 * ★ 이 표식이 붙은 오류는 절대 재시도하지 않는다. 작업이 이미 반영됐을 수
+	 *   있는데 다시 치면 두 번 반영된다 — mutate() 무재시도와 같은 이유다.
+	 */
+	readonly partial?: boolean;
 }
 
 /** cause 체인을 훑어 code·name 을 모은다. 토큰이 섞일 수 있는 message 는 담지 않는다. */
@@ -82,8 +89,12 @@ export interface ClientOptions {
 	readonly timeoutMs?: number;
 	readonly fetchImpl?: typeof fetch;
 	readonly maxRetries?: number;
+	/** 재시도를 포함한 총 예산. 기본값 근거는 RETRY_BUDGET_MS 주석. */
+	readonly retryBudgetMs?: number;
 	/** 테스트에서 대기를 건너뛰기 위해 주입한다. */
 	readonly sleepImpl?: (ms: number) => Promise<void>;
+	/** 테스트에서 예산 소진을 벽시계 없이 재현하기 위해 주입한다. */
+	readonly nowImpl?: () => number;
 	/**
 	 * 인증 상태로 비-벨로그 엔드포인트에 요청하는 것을 허용한다.
 	 * 가짜 fetch 로 도구를 검사하는 테스트 전용이며, 운영 경로에서는 절대 켜지 않는다.
@@ -105,10 +116,20 @@ const TRANSIENT_CODES = new Set([
 	'ENOTFOUND', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
 	'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
 	'TimeoutError', 'AbortError',
+	// ★ 아래 둘은 우리가 붙이는 표식이다. 벨로그가 **HTTP 200 으로** 502 HTML 이나
+	//   빈 본문을 주는 일이 실제로 있는데(아래 #requestOnce 주석), 그러면 JSON 파싱
+	//   오류가 되어 status 도 network code 도 없는 '영구 오류'로 분류됐다.
+	//   실측: 200+HTML 을 한 번 준 뒤 정상 JSON 을 줘도 재시도 없이 1회로 포기했다
+	//   (같은 조건에서 HTTP 503 은 정상적으로 재시도됨 — 대조군 확인).
+	//   이건 상대 인프라의 일시 장애지 우리 질의의 문제가 아니다.
+	'INVALID_JSON', 'EMPTY_RESPONSE',
 ]);
 
 export function isTransient(error: unknown): boolean {
 	if (!(error instanceof VelogApiError)) return false;
+
+	// ★ 부분 성공은 무슨 일이 있어도 다시 치지 않는다. 이미 반영됐을 수 있다.
+	if (error.detail?.partial) return false;
 
 	const status = error.detail?.status;
 	if (status !== undefined && status >= 500) return true;
@@ -127,6 +148,49 @@ export function isTransient(error: unknown): boolean {
 const defaultSleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 재시도까지 포함한 **총** 예산.
+ *
+ * ★ 왜 상한이 필요한가 — 시도당 20초 × 3회 + 백오프 1.5초 = 61.5초다. 그런데
+ *   MCP SDK 의 클라이언트측 기본 요청 타임아웃은 60초다
+ *   (shared/protocol.js: DEFAULT_REQUEST_TIMEOUT_MSEC = 60000).
+ *   실측 61.6초 — **클라이언트가 항상 먼저 포기한다.** 즉 마지막 시도의 20초는
+ *   결과를 아무도 보지 못하는 순수 낭비였다. 기다린 사람만 손해다.
+ *
+ * 35초로 잡은 이유: 발행 계열 도구는 한 호출에서 `mutate`(무재시도 20초) 다음에
+ * 사후 재조회를 한 번 더 한다. 20 + 35 = 55초로 60초 안에 들어온다.
+ * 빠르게 실패하는 오류(ECONNRESET 등)에는 영향이 없다 — 세 번 다 그대로 돈다.
+ *
+ * ⚠️ 감수하는 것 — 첫 시도가 19초를 태우고 실패한 뒤 두 번째가 16초 걸려 성공할
+ *   경우, 예산이 남은 시간으로 잘라 그 성공을 놓친다. 실측 왕복이 1.3초대라
+ *   현실에서 보기 어려운 조합이고, 그걸 살리려고 예산을 늘리면 61.5초짜리
+ *   '아무도 못 보는 기다림'이 돌아온다. 둘 중 하나는 포기해야 한다.
+ */
+export const RETRY_BUDGET_MS = 35_000;
+
+/**
+ * 도구 핸들러가 MCP 에게서 받는 것 중 **우리가 쓰는 부분만.**
+ *
+ * SDK 의 실제 타입(RequestHandlerExtra)은 이보다 넓다. 좁게 받으면 콜백이
+ * 그대로 들어맞고(넓은 쪽을 좁은 쪽 자리에 넣는 것이므로 안전하다) SDK 내부
+ * 타입에 이 파일이 묶이지 않는다. 인자 타입을 직접 적은 핸들러들
+ * (`async (args: PublishArgs, extra) =>`) 은 SDK 의 문맥 추론이 끊기므로 이걸 쓴다.
+ */
+export interface ToolExtra {
+	readonly signal: AbortSignal;
+}
+
+/** 호출자가 요청 단위로 넘기는 것. */
+export interface RequestOptions {
+	/**
+	 * 도구 취소 신호. MCP 는 요청마다 AbortSignal 을 주는데
+	 * (shared/protocol.js 가 `notifications/cancelled` 에 abort 한다) 이걸 fetch 까지
+	 * 내려보내지 않으면, 클라이언트가 포기한 뒤에도 요청이 끝까지 가고 mutation 이
+	 * 그대로 나간다.
+	 */
+	readonly signal?: AbortSignal | undefined;
+}
+
 /** 인증 만료 안내. HTTP 401 경로와 GraphQL errors 경로 둘 다에서 쓴다. */
 const AUTH_HINT =
 	' — access_token 이 만료됐을 수 있습니다(유효기간 1시간). 새 토큰으로 갱신하세요.';
@@ -138,7 +202,9 @@ export class VelogClient {
 	readonly #timeoutMs: number;
 	readonly #fetch: typeof fetch;
 	readonly #maxRetries: number;
+	readonly #retryBudgetMs: number;
 	readonly #sleep: (ms: number) => Promise<void>;
+	readonly #now: () => number;
 	readonly #allowInsecureEndpoint: boolean;
 
 	constructor(options: ClientOptions) {
@@ -148,7 +214,9 @@ export class VelogClient {
 		this.#timeoutMs = options.timeoutMs ?? 20_000;
 		this.#fetch = options.fetchImpl ?? fetch;
 		this.#maxRetries = options.maxRetries ?? 2;
+		this.#retryBudgetMs = options.retryBudgetMs ?? RETRY_BUDGET_MS;
 		this.#sleep = options.sleepImpl ?? defaultSleep;
+		this.#now = options.nowImpl ?? Date.now;
 		this.#allowInsecureEndpoint = options.allowInsecureEndpoint ?? false;
 	}
 
@@ -172,16 +240,37 @@ export class VelogClient {
 	async request<T>(
 		query: string,
 		variables: Record<string, unknown> = {},
+		options: RequestOptions = {},
 	): Promise<T> {
+		// 예산은 '재시도까지 합쳐 여기까지'다. 시도마다 남은 만큼으로 잘라 준다.
+		const deadline = this.#now() + this.#retryBudgetMs;
+		// ★ `lastError` 를 좁히지 않으려고 플래그를 따로 둔다. `lastError ?? 기본값`
+		//   으로 쓰면 타입이 unknown 에서 벗어나 only-throw-error 에 걸린다.
 		let lastError: unknown;
+		let failed = false;
 		for (let attempt = 0; attempt <= this.#maxRetries; attempt++) {
+			options.signal?.throwIfAborted();
+			const left = deadline - this.#now();
+			if (left <= 0) break;
 			try {
-				return await this.#requestOnce<T>(query, variables);
+				return await this.#requestOnce<T>(query, variables, {
+					signal: options.signal,
+					timeoutMs: Math.min(this.#timeoutMs, left),
+				});
 			} catch (error) {
 				lastError = error;
+				failed = true;
 				if (!isTransient(error) || attempt === this.#maxRetries) throw error;
-				await this.#sleep(500 * 2 ** attempt); // 500ms → 1s
+				// 남은 예산보다 오래 자면 자고 일어나 아무것도 못 한다.
+				const backoff = 500 * 2 ** attempt; // 500ms → 1s
+				if (deadline - this.#now() <= backoff) break;
+				await this.#sleep(backoff);
 			}
+		}
+		if (!failed) {
+			throw new VelogApiError(
+				`벨로그가 ${this.#retryBudgetMs / 1000}초 안에 응답하지 않아 중단했습니다.`,
+			);
 		}
 		throw lastError;
 	}
@@ -208,8 +297,10 @@ export class VelogClient {
 	async mutate<T>(
 		query: string,
 		variables: Record<string, unknown> = {},
+		options: RequestOptions = {},
 	): Promise<T> {
-		return this.#requestOnce<T>(query, variables);
+		options.signal?.throwIfAborted();
+		return this.#requestOnce<T>(query, variables, { signal: options.signal });
 	}
 
 	/**
@@ -232,8 +323,10 @@ export class VelogClient {
 			readonly type: 'post' | 'profile';
 			readonly contentType: string;
 			readonly refId?: string;
+			readonly signal?: AbortSignal | undefined;
 		},
 	): Promise<string> {
+		options.signal?.throwIfAborted();
 		const auth = this.#tokens.state;
 		if (auth.kind !== 'authenticated') throw new AuthRequiredError('velog_upload_image');
 
@@ -262,7 +355,10 @@ export class VelogClient {
 				headers,
 				body: form,
 				// 이미지는 GraphQL 질의보다 오래 걸린다. 최소 60초는 준다.
-				signal: AbortSignal.timeout(Math.max(this.#timeoutMs, 60_000)),
+				signal: this.#abortSignal(
+					Math.max(this.#timeoutMs, 60_000),
+					options.signal,
+				),
 			});
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
@@ -319,9 +415,20 @@ export class VelogClient {
 		return payload.path;
 	}
 
+	/**
+	 * 시간 상한과 취소 신호를 하나로 합친다.
+	 *
+	 * 둘 중 먼저 오는 쪽이 이긴다. 취소 신호가 없으면 예전과 똑같이 시간 상한만 건다.
+	 */
+	#abortSignal(timeoutMs: number, signal: AbortSignal | undefined): AbortSignal {
+		const timeout = AbortSignal.timeout(timeoutMs);
+		return signal ? AbortSignal.any([timeout, signal]) : timeout;
+	}
+
 	async #requestOnce<T>(
 		query: string,
 		variables: Record<string, unknown>,
+		options: { signal?: AbortSignal | undefined; timeoutMs?: number } = {},
 	): Promise<T> {
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',
@@ -349,7 +456,7 @@ export class VelogClient {
 				method: 'POST',
 				headers,
 				body: JSON.stringify({ query, variables }),
-				signal: AbortSignal.timeout(this.#timeoutMs),
+				signal: this.#abortSignal(options.timeoutMs ?? this.#timeoutMs, options.signal),
 			});
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
@@ -388,9 +495,11 @@ export class VelogClient {
 			payload = (await response.json()) as GraphQLResponse<T>;
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
+			// ★ INVALID_JSON 표식을 붙여 재시도 대상으로 만든다. 이 자리에 오는 건
+			//   대부분 우리 질의 문제가 아니라 상대가 200 으로 흘린 502 HTML 이다.
 			throw new VelogApiError(
 				`벨로그 응답을 JSON 으로 읽지 못했습니다: ${this.#mask(reason)}`,
-				{ networkCodes: collectCauseCodes(cause) },
+				{ networkCodes: [...collectCauseCodes(cause), 'INVALID_JSON'] },
 			);
 		}
 
@@ -405,16 +514,44 @@ export class VelogClient {
 				codes.includes('UNAUTHENTICATED') || /not logged|unauthor/i.test(messages);
 			const hint = looksUnauthenticated ? AUTH_HINT : '';
 
+			// ★★ `data` 가 같이 왔으면 **부분 성공**이다 — 실패가 아니다.
+			//   GraphQL 은 최상위 필드가 성공한 뒤 하위 resolver 만 깨져도 둘을 함께
+			//   돌려준다. 예전엔 errors 만 보고 무조건 던지면서 data 를 버렸다.
+			//   그러면 `writePost` 가 글을 만든 뒤 하위 필드가 깨졌을 때 사용자는
+			//   '실패'로 보고 다시 부르고, 그 결과 **글이 두 번 만들어진다.**
+			//   무엇을 모르는지 그대로 알려줘야 사용자가 판단할 수 있다
+			//   (uploadImage 의 '올라갔는지 알 수 없습니다' 와 같은 규율).
+			const created = firstId(payload.data);
+			// ★ '`data` 가 있다'만으로 부분 성공이라 하면 안 된다. GraphQL 은 resolver
+			//   가 깨지면 `{ data: { post: null }, errors: [...] }` 를 준다 — 이건
+			//   아무것도 반영되지 않은 **완전 실패**다. 그걸 partial 로 찍으면
+			//   재시도가 막히는데, 벨로그의 커넥션 풀 고갈이 정확히 이 모양으로 온다.
+			//   (코덱스 교차검증에서 잡았다: 재시도 가능하던 읽기가 1회로 죽었다.)
+			//   그래서 **값이 하나라도 실제로 들어있을 때만** 부분 성공으로 본다.
+			const partial = hasAnyValue(payload.data);
+			const partialWarning = partial
+				? '\n⚠️ 서버가 결과 데이터를 함께 돌려줬습니다 — 요청이 **이미 반영됐을 수** ' +
+					'있습니다. 다시 시도하면 두 번 적용될 수 있으니 벨로그에서 확인한 뒤 결정하세요.' +
+					(created ? ` (id=${created})` : '')
+				: '';
+
 			// ★ 원본 payload.errors 를 그대로 담으면 토큰이 Error 객체에 남는다.
 			//   지금은 MCP SDK 가 message 만 내보내지만, 나중에 console.error(error)
 			//   나 오류 수집기를 붙이는 순간 샌다. 코드만 보관한다.
-			throw new VelogApiError(`벨로그 GraphQL 오류: ${this.#mask(messages)}${hint}`, {
-				graphqlErrorCodes: codes.filter((c): c is string => typeof c === 'string'),
-			});
+			throw new VelogApiError(
+				`벨로그 GraphQL 오류: ${this.#mask(messages)}${hint}${partialWarning}`,
+				{
+					graphqlErrorCodes: codes.filter((c): c is string => typeof c === 'string'),
+					...(partial ? { partial: true } : {}),
+				},
+			);
 		}
 
 		if (payload.data === undefined || payload.data === null) {
-			throw new VelogApiError('벨로그가 빈 응답을 반환했습니다.');
+			// 빈 200 도 상대 인프라의 일시 장애다 (JSON 파싱 실패와 같은 성격).
+			throw new VelogApiError('벨로그가 빈 응답을 반환했습니다.', {
+				networkCodes: ['EMPTY_RESPONSE'],
+			});
 		}
 		return payload.data;
 	}
@@ -426,4 +563,29 @@ export class VelogClient {
 
 function truncate(text: string, max: number): string {
 	return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+/**
+ * 부분 성공 응답에서 '만들어졌거나 바뀐 것'의 id 를 한 개 찾는다.
+ *
+ * GraphQL 응답은 `{ writePost: { id } }` 처럼 최상위에 mutation 이름이 오고 그
+ * 아래 결과가 온다. 사용자가 벨로그에서 확인하려면 id 하나가 필요하다.
+ * 못 찾으면 그냥 없이 안내한다 — 없는 걸 지어내지 않는다.
+ */
+/** 최상위 필드 중 실제로 값이 담긴 게 하나라도 있는가. */
+function hasAnyValue(data: unknown): boolean {
+	if (typeof data !== 'object' || data === null) return false;
+	return Object.values(data as Record<string, unknown>).some(
+		(v) => v !== null && v !== undefined,
+	);
+}
+
+function firstId(data: unknown): string | undefined {
+	if (typeof data !== 'object' || data === null) return undefined;
+	for (const value of Object.values(data as Record<string, unknown>)) {
+		if (typeof value !== 'object' || value === null) continue;
+		const id = (value as { id?: unknown }).id;
+		if (typeof id === 'string' && id !== '') return id;
+	}
+	return undefined;
 }

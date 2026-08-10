@@ -40,6 +40,8 @@ export async function fetchAllPosts(
 	client: VelogClient,
 	username: string,
 	maxPages: number,
+	/** 취소 신호. 페이지를 여러 장 넘기므로 중간에 멈출 수 있어야 한다. */
+	signal?: AbortSignal,
 ): Promise<{ posts: VelogPostSummary[]; truncated: boolean; outcome: FetchOutcome }> {
 	const posts: VelogPostSummary[] = [];
 	// ★ 중복 방어. 커서가 안 움직이면(벨로그가 같은 페이지를 반복 반환) 같은 글을
@@ -56,6 +58,7 @@ export async function fetchAllPosts(
 		const data = await client.request<{ posts: VelogPostSummary[] | null }>(
 			QUERY_POSTS,
 			{ input },
+			{ signal },
 		);
 		const batch = data.posts ?? [];
 

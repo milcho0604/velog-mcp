@@ -212,15 +212,63 @@ describe('velog_update_post — 생략한 필드를 보존한다', () => {
 		assert.equal(sent?.is_private, false, '공개글이 수정만으로 비공개가 됐다');
 	});
 
-	test('설정이 꺼져 있으면 수정이 글을 비공개로 만든다 — 공개 유지 경로가 없다', async () => {
-		// 의도된 동작이다. 공개 권한이 없는데 공개 상태를 유지하려면 그건 곧
-		// 공개 발행 권한이 되기 때문. 설명에도 이 점을 적어야 한다.
+	/**
+	 * ★★ 여기 있던 테스트는 **틀린 근거로 버그를 고정하고 있었다.**
+	 *
+	 * 옛 테스트: '설정이 꺼져 있으면 수정이 글을 비공개로 만든다 — 공개 유지
+	 * 경로가 없다'. 근거로 "공개 상태를 유지하는 것이 곧 공개 발행 권한이 된다"고
+	 * 적혀 있었는데, **유지는 발행이 아니다.** 이미 공개된 글은 이미 RSS·검색·
+	 * 구독메일로 나갔다 — 그대로 두는 것은 도달 범위를 1 만큼도 늘리지 않는다.
+	 * 반대로 내리는 쪽이 되돌리기 어려운 파괴적 변경이다.
+	 *
+	 * 실측(2026-08-07): 기본 설정에서 공개글에 제목만 고쳐 부르면
+	 * `is_private:true` 가 나가고, 오류도 아니고, 결과 한 줄에 '🔒 비공개'라고만
+	 * 적혀 나갔다. 사용자는 오타 하나 고쳐달라고 했을 뿐이다.
+	 *
+	 * 게이트가 여전히 지키는 것: 모델은 **공개로 올릴 수 없다.** 새 글은
+	 * 무조건 비공개고(writePost), 비공개 글은 비공개로 남으며, 게이트가 꺼져
+	 * 있으면 is_private 인자 자체를 무시한다. 아래 세 테스트가 그 셋을 다 묶는다.
+	 */
+	test('★ 기본 설정에서도 공개글은 공개로 남는다 (강등 회귀)', async () => {
 		const { sent } = await callTool(
 			'velog_update_post',
 			{ id: 'p1', title: 'x' },
 			{ publicPublish: false },
 		);
-		assert.equal(sent?.is_private, true);
+		assert.equal(sent?.is_private, false, '제목만 고쳤는데 공개글이 내려갔다');
+	});
+
+	test('기본 설정에서 비공개 글은 비공개로 남는다 — 게이트는 살아 있다', async () => {
+		const { sent } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', title: 'x' },
+			{ publicPublish: false, post: { ...EXISTING, is_private: true } },
+		);
+		assert.equal(sent?.is_private, true, '게이트가 꺼졌는데 글이 공개됐다');
+	});
+
+	test('기본 설정에서는 is_private 인자를 아예 무시한다', async () => {
+		// 스키마에 없는 필드지만, 어떤 경로로든 들어와도 권한 상승이 되면 안 된다.
+		const { sent } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', title: 'x', is_private: false },
+			{ publicPublish: false, post: { ...EXISTING, is_private: true } },
+		);
+		assert.equal(sent?.is_private, true, '모델이 스스로 공개로 올렸다');
+	});
+
+	test('공개 범위를 읽을 수 없으면 중단한다 — 모르면 건드리지 않는다', async () => {
+		const { isError, sent, text } = await callTool(
+			'velog_update_post',
+			{ id: 'p1', title: 'x' },
+			{
+				publicPublish: false,
+				post: { ...EXISTING, is_private: null } as unknown as typeof EXISTING,
+			},
+		);
+		assert.equal(isError, true, '알 수 없는 공개 범위인데 그냥 진행했다');
+		assert.equal(sent, null, 'mutation 이 나갔다 — 글이 바뀐다');
+		assert.match(text, /공개 범위를 확인할 수 없어/);
 	});
 });
 

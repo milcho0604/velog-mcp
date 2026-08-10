@@ -13,11 +13,12 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import type { VelogClient } from '../client.ts';
+import type { ToolExtra, VelogClient } from '../client.ts';
 import type { Capabilities } from '../capabilities.ts';
 import { textResult } from '../format.ts';
 import { isSafeImageUrl, isSafeProfileLink } from '../slug.ts';
 import { fetchCurrentUser, invalidateMe } from '../me.ts';
+import { serializeWrite } from '../serial.ts';
 
 const MUTATION_UPDATE_PROFILE = `
   mutation UpdateProfile($input: UpdateProfileInput!) {
@@ -127,30 +128,32 @@ export function registerProfileEditTools(
 			},
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
-		async ({ display_name, short_bio }) => {
-			const user = await current('velog_update_profile');
-			const p = user.profile;
+		async ({ display_name, short_bio }, extra) =>
+			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
+			serializeWrite('profile', async () => {
+				const user = await current('velog_update_profile');
+				const p = user.profile;
 
-			// ★ 둘 다 필수 필드라 한쪽만 보내면 다른 쪽이 지워진다. 반드시 채워 보낸다.
-			const input = {
-				display_name: display_name ?? p?.display_name ?? '',
-				short_bio: short_bio ?? p?.short_bio ?? '',
-			};
+				// ★ 둘 다 필수 필드라 한쪽만 보내면 다른 쪽이 지워진다. 반드시 채워 보낸다.
+				const input = {
+					display_name: display_name ?? p?.display_name ?? '',
+					short_bio: short_bio ?? p?.short_bio ?? '',
+				};
 
-			await client.mutate(MUTATION_UPDATE_PROFILE, { input });
-			invalidateMe(client);
+				await client.mutate(MUTATION_UPDATE_PROFILE, { input }, { signal: extra.signal });
+				invalidateMe(client);
 
-			const after = await current('velog_update_profile');
-			return textResult(
-				[
-					'✅ 프로필을 수정했습니다.',
-					'',
-					`- 이름: ${after.profile?.display_name ?? '—'}`,
-					`- 한줄 소개: ${after.profile?.short_bio ?? '—'}`,
-					`- 확인: https://velog.io/@${after.username ?? ''}`,
-				].join('\n'),
-			);
-		},
+				const after = await current('velog_update_profile');
+				return textResult(
+					[
+						'✅ 프로필을 수정했습니다.',
+						'',
+						`- 이름: ${after.profile?.display_name ?? '—'}`,
+						`- 한줄 소개: ${after.profile?.short_bio ?? '—'}`,
+						`- 확인: https://velog.io/@${after.username ?? ''}`,
+					].join('\n'),
+				);
+			}),
 	);
 
 	server.registerTool(
@@ -165,25 +168,31 @@ export function registerProfileEditTools(
 			},
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
-		async ({ about }) => {
-			client.requireAuth('velog_update_about');
-			await client.mutate(MUTATION_UPDATE_ABOUT, { input: { about } });
-			invalidateMe(client);
+		async ({ about }, extra) =>
+			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
+			serializeWrite('profile', async () => {
+				client.requireAuth('velog_update_about');
+				await client.mutate(
+					MUTATION_UPDATE_ABOUT,
+					{ input: { about } },
+					{ signal: extra.signal },
+				);
+				invalidateMe(client);
 
-			const after = await current('velog_update_about');
-			const saved = after.profile?.about ?? '';
-			return textResult(
-				[
-					'✅ 소개글을 수정했습니다.',
-					'',
-					`- 길이: ${saved.length}자`,
-					`- 확인: https://velog.io/@${after.username ?? ''}/about`,
-					'',
-					'--- 저장된 내용 앞부분 ---',
-					saved.slice(0, 300) + (saved.length > 300 ? '…' : ''),
-				].join('\n'),
-			);
-		},
+				const after = await current('velog_update_about');
+				const saved = after.profile?.about ?? '';
+				return textResult(
+					[
+						'✅ 소개글을 수정했습니다.',
+						'',
+						`- 길이: ${saved.length}자`,
+						`- 확인: https://velog.io/@${after.username ?? ''}/about`,
+						'',
+						'--- 저장된 내용 앞부분 ---',
+						saved.slice(0, 300) + (saved.length > 300 ? '…' : ''),
+					].join('\n'),
+				);
+			}),
 	);
 
 	server.registerTool(
@@ -194,16 +203,22 @@ export function registerProfileEditTools(
 			inputSchema: { title: z.string().min(1).describe('새 블로그 제목') },
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
-		async ({ title }) => {
-			client.requireAuth('velog_update_blog_title');
-			await client.mutate(MUTATION_UPDATE_VELOG_TITLE, { input: { title } });
+		async ({ title }, extra) =>
+			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
+			serializeWrite('profile', async () => {
+				client.requireAuth('velog_update_blog_title');
+				await client.mutate(
+					MUTATION_UPDATE_VELOG_TITLE,
+					{ input: { title } },
+					{ signal: extra.signal },
+				);
 
-			const after = await current('velog_update_blog_title');
-			return textResult(
-				`✅ 블로그 제목을 "${after.velog_config?.title ?? title}" 로 바꿨습니다.\n` +
-					`- 확인: https://velog.io/@${after.username ?? ''}`,
-			);
-		},
+				const after = await current('velog_update_blog_title');
+				return textResult(
+					`✅ 블로그 제목을 "${after.velog_config?.title ?? title}" 로 바꿨습니다.\n` +
+						`- 확인: https://velog.io/@${after.username ?? ''}`,
+				);
+			}),
 	);
 
 	server.registerTool(
@@ -234,33 +249,37 @@ export function registerProfileEditTools(
 			},
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
-		async (args: Record<string, unknown>) => {
-			const user = await current('velog_update_social_links');
-			const existing = user.profile?.profile_links ?? {};
+		async (args: Record<string, unknown>, extra: ToolExtra) =>
+			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
+			serializeWrite('profile', async () => {
+				const user = await current('velog_update_social_links');
+				const existing = user.profile?.profile_links ?? {};
 
-			// ★ profile_links 는 JSON 통째로 교체된다. 기존 값 위에 덮어써야
-			//   지정하지 않은 링크가 사라지지 않는다.
-			const merged: Record<string, unknown> = { ...existing };
-			for (const key of SOCIAL_KEYS) {
-				const value = args[key];
-				if (typeof value === 'string') merged[key] = value;
-			}
+				// ★ profile_links 는 JSON 통째로 교체된다. 기존 값 위에 덮어써야
+				//   지정하지 않은 링크가 사라지지 않는다.
+				const merged: Record<string, unknown> = { ...existing };
+				for (const key of SOCIAL_KEYS) {
+					const value = args[key];
+					if (typeof value === 'string') merged[key] = value;
+				}
 
-			await client.mutate(MUTATION_UPDATE_SOCIAL, {
-				input: { profile_links: merged },
-			});
-			invalidateMe(client);
+				await client.mutate(
+					MUTATION_UPDATE_SOCIAL,
+					{ input: { profile_links: merged } },
+					{ signal: extra.signal },
+				);
+				invalidateMe(client);
 
-			const after = await current('velog_update_social_links');
-			const links = after.profile?.profile_links ?? {};
-			const shown = Object.entries(links)
-				.filter(([, v]) => typeof v === 'string' && v.length > 0)
-				.map(([k, v]) => `  - ${k}: ${String(v)}`)
-				.join('\n');
-			return textResult(
-				`✅ SNS 링크를 수정했습니다.\n\n${shown || '  (등록된 링크 없음)'}`,
-			);
-		},
+				const after = await current('velog_update_social_links');
+				const links = after.profile?.profile_links ?? {};
+				const shown = Object.entries(links)
+					.filter(([, v]) => typeof v === 'string' && v.length > 0)
+					.map(([k, v]) => `  - ${k}: ${String(v)}`)
+					.join('\n');
+				return textResult(
+					`✅ SNS 링크를 수정했습니다.\n\n${shown || '  (등록된 링크 없음)'}`,
+				);
+			}),
 	);
 
 	server.registerTool(
@@ -278,15 +297,21 @@ export function registerProfileEditTools(
 			},
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
-		async ({ url }) => {
-			client.requireAuth('velog_update_profile_image');
-			await client.mutate(MUTATION_UPDATE_THUMBNAIL, { input: { url } });
-			invalidateMe(client);
+		async ({ url }, extra) =>
+			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
+			serializeWrite('profile', async () => {
+				client.requireAuth('velog_update_profile_image');
+				await client.mutate(
+					MUTATION_UPDATE_THUMBNAIL,
+					{ input: { url } },
+					{ signal: extra.signal },
+				);
+				invalidateMe(client);
 
-			const after = await current('velog_update_profile_image');
-			return textResult(
-				`✅ 프로필 사진을 바꿨습니다.\n- 현재: ${after.profile?.thumbnail ?? '—'}`,
-			);
-		},
+				const after = await current('velog_update_profile_image');
+				return textResult(
+					`✅ 프로필 사진을 바꿨습니다.\n- 현재: ${after.profile?.thumbnail ?? '—'}`,
+				);
+			}),
 	);
 }

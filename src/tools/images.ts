@@ -38,6 +38,7 @@ import {
 	renderDiagram,
 } from '../render/index.ts';
 import { isHexColor } from '../render/tones.ts';
+import { makeSerializer } from '../serial.ts';
 
 /** 우리가 올리는 것 — 서버 상한(30MB)보다 낮게 잡는다. */
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -353,6 +354,18 @@ function markdown(alt: string, url: string): string {
 	return `![${alt}](${url})`;
 }
 
+/**
+ * 업로드도 줄을 세운다.
+ *
+ * ★ 파일당 10MB 상한은 있는데 **동시성 상한이 없었다.** 한 요청이 10MB 버퍼와
+ *   그 multipart 사본을 최대 60초 들고 있으므로, 병렬 호출 수만큼 그대로 곱해진다.
+ *   렌더는 같은 이유로 이미 줄을 세워 크롬 메모리를 1GB 에 묶어뒀는데
+ *   업로드만 빠져 있었다.
+ * ★ 벨로그 쪽 사정도 같은 방향이다 — 1분 20건을 넘기면 계정을 막는다
+ *   (ImageService.detectAbuse). 몰아치지 않는 편이 안전하다.
+ */
+const serializeUpload = makeSerializer();
+
 export function registerImageTools(server: McpServer, client: VelogClient): void {
 	/** 렌더 결과를 올리고 결과 문구를 만든다. 감사에 걸린 게 있으면 올리지 않는다. */
 	async function finish(args: {
@@ -368,6 +381,8 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 		alt: string;
 		postId?: string;
 		what: string;
+		/** 취소 신호. 업로드는 되돌릴 수 없으므로 반드시 받아 넘긴다. */
+		signal: AbortSignal;
 	}): Promise<string[]> {
 		const lines: string[] = [];
 		// ★ upload 여부와 무관하게, 감사에 걸린 산출물은 거부 목록에 올린다.
@@ -406,15 +421,20 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 		}
 
 		if (args.upload) {
-			const bytes = new Uint8Array(await readFile(args.pngPath));
-			const uploadOptions: Parameters<VelogClient['uploadImage']>[2] = args.postId
-				? { type: 'post', contentType: 'image/png', refId: args.postId }
-				: { type: 'post', contentType: 'image/png' };
-			const url = await client.uploadImage(
-				bytes,
-				`${basename(args.pngPath, '.png')}.png`,
-				uploadOptions,
-			);
+			// ★ 파일 읽기도 **줄 안에서** 한다. 밖에서 읽으면 대기 중인 요청마다
+			//   10MB 버퍼가 메모리에 올라간 채 순서를 기다린다 — 줄을 세운 이유
+			//   (메모리 상한)가 그대로 사라진다. 코덱스 교차검증에서 잡았다.
+			const url = await serializeUpload(async () => {
+				const bytes = new Uint8Array(await readFile(args.pngPath));
+				const uploadOptions: Parameters<VelogClient['uploadImage']>[2] = args.postId
+					? { type: 'post', contentType: 'image/png', refId: args.postId, signal: args.signal }
+					: { type: 'post', contentType: 'image/png', signal: args.signal };
+				return client.uploadImage(
+					bytes,
+					`${basename(args.pngPath, '.png')}.png`,
+					uploadOptions,
+				);
+			});
 			lines.push('본문에 붙여넣을 마크다운:');
 			lines.push('');
 			lines.push(markdown(args.alt, url));
@@ -483,7 +503,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
-		async (args) => {
+		async (args, extra) => {
 			if (args.upload) client.requireAuth('velog_render_diagram');
 			const spec: DiagramSpec = {
 				title: args.title,
@@ -519,6 +539,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 					alt: args.alt ?? args.title,
 					...(args.post_id ? { postId: args.post_id } : {}),
 					what: '다이어그램',
+					signal: extra.signal,
 				})).join('\n'),
 			);
 		},
@@ -544,7 +565,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
-		async (args) => {
+		async (args, extra) => {
 			if (args.upload) client.requireAuth('velog_render_cover');
 			const spec: CoverSpec = { title: args.title };
 			if (args.subtitle !== undefined) spec.subtitle = args.subtitle;
@@ -568,6 +589,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 					alt: args.title,
 					...(args.post_id ? { postId: args.post_id } : {}),
 					what: '표지',
+					signal: extra.signal,
 				})).join('\n'),
 			);
 		},
@@ -593,7 +615,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			},
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
-		async (args) => {
+		async (args, extra) => {
 			client.requireAuth('velog_upload_image');
 			// ★ 문자열 그대로 비교하면 `/tmp/x/./a.png` 하나로 빠져나간다.
 			//   경로를 정규화하고, 심볼릭 링크까지 푼 형태로도 본다.
@@ -603,12 +625,20 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 						'그림을 고쳐 다시 그리세요 (velog_render_diagram).',
 				);
 			}
-			const { bytes, kind } = await readImageFile(args.path);
 			const name = basename(args.path);
-			const uploadOptions: Parameters<VelogClient['uploadImage']>[2] = args.post_id
-				? { type: args.type, contentType: kind.mime, refId: args.post_id }
-				: { type: args.type, contentType: kind.mime };
-			const url = await client.uploadImage(bytes, name, uploadOptions);
+			// ★ 읽기부터 줄 안이다 — 이유는 위 finish() 의 주석과 같다.
+			//   대기 중인 요청이 10MB 씩 들고 서 있으면 상한을 둔 의미가 없다.
+			const { url, kind, bytes } = await serializeUpload(async () => {
+				const read = await readImageFile(args.path);
+				const uploadOptions: Parameters<VelogClient['uploadImage']>[2] = args.post_id
+					? { type: args.type, contentType: read.kind.mime, refId: args.post_id, signal: extra.signal }
+					: { type: args.type, contentType: read.kind.mime, signal: extra.signal };
+				return {
+					url: await client.uploadImage(read.bytes, name, uploadOptions),
+					kind: read.kind,
+					bytes: read.bytes,
+				};
+			});
 			return textResult(
 				[
 					`✅ 올렸습니다 — ${kind.mime} · ${(bytes.length / 1024).toFixed(0)}KB`,

@@ -252,7 +252,20 @@ describe('네트워크 오류 재시도 — cause 체인으로 판정한다', ()
 		);
 	});
 
-	test('JSON 이 아닌 응답도 마스킹·재시도 경로를 탄다', async () => {
+	/**
+	 * ★ 이 테스트도 근거가 뒤집혔다.
+	 *
+	 * 예전엔 `calls === 1` 을 'JSON 파싱 실패는 재시도 대상이 아니다'로 고정했다.
+	 * 그런데 이 자리에 오는 건 대개 **우리 질의의 문제가 아니라** 상대가 HTTP 200
+	 * 으로 흘린 502 HTML 이다(바로 위 주석이 "실제로 있다"고 적어둔 그 상황).
+	 * 그걸 영구 오류로 분류하면 한 번 튄 인프라 장애가 그대로 사용자 실패가 된다.
+	 * 실측: 200+HTML 한 번 뒤 정상 JSON 을 줘도 1회로 포기했다. 같은 조건의
+	 * HTTP 503 은 정상적으로 재시도됐다 — 같은 성격인데 대우가 달랐다.
+	 *
+	 * ⚠️ 쓰기는 영향이 없다. `mutate()` 는 `#requestOnce` 를 직접 불러 이 재시도
+	 *    루프를 아예 타지 않는다(응답 유실 시 중복 생성 방지). 아래에서 같이 고정한다.
+	 */
+	test('200 으로 온 HTML 은 일시 장애로 보고 다시 친다', async () => {
 		let calls = 0;
 		const client = new VelogClient({
 			auth: { kind: 'anonymous' },
@@ -274,7 +287,47 @@ describe('네트워크 오류 재시도 — cause 체인으로 판정한다', ()
 				return true;
 			},
 		);
-		assert.equal(calls, 1, 'JSON 파싱 실패는 재시도 대상이 아니다');
+		assert.equal(calls, 3, '일시 장애인데 한 번만 치고 포기했다');
+	});
+
+	test('빈 200 응답도 다시 친다 — 한 번 튄 인프라 장애다', async () => {
+		let calls = 0;
+		const client = new VelogClient({
+			auth: { kind: 'anonymous' },
+			sleepImpl: async () => {},
+			fetchImpl: (async () => {
+				calls++;
+				if (calls === 1) {
+					return new Response(JSON.stringify({}), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
+				return new Response(JSON.stringify({ data: { ok: true } }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			}) as unknown as typeof fetch,
+		});
+		assert.deepEqual(await client.request('{ x }'), { ok: true });
+		assert.equal(calls, 2, '빈 응답에서 재시도하지 않았다');
+	});
+
+	test('★ 쓰기는 그래도 다시 치지 않는다 — 중복 생성 방지', async () => {
+		let calls = 0;
+		const client = new VelogClient({
+			auth: { kind: 'anonymous' },
+			sleepImpl: async () => {},
+			fetchImpl: (async () => {
+				calls++;
+				return new Response('<html>502 Bad Gateway</html>', {
+					status: 200,
+					headers: { 'Content-Type': 'text/html' },
+				});
+			}) as unknown as typeof fetch,
+		});
+		await assert.rejects(() => client.mutate('mutation { writePost }'));
+		assert.equal(calls, 1, 'mutation 이 재시도돼 글이 여러 번 만들어질 수 있다');
 	});
 
 	test('cause 체인이 순환해도 무한루프에 빠지지 않는다', async () => {

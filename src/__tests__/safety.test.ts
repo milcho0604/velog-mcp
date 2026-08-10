@@ -593,3 +593,120 @@ describe('★★ A11 — 사용자가 준 series_id 는 소유권을 검사한�
 		assert.equal(defs[0]?.[0], 'ownership.ts');
 	});
 });
+
+/**
+ * 부작용을 내는 호출은 **반드시** 취소 신호와 줄 세우기를 거친다.
+ *
+ * ★ 왜 구조 테스트인가 — 이 저장소는 같은 실수를 이미 두 번 했다. 소유권 확인을
+ *   `drafts.ts` 에만 넣고 `publish.ts` 를 빠뜨렸고, `meta` 보존도 한쪽만 고쳤다.
+ *   호출부가 열두 곳이면 "다음에 하나 더 늘 때 빠진다"가 아니라 **반드시 빠진다.**
+ *   사람이 기억하는 대신 테스트가 세게 한다.
+ */
+describe('쓰기 경로는 빠짐없이 취소·직렬화를 거친다', () => {
+	/** 도구 모듈만 본다. client.ts 자신은 대상이 아니다. */
+	const isToolModule = (name: string): boolean => name.startsWith('tools/');
+
+	test('client.mutate / uploadImage 호출에는 취소 신호가 실린다', async () => {
+		const missing: string[] = [];
+		for (const [name, src] of await readAllSources()) {
+			if (!isToolModule(name)) continue;
+			// 호출 시작부터 균형이 맞는 닫는 괄호까지를 한 호출로 본다.
+			for (const match of src.matchAll(/client\.(mutate|uploadImage)\s*[<(]/g)) {
+				const start = match.index;
+				let depth = 0;
+				let end = start;
+				for (let i = start; i < src.length; i++) {
+					const c = src[i];
+					if (c === '(') depth++;
+					else if (c === ')') {
+						depth--;
+						if (depth === 0) {
+							end = i;
+							break;
+						}
+					}
+				}
+				const call = src.slice(start, end + 1);
+				// uploadImage 는 옵션 객체를 변수로 만들어 넘기므로 그 변수도 인정한다.
+				if (!/signal/.test(call) && !/uploadOptions/.test(call)) {
+					missing.push(`${name}: ${call.replace(/\s+/g, ' ').slice(0, 70)}`);
+				}
+			}
+		}
+		assert.deepEqual(
+			missing,
+			[],
+			'취소 신호 없이 나가는 쓰기가 있다 — 클라이언트가 포기한 뒤에도 반영된다',
+		);
+	});
+
+	test('uploadOptions 를 만드는 자리에는 signal 이 들어간다', async () => {
+		for (const [name, src] of await readAllSources()) {
+			if (!isToolModule(name)) continue;
+			for (const match of src.matchAll(/const uploadOptions[\s\S]{0,400}?;\n/g)) {
+				assert.match(
+					match[0],
+					/signal/,
+					`${name}: uploadOptions 에 signal 이 빠졌다`,
+				);
+			}
+		}
+	});
+
+	/**
+	 * ★★ 줄은 **저장소 전체에 하나**여야 한다.
+	 *
+	 * 모듈마다 `makeKeyedSerializer()` 를 따로 만들면 키가 같아도 줄이 다르다.
+	 * 그러면 `velog_update_draft` 와 `velog_publish_draft` 가 같은 글을 동시에
+	 * 고칠 수 있다 — 앞의 문자열 검사(‘serializeWrite 가 앞에 나오는가’)만으로는
+	 * 이걸 못 잡는다. 코덱스 교차검증에서 재현됐다.
+	 */
+	test('쓰기 줄은 저장소에 하나뿐이다 — 모듈이 따로 만들지 않는다', async () => {
+		const owners: string[] = [];
+		for (const [name, src] of await readAllSources()) {
+			if (name === 'serial.ts') continue;
+			if (/makeKeyedSerializer\s*\(/.test(src)) owners.push(name);
+		}
+		assert.deepEqual(
+			owners,
+			[],
+			'모듈이 자기 줄을 따로 만든다 — serial.ts 의 serializeWrite 를 import 할 것',
+		);
+	});
+
+	/**
+	 * export 의 시간 예산은 **핸들러 시작 시점**부터 재야 한다.
+	 * 목록 조회 뒤에 재면 그 앞의 계정 조회·페이지 4장이 예산 밖으로 새 나간다.
+	 * (50초 예산 자체는 벽시계가 필요해 단위 테스트로 못 잡는다 — 여기서 위치만 고정한다.)
+	 */
+	test('export 예산 시계는 목록 조회보다 먼저 켜진다', async () => {
+		const src = (await readAllSources()).find(([n]) => n === 'tools/export.ts')?.[1] ?? '';
+		const deadlineAt = src.indexOf('const deadline =');
+		const listAt = src.indexOf('await fetchAllPosts(');
+		assert.ok(deadlineAt > 0 && listAt > 0, '기준 문구를 못 찾았다 — 테스트를 갱신할 것');
+		assert.ok(deadlineAt < listAt, '예산 시계를 목록 조회 뒤에 켠다 — 앞 구간이 예산 밖이다');
+	});
+
+	test('쓰기 도구의 mutation 은 줄 세우기 안에서 일어난다', async () => {
+		const outside: string[] = [];
+		for (const [name, src] of await readAllSources()) {
+			if (!isToolModule(name)) continue;
+			if (!src.includes('client.mutate')) continue;
+			// 이 모듈이 serializeWrite 를 아예 안 쓰면 그 자체가 누락이다.
+			if (!src.includes('serializeWrite(')) {
+				outside.push(`${name}: serializeWrite 를 쓰지 않는다`);
+				continue;
+			}
+			// 각 mutate 호출 앞쪽에 같은 핸들러의 serializeWrite 가 있는지 본다.
+			for (const match of src.matchAll(/client\.mutate/g)) {
+				const before = src.slice(0, match.index);
+				const lastSerialize = before.lastIndexOf('serializeWrite(');
+				const lastRegister = before.lastIndexOf('server.registerTool(');
+				if (lastSerialize < lastRegister) {
+					outside.push(`${name}: 줄 세우기 밖에서 mutation 이 나간다 (offset ${match.index})`);
+				}
+			}
+		}
+		assert.deepEqual(outside, [], '동시 수정이 서로를 덮어쓸 수 있다 — src/serial.ts 참고');
+	});
+});

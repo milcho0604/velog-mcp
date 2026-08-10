@@ -18,7 +18,7 @@ import { test, describe } from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { platform } from 'node:process';
@@ -1691,5 +1691,44 @@ describe('★ R23 — 상한을 넘는 파일은 읽는 단계에서 거부한�
 
 		await client.close();
 		await rm(dir, { recursive: true, force: true }).catch(() => {});
+	});
+});
+
+/**
+ * 실패한 렌더가 임시 폴더를 남기지 않는다.
+ *
+ * ★ 예전엔 `finally` 가 크롬 프로필 두 개만 지우고 결과 폴더는 성공·실패 가리지
+ *   않고 남겼다. 청소(sweepOld)는 **다음 렌더가 돌 때** 그것도 24시간 지난 것만
+ *   거둬가므로, 실패한 뒤 다시 안 그리면 영영 남는다.
+ *   실측(2026-08-07): 개발 중인 이 기기의 임시폴더에 velog-mcp-render-* 가
+ *   396개 쌓여 있었다. 그게 이 버그의 잔해다.
+ */
+describe('★ 실패한 렌더는 뒤를 남기지 않는다 (크롬 필요)', () => {
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+	const countRenderDirs = async (): Promise<number> =>
+		(await readdir(tmpdir())).filter((n) => n.startsWith('velog-mcp-render-')).length;
+
+	test('성공은 남기고 실패는 지운다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const before = await countRenderDirs();
+
+		// 대조군 — 성공한 렌더는 반드시 남아야 한다. 사용자가 PNG·HTML 을 쓴다.
+		await renderDiagram({ title: 'ok', nodes: [{ id: 'a', x: 0, y: 0, title: 'A' }] });
+		const afterOk = await countRenderDirs();
+		assert.equal(afterOk - before, 1, '성공한 렌더의 결과까지 지웠다');
+
+		// 실패 — HTML 을 쓴 뒤 감사 해석에서 던지는 경로.
+		await assert.rejects(() =>
+			renderDiagram({
+				title: 'ng',
+				nodes: [{ id: 'a', x: 0, y: 0, title: 'A' }],
+				// 노드 id 는 문자열이어야 한다. 도구 스키마는 막지만 여기선 직접 부른다.
+				edges: [{ from: 0 as unknown as string, to: 1 as unknown as string }],
+			}),
+		);
+		assert.equal(await countRenderDirs(), afterOk, '실패한 렌더의 폴더가 남았다');
 	});
 });

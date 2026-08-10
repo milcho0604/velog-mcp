@@ -20,6 +20,7 @@ import { resolveMyUsername } from '../me.ts';
 import { assertOwned, assertOwnsSeries } from '../ownership.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
+import { serializeWrite } from '../serial.ts';
 
 /**
  * ★ 발행 차단 지점. 이 값은 파라미터가 아니라 상수다.
@@ -116,42 +117,45 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			// 되돌릴 수 있는 쓰기다 — 비공개 초안이므로 파괴적이지 않다.
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
-		async ({ title, body, tags, url_slug, thumbnail, series_id }) => {
-			client.requireAuth('velog_create_draft');
-			if (series_id) await assertOwnsSeries(client, series_id, 'velog_create_draft');
-			// ★ 초안은 is_private:true 라 벨로그 계수(is_private:false 만 셈)에
-			//   잡히지 않는다. 그래서 상한을 걸지 않는다 — 상한은 '공개 발행' 쪽에 있다.
+		async ({ title, body, tags, url_slug, thumbnail, series_id }, extra) =>
+			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
+			serializeWrite('post:new', async () => {
+				client.requireAuth('velog_create_draft');
+				if (series_id) await assertOwnsSeries(client, series_id, 'velog_create_draft');
+				// ★ 초안은 is_private:true 라 벨로그 계수(is_private:false 만 셈)에
+				//   잡히지 않는다. 그래서 상한을 걸지 않는다 — 상한은 '공개 발행' 쪽에 있다.
 
-			const input: Record<string, unknown> = {
-				title,
-				body,
-				tags,
-				url_slug: toUrlSlug(title, url_slug),
-				meta: {},
-				...DRAFT_ONLY, // ★ 마지막에 펼쳐서 위 값들이 덮어쓸 수 없게 한다
-			};
-			if (thumbnail) input['thumbnail'] = thumbnail;
-			if (series_id) input['series_id'] = series_id;
+				const input: Record<string, unknown> = {
+					title,
+					body,
+					tags,
+					url_slug: toUrlSlug(title, url_slug),
+					meta: {},
+					...DRAFT_ONLY, // ★ 마지막에 펼쳐서 위 값들이 덮어쓸 수 없게 한다
+				};
+				if (thumbnail) input['thumbnail'] = thumbnail;
+				if (series_id) input['series_id'] = series_id;
 
-			// mutate 는 재시도하지 않는다 — 응답 유실 시 초안이 중복 생성된다.
-			const data = await client.mutate<{ writePost: WrittenPost }>(
-				MUTATION_WRITE_POST,
-				{ input },
-			);
-			assertStayedDraft(data.writePost);
+				// mutate 는 재시도하지 않는다 — 응답 유실 시 초안이 중복 생성된다.
+				const data = await client.mutate<{ writePost: WrittenPost }>(
+					MUTATION_WRITE_POST,
+					{ input },
+					{ signal: extra.signal },
+				);
+				assertStayedDraft(data.writePost);
 
-			// ★ 벨로그는 임시저장 생성 시 series_id 를 조용히 버린다:
-			//   // apps/server/src/services/PostApiService/index.mts
-			//   if (series_id && !data.is_temp) await appendToSeries(...)
-			// edit 경로에는 이 조건이 없어 update_draft 로는 붙는다. 이 비대칭을
-			// 사용자가 알 방법이 없으므로 직접 알린다.
-			const seriesNote = series_id
-				? '\n\n⚠️ 시리즈는 **적용되지 않았습니다.** 벨로그가 임시저장 생성 단계에서는' +
-					' series_id 를 무시합니다. 방금 만든 초안 id 로 velog_update_draft 를' +
-					' 한 번 호출하면 그때 실제로 붙습니다.'
-				: '';
-			return textResult(draftResult(data.writePost, '저장') + seriesNote);
-		},
+				// ★ 벨로그는 임시저장 생성 시 series_id 를 조용히 버린다:
+				//   // apps/server/src/services/PostApiService/index.mts
+				//   if (series_id && !data.is_temp) await appendToSeries(...)
+				// edit 경로에는 이 조건이 없어 update_draft 로는 붙는다. 이 비대칭을
+				// 사용자가 알 방법이 없으므로 직접 알린다.
+				const seriesNote = series_id
+					? '\n\n⚠️ 시리즈는 **적용되지 않았습니다.** 벨로그가 임시저장 생성 단계에서는' +
+						' series_id 를 무시합니다. 방금 만든 초안 id 로 velog_update_draft 를' +
+						' 한 번 호출하면 그때 실제로 붙습니다.'
+					: '';
+				return textResult(draftResult(data.writePost, '저장') + seriesNote);
+			}),
 	);
 
 	server.registerTool(
@@ -181,88 +185,92 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			//   MCP 명세상 destructiveHint:false 는 '추가만 한다'는 뜻이라 거짓이 된다.
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
-		async ({ id, title, body, tags, url_slug, thumbnail, series_id }) => {
-			client.requireAuth('velog_update_draft');
+		async ({ id, title, body, tags, url_slug, thumbnail, series_id }, extra) =>
+			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
+			serializeWrite(`post:${id}`, async () => {
+				client.requireAuth('velog_update_draft');
 
-			// ★ 두 가지를 확인한 뒤에야 수정한다.
-			//   ① 내 글인가 — 벨로그 서버가 edit 에서 소유권을 안 본다(ownership.ts)
-			//   ② 정말 초안인가 — editPost 는 is_temp 를 덮어쓰므로 발행글 id 가
-			//      들어오면 그 글이 조용히 비공개로 내려간다
-			const before = await client.request<{
-				post: {
-					id: string;
-					is_temp?: boolean;
-					meta?: unknown;
-					user?: { username?: string } | null;
-				} | null;
-			}>(QUERY_POST_STATE, { input: { id } });
-			if (!before.post) {
-				throw new Error(
-					`id=${id} 인 글을 찾지 못했습니다. velog_list_drafts 로 id 를 확인하세요.`,
+				// ★ 두 가지를 확인한 뒤에야 수정한다.
+				//   ① 내 글인가 — 벨로그 서버가 edit 에서 소유권을 안 본다(ownership.ts)
+				//   ② 정말 초안인가 — editPost 는 is_temp 를 덮어쓰므로 발행글 id 가
+				//      들어오면 그 글이 조용히 비공개로 내려간다
+				const before = await client.request<{
+					post: {
+						id: string;
+						is_temp?: boolean;
+						meta?: unknown;
+						user?: { username?: string } | null;
+					} | null;
+				}>(QUERY_POST_STATE, { input: { id } });
+				if (!before.post) {
+					throw new Error(
+						`id=${id} 인 글을 찾지 못했습니다. velog_list_drafts 로 id 를 확인하세요.`,
+					);
+				}
+				await assertOwned(client, before.post, 'velog_update_draft');
+				if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_draft');
+				if (before.post.is_temp !== true) {
+					throw new Error(
+						`id=${id} 는 이미 발행된 글입니다. 이 도구로 수정하면 임시저장으로 내려가 ` +
+							`비공개가 되므로 중단했습니다. 발행된 글은 벨로그에서 직접 수정하세요.`,
+					);
+				}
+
+				const input: Record<string, unknown> = {
+					id,
+					title,
+					body,
+					tags,
+					url_slug: toUrlSlug(title, url_slug),
+					// ★ {} 를 보내면 short_description 등 표시 데이터가 지워진다.
+					//   서버가 받은 값을 그대로 DB 에 넣으므로 기존 값을 실어야 한다.
+					//   (publish.ts 만 고치고 여기를 또 빠뜨렸었다 — 소유권 때와 같은 실수)
+					meta: before.post.meta ?? {},
+					...DRAFT_ONLY,
+				};
+				if (thumbnail) input['thumbnail'] = thumbnail;
+				if (series_id) input['series_id'] = series_id;
+
+				const data = await client.mutate<{ editPost: WrittenPost }>(
+					MUTATION_EDIT_POST,
+					{ input },
+					{ signal: extra.signal },
 				);
-			}
-			await assertOwned(client, before.post, 'velog_update_draft');
-			if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_draft');
-			if (before.post.is_temp !== true) {
-				throw new Error(
-					`id=${id} 는 이미 발행된 글입니다. 이 도구로 수정하면 임시저장으로 내려가 ` +
-						`비공개가 되므로 중단했습니다. 발행된 글은 벨로그에서 직접 수정하세요.`,
+
+				// ★ editPost 의 응답으로는 사후 상태를 알 수 없다. 공식 구현이
+				//   `return { ...post, url_slug: data.url_slug }` 로 **갱신 전에 읽은**
+				//   post 를 돌려주고 url_slug 만 덮기 때문이다
+				//   (apps/server/src/services/PostApiService/index.mts).
+				//   그래서 응답의 is_temp 는 '수정 전' 값이다 — 그걸 검사해봐야 사전확인을
+				//   한 번 더 하는 것에 불과하다. 진짜 사후 확인은 재조회뿐이다.
+				// ★ 재조회 결과를 '보기만' 하면 검증이 아니다. null 도 실패로 처리한다.
+				const after = await client.request<{
+					post: { id: string; is_temp?: boolean; title?: string | null } | null;
+				}>(QUERY_POST_STATE, { input: { id } });
+				if (!after.post) {
+					throw new Error(
+						`velog_update_draft: 수정 후 글(id=${id})을 다시 찾지 못했습니다. ` +
+							'벨로그에서 상태를 직접 확인하세요.',
+					);
+				}
+				if (after.post.is_temp !== true) {
+					throw new Error(
+						`⚠️ 수정 후 확인 결과 이 글이 임시저장이 아닙니다 ` +
+							`(id=${id}, is_temp=${after.post.is_temp}). ` +
+							'수정 직전에 다른 곳에서 발행됐을 수 있습니다. 벨로그에서 상태를 확인하세요.',
+					);
+				}
+
+				// ★ data.editPost 는 '갱신 전' 객체다(공식 서버가 그렇게 반환한다).
+				//   그걸로 문구를 만들면 제목을 바꿔도 옛 제목이 표시된다.
+				//   이미 재조회했으므로 그 결과를 얹는다.
+				return textResult(
+					draftResult(
+						{ ...data.editPost, title: after.post.title ?? data.editPost.title ?? null },
+						'수정',
+					),
 				);
-			}
-
-			const input: Record<string, unknown> = {
-				id,
-				title,
-				body,
-				tags,
-				url_slug: toUrlSlug(title, url_slug),
-				// ★ {} 를 보내면 short_description 등 표시 데이터가 지워진다.
-				//   서버가 받은 값을 그대로 DB 에 넣으므로 기존 값을 실어야 한다.
-				//   (publish.ts 만 고치고 여기를 또 빠뜨렸었다 — 소유권 때와 같은 실수)
-				meta: before.post.meta ?? {},
-				...DRAFT_ONLY,
-			};
-			if (thumbnail) input['thumbnail'] = thumbnail;
-			if (series_id) input['series_id'] = series_id;
-
-			const data = await client.mutate<{ editPost: WrittenPost }>(MUTATION_EDIT_POST, {
-				input,
-			});
-
-			// ★ editPost 의 응답으로는 사후 상태를 알 수 없다. 공식 구현이
-			//   `return { ...post, url_slug: data.url_slug }` 로 **갱신 전에 읽은**
-			//   post 를 돌려주고 url_slug 만 덮기 때문이다
-			//   (apps/server/src/services/PostApiService/index.mts).
-			//   그래서 응답의 is_temp 는 '수정 전' 값이다 — 그걸 검사해봐야 사전확인을
-			//   한 번 더 하는 것에 불과하다. 진짜 사후 확인은 재조회뿐이다.
-			// ★ 재조회 결과를 '보기만' 하면 검증이 아니다. null 도 실패로 처리한다.
-			const after = await client.request<{
-				post: { id: string; is_temp?: boolean; title?: string | null } | null;
-			}>(QUERY_POST_STATE, { input: { id } });
-			if (!after.post) {
-				throw new Error(
-					`velog_update_draft: 수정 후 글(id=${id})을 다시 찾지 못했습니다. ` +
-						'벨로그에서 상태를 직접 확인하세요.',
-				);
-			}
-			if (after.post.is_temp !== true) {
-				throw new Error(
-					`⚠️ 수정 후 확인 결과 이 글이 임시저장이 아닙니다 ` +
-						`(id=${id}, is_temp=${after.post.is_temp}). ` +
-						'수정 직전에 다른 곳에서 발행됐을 수 있습니다. 벨로그에서 상태를 확인하세요.',
-				);
-			}
-
-			// ★ data.editPost 는 '갱신 전' 객체다(공식 서버가 그렇게 반환한다).
-			//   그걸로 문구를 만들면 제목을 바꿔도 옛 제목이 표시된다.
-			//   이미 재조회했으므로 그 결과를 얹는다.
-			return textResult(
-				draftResult(
-					{ ...data.editPost, title: after.post.title ?? data.editPost.title ?? null },
-					'수정',
-				),
-			);
-		},
+			}),
 	);
 
 	server.registerTool(

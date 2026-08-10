@@ -19,12 +19,17 @@ export interface CurrentUser {
 
 const cache = new WeakMap<VelogClient, CurrentUser>();
 
-export async function fetchCurrentUser(client: VelogClient): Promise<CurrentUser> {
+export async function fetchCurrentUser(
+	client: VelogClient,
+	signal?: AbortSignal,
+): Promise<CurrentUser> {
 	const cached = cache.get(client);
 	if (cached) return cached;
 
 	const data = await client.request<{ currentUser: CurrentUser | null }>(
 		QUERY_CURRENT_USER,
+		{},
+		{ signal },
 	);
 	if (!data.currentUser) {
 		throw new Error(
@@ -37,8 +42,11 @@ export async function fetchCurrentUser(client: VelogClient): Promise<CurrentUser
 }
 
 /** username 을 생략한 도구들이 쓴다. */
-export async function resolveMyUsername(client: VelogClient): Promise<string> {
-	const me = await fetchCurrentUser(client);
+export async function resolveMyUsername(
+	client: VelogClient,
+	signal?: AbortSignal,
+): Promise<string> {
+	const me = await fetchCurrentUser(client, signal);
 	if (!me.username) {
 		throw new Error(
 			'계정에 username 이 없습니다. 도구 인자로 username 을 직접 지정하세요.',

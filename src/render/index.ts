@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { makeSerializer } from '../serial.ts';
 import { dumpDom, screenshot } from './chrome.ts';
 import {
 	type AuditReport,
@@ -54,20 +55,13 @@ interface RunArgs {
  *   모델이 그림 다섯 장을 한 번에 요청하면 크롬 45개·6GB 가 된다.
  *   사용자 기기에서 도는 물건이 그러면 안 된다 — 다른 작업까지 같이 죽는다.
  *
- * 그림 한 장은 4초면 끝나므로 줄 세워도 체감 손해가 거의 없다.
- * 얻는 것(메모리 상한이 1GB 로 고정된다)이 훨씬 크다.
+ * 그림 한 장은 4초면 끝나므로 줄 세워도 체감 손해가 거의 없다
+ * (실측 2026-08-07: 3.9초/장 → 60초에 15장). 얻는 것이 훨씬 크다.
+ *
+ * ★ 구현은 src/serial.ts 로 옮겼다. 업로드도 같은 이유로 줄이 필요해졌는데,
+ *   같은 코드를 두 벌 두면 한쪽만 고치게 된다.
  */
-let renderQueue: Promise<unknown> = Promise.resolve();
-
-function serialize<T>(task: () => Promise<T>): Promise<T> {
-	// 앞 작업이 실패해도 줄은 계속 이어져야 한다.
-	const next = renderQueue.then(task, task);
-	renderQueue = next.then(
-		() => undefined,
-		() => undefined,
-	);
-	return next;
-}
+const serialize = makeSerializer();
 
 const RENDER_PREFIX = 'velog-mcp-render-';
 const PROFILE_PREFIX = 'velog-mcp-chrome-';
@@ -107,8 +101,16 @@ async function render<A extends { w: number; h: number }>(
 	// 프로필만 finally 에서 지운다. 렌더 결과(dir)는 남겨야 하므로 밖에 둘 이유가 없다.
 	let profileA = '';
 	let profileB = '';
+	// ★ 결과 디렉터리는 **성공했을 때만** 남긴다. 예전엔 실패해도 남겨서,
+	//   감사 파싱이나 스크린샷이 반복 실패하면 HTML 과 쓰다 만 PNG 가 든 폴더가
+	//   매번 하나씩 쌓였다. 청소(sweepOld)는 다음 렌더가 돌 때만, 그것도 24시간이
+	//   지난 것만 거둬가므로 다시 안 그리면 영영 남는다.
+	//   실패한 산출물은 사용자가 열어볼 이유도 없다 — 경로를 돌려주지 못하니까.
+	let resultDir = '';
+	let succeeded = false;
 	try {
 		const dir = await mkdtemp(join(tmpdir(), RENDER_PREFIX));
+		resultDir = dir;
 		// 크롬 두 번에 **서로 다른 프로필**을 준다. 산출물이 나오면 SIGKILL 하고 실제
 		// 종료를 기다리지 않으므로, 같은 프로필을 재사용하면 앞선 크롬이 잠금을 놓기
 		// 전에 다음 크롬이 같은 폴더를 열게 된다.
@@ -146,6 +148,7 @@ async function render<A extends { w: number; h: number }>(
 			);
 		}
 
+		succeeded = true;
 		return {
 			pngPath,
 			htmlPath,
@@ -156,10 +159,13 @@ async function render<A extends { w: number; h: number }>(
 			bytes: info.size,
 		};
 	} finally {
-		// 크롬 프로필은 임시 산출물이라 항상 지운다. 렌더 결과(dir)는 남긴다 —
-		// 사용자가 HTML 을 열어 손보거나 PNG 를 다시 쓸 수 있어야 한다.
+		// 크롬 프로필은 임시 산출물이라 항상 지운다. 렌더 결과(dir)는 **성공했을
+		// 때만** 남긴다 — 사용자가 HTML 을 열어 손보거나 PNG 를 다시 쓸 수 있어야 한다.
 		for (const profile of [profileA, profileB]) {
 			if (profile) await rm(profile, { recursive: true, force: true }).catch(() => {});
+		}
+		if (!succeeded && resultDir) {
+			await rm(resultDir, { recursive: true, force: true }).catch(() => {});
 		}
 	}
 }
