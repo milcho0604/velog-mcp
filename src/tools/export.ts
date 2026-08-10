@@ -196,9 +196,12 @@ export function registerExportTools(server: McpServer, client: VelogClient): voi
 					stoppedBy === '취소'
 						? `⏹️ 요청이 취소되어 ${done}/${targets.length}편에서 멈췄습니다.`
 						: `⏱️ ${TIME_BUDGET_MS / 1000}초 예산에 도달해 ${done}/${targets.length}편에서 멈췄습니다.`,
-					`남은 ${left}편은 저장되지 않았습니다. **같은 out_dir 로 다시 부르면** ` +
-						'이미 받은 파일을 덮어쓰며 이어집니다(파일 이름이 글 순서로 정해집니다). ' +
-						'한 번에 끝내려면 limit 을 줄여 나눠 부르세요.',
+					done === 0
+						? '준비 조회(계정·글 목록)만으로 예산을 다 썼습니다. 벨로그가 느린 ' +
+							'상태일 수 있으니 잠시 뒤 다시 시도하세요 — limit 을 줄여도 소용없습니다.'
+						: `남은 ${left}편은 저장되지 않았습니다. **같은 out_dir 로 다시 부르면** ` +
+							'이미 받은 파일을 덮어쓰며 이어집니다(파일 이름이 글 순서로 정해집니다). ' +
+							'한 번에 끝내려면 limit 을 줄여 나눠 부르세요.',
 				);
 			}
 			if (failed.length > 0) {

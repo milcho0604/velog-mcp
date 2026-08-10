@@ -23,6 +23,9 @@ export async function fetchCurrentUser(
 	client: VelogClient,
 	signal?: AbortSignal,
 ): Promise<CurrentUser> {
+	// ★ 캐시 적중도 취소를 존중한다. 여기서 빼면 '취소했는데 어떤 호출은 그냥
+	//   진행되는' 비일관이 생긴다 — 취소 규약은 경로마다 달라지면 안 된다.
+	signal?.throwIfAborted();
 	const cached = cache.get(client);
 	if (cached) return cached;
 

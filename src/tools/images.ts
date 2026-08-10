@@ -425,6 +425,9 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			//   10MB 버퍼가 메모리에 올라간 채 순서를 기다린다 — 줄을 세운 이유
 			//   (메모리 상한)가 그대로 사라진다. 코덱스 교차검증에서 잡았다.
 			const url = await serializeUpload(async () => {
+				// ★ 줄에서 기다리는 동안 취소됐을 수 있다. 읽기 전에 확인한다 —
+				//   안 그러면 이미 포기한 요청이 파일부터 읽고 버퍼를 잡는다.
+				args.signal.throwIfAborted();
 				const bytes = new Uint8Array(await readFile(args.pngPath));
 				const uploadOptions: Parameters<VelogClient['uploadImage']>[2] = args.postId
 					? { type: 'post', contentType: 'image/png', refId: args.postId, signal: args.signal }
@@ -629,6 +632,14 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			// ★ 읽기부터 줄 안이다 — 이유는 위 finish() 의 주석과 같다.
 			//   대기 중인 요청이 10MB 씩 들고 서 있으면 상한을 둔 의미가 없다.
 			const { url, kind, bytes } = await serializeUpload(async () => {
+				extra.signal.throwIfAborted();
+				// ★ 거부 목록은 줄 밖에서 한 번 봤지만, 기다리는 사이에 이 PNG 가
+				//   감사에서 떨어져 목록에 오를 수 있다. 읽기 직전에 다시 본다.
+				if (await isRejected(args.path)) {
+					throw new Error(
+						'이 PNG 는 이 서버의 자가감사에서 떨어진 산출물입니다 — 올릴 수 없습니다.',
+					);
+				}
 				const read = await readImageFile(args.path);
 				const uploadOptions: Parameters<VelogClient['uploadImage']>[2] = args.post_id
 					? { type: args.type, contentType: read.kind.mime, refId: args.post_id, signal: extra.signal }

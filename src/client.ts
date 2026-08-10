@@ -300,7 +300,10 @@ export class VelogClient {
 		options: RequestOptions = {},
 	): Promise<T> {
 		options.signal?.throwIfAborted();
-		return this.#requestOnce<T>(query, variables, { signal: options.signal });
+		return this.#requestOnce<T>(query, variables, {
+			signal: options.signal,
+			isMutation: true,
+		});
 	}
 
 	/**
@@ -428,7 +431,12 @@ export class VelogClient {
 	async #requestOnce<T>(
 		query: string,
 		variables: Record<string, unknown>,
-		options: { signal?: AbortSignal | undefined; timeoutMs?: number } = {},
+		options: {
+			signal?: AbortSignal | undefined;
+			timeoutMs?: number;
+			/** 쓰기인가. 결과 불명 경고를 붙일지 판단하는 데만 쓴다. */
+			isMutation?: boolean;
+		} = {},
 	): Promise<T> {
 		const headers: Record<string, string> = {
 			'Content-Type': 'application/json',
@@ -522,6 +530,15 @@ export class VelogClient {
 			//   무엇을 모르는지 그대로 알려줘야 사용자가 판단할 수 있다
 			//   (uploadImage 의 '올라갔는지 알 수 없습니다' 와 같은 규율).
 			const created = firstId(payload.data);
+			// ★★ GraphQL 명세상 `data` 키의 **유무**가 실행 여부를 가른다.
+			//   키가 아예 없으면 질의가 실행 전에 거부된 것(파싱·검증 실패)이고,
+			//   `data: null` 은 **실행이 시작된 뒤** non-null 필드 오류가 최상위까지
+			//   전파된 것이다. 쓰기에서 후자는 "서버가 이미 반영했는데 응답을 못
+			//   만든" 경우일 수 있다 — 벨로그 스키마상 writePost·editPost 는 `Post!`,
+			//   `Post.id` 는 `ID!` 라 이 전파가 실제로 가능하다.
+			//   그걸 평범한 실패로 보고하면 사용자가 다시 불러 글이 두 번 생긴다.
+			//   (코덱스 3차 교차검증 지적)
+			const executed = Object.hasOwn(payload, 'data');
 			// ★ '`data` 가 있다'만으로 부분 성공이라 하면 안 된다. GraphQL 은 resolver
 			//   가 깨지면 `{ data: { post: null }, errors: [...] }` 를 준다 — 이건
 			//   아무것도 반영되지 않은 **완전 실패**다. 그걸 partial 로 찍으면
@@ -529,9 +546,13 @@ export class VelogClient {
 			//   (코덱스 교차검증에서 잡았다: 재시도 가능하던 읽기가 1회로 죽었다.)
 			//   그래서 **값이 하나라도 실제로 들어있을 때만** 부분 성공으로 본다.
 			const partial = hasAnyValue(payload.data);
-			const partialWarning = partial
-				? '\n⚠️ 서버가 결과 데이터를 함께 돌려줬습니다 — 요청이 **이미 반영됐을 수** ' +
-					'있습니다. 다시 시도하면 두 번 적용될 수 있으니 벨로그에서 확인한 뒤 결정하세요.' +
+			const unknownOutcome = partial || (options.isMutation === true && executed);
+			const partialWarning = unknownOutcome
+				? '\n⚠️ 요청이 **이미 반영됐을 수** 있습니다' +
+					(partial
+						? ' (서버가 결과 데이터를 함께 돌려줬습니다).'
+						: ' (서버가 실행을 시작한 뒤 응답을 만들지 못했습니다).') +
+					' 다시 시도하면 두 번 적용될 수 있으니 벨로그에서 확인한 뒤 결정하세요.' +
 					(created ? ` (id=${created})` : '')
 				: '';
 
@@ -542,6 +563,9 @@ export class VelogClient {
 				`벨로그 GraphQL 오류: ${this.#mask(messages)}${hint}${partialWarning}`,
 				{
 					graphqlErrorCodes: codes.filter((c): c is string => typeof c === 'string'),
+					// partial 은 '값이 실제로 왔다' 는 뜻이고, 이게 붙으면 재시도가 막힌다.
+					// 쓰기의 결과 불명은 어차피 mutate 가 재시도하지 않으므로 표식을
+					// 넓히지 않는다 — 읽기의 정당한 재시도까지 막을 이유가 없다.
 					...(partial ? { partial: true } : {}),
 				},
 			);

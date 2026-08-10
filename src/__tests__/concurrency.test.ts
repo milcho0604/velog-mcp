@@ -17,6 +17,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from '../index.ts';
 import { VelogClient } from '../client.ts';
 import { TokenStore } from '../auth.ts';
+import { resolveMyUsername } from '../me.ts';
 import { makeKeyedSerializer, makeSerializer } from '../serial.ts';
 
 describe('serial — 줄 세우기', () => {
@@ -181,6 +182,7 @@ function statefulServer(options: { publicPublish?: boolean } = {}) {
 	/** 같은 글의 사전 조회가 겹치는지 센다. 줄이 제대로면 1 을 넘지 않는다. */
 	let inflightReads = 0;
 	let maxConcurrentReads = 0;
+	let totalReads = 0;
 
 	const client = new VelogClient({
 		auth: {
@@ -217,6 +219,7 @@ function statefulServer(options: { publicPublish?: boolean } = {}) {
 				//   직렬화를 꺼도 테스트가 통과하는 거짓 초록을 봤다.
 				const snapshot = { ...stored };
 				inflightReads++;
+				totalReads++;
 				maxConcurrentReads = Math.max(maxConcurrentReads, inflightReads);
 				if (readDelayMs > 0) await new Promise((r) => setTimeout(r, readDelayMs));
 				inflightReads--;
@@ -233,6 +236,7 @@ function statefulServer(options: { publicPublish?: boolean } = {}) {
 			readDelayMs = ms;
 		},
 		maxConcurrentReads: () => maxConcurrentReads,
+		totalReads: () => totalReads,
 		async connect() {
 			const server = createServer(client, {
 				publicPublish: options.publicPublish ?? true,
@@ -472,7 +476,7 @@ describe('★ 다른 도구라도 같은 글이면 같은 줄에 선다', () => 
 		fake.setReadDelay(40);
 		const mcp = await fake.connect();
 
-		await Promise.allSettled([
+		const results = await Promise.allSettled([
 			mcp.callTool({
 				name: 'velog_update_draft',
 				arguments: { id: 'p1', title: '초안 제목', body: '초안 본문' },
@@ -481,6 +485,18 @@ describe('★ 다른 도구라도 같은 글이면 같은 줄에 선다', () => 
 		]);
 		await mcp.close();
 
+		// ★ 겹침이 1 이라는 사실은 **둘 다 실제로 조회했을 때만** 의미가 있다.
+		//   하나가 조기 실패해 조회를 한 번만 해도 1 이 나온다 — 코덱스가 잡은
+		//   거짓 초록 경로다. 그래서 조회 횟수와 도달 여부를 함께 못박는다.
+		assert.equal(results.length, 2);
+		assert.ok(
+			results.every((r) => r.status === 'fulfilled'),
+			'도구 호출 자체가 거절됐다 — 경합을 볼 기회조차 없었다',
+		);
+		assert.ok(
+			fake.totalReads() >= 2,
+			`두 도구가 각자 사전 조회를 해야 한다 (실제 ${fake.totalReads()}회)`,
+		);
 		assert.equal(
 			fake.maxConcurrentReads(),
 			1,
@@ -488,3 +504,144 @@ describe('★ 다른 도구라도 같은 글이면 같은 줄에 선다', () => 
 		);
 	});
 });
+
+/**
+ * 코덱스 3차에서 나온 것들 — 1차 수정을 하며 **빠뜨린 자리**들이다.
+ * 배선은 한 군데만 빠져도 그 경로가 통째로 무방비가 된다.
+ */
+describe('★ 취소 배선의 빈틈 (코덱스 3차)', () => {
+	/**
+	 * ★ 처음엔 'fetch 에 signal 이 실렸는가'로 봤는데 그건 거짓 초록이다 —
+	 *   타임아웃 때문에 signal 은 **항상** 실린다. 취소가 실제로 루프를 멈추는지를
+	 *   페이지 조회 횟수로 본다.
+	 */
+	test('velog_blog_stats 도 취소를 본다 — 최대 10페이지를 넘긴다', async () => {
+		const PAGE_SIZE = 50;
+		let pages = 0;
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async (_url: string, init: { body: string }) => {
+				const body = JSON.parse(init.body) as { query: string };
+				const json = (data: unknown): Response =>
+					new Response(JSON.stringify({ data }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				if (body.query.includes('currentUser')) {
+					return json({ currentUser: { id: 'u1', username: 'me' } });
+				}
+				if (body.query.includes('GetPosts')) {
+					pages++;
+					await new Promise((r) => setTimeout(r, 30));
+					// 꽉 찬 페이지를 계속 줘서 루프가 상한까지 가게 만든다.
+					return json({
+						posts: Array.from({ length: PAGE_SIZE }, (_, i) => ({
+							id: `p${pages}-${i}`,
+							title: 't',
+							url_slug: `s${pages}-${i}`,
+							views: 1,
+							tags: [],
+						})),
+					});
+				}
+				return json({});
+			}) as unknown as typeof fetch,
+		});
+
+		const server = createServer(client, { publicPublish: false, editProfile: false });
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		const mcp = new Client({ name: 'stats-test', version: '1' });
+		await Promise.all([server.connect(b), mcp.connect(a)]);
+
+		const controller = new AbortController();
+		const call = mcp.callTool(
+			{ name: 'velog_blog_stats', arguments: { username: 'me', max_pages: 10 } },
+			undefined,
+			{ signal: controller.signal },
+		);
+		setTimeout(() => { controller.abort(); }, 50);
+		await assert.rejects(() => call);
+
+		const atCancel = pages;
+		await new Promise((r) => setTimeout(r, 500));
+		assert.ok(atCancel < 10, `취소했는데 ${atCancel}페이지까지 갔다`);
+		assert.equal(pages, atCancel, '취소한 뒤에도 페이지를 계속 넘겼다');
+		await mcp.close();
+	});
+
+;
+
+	test('me 캐시가 있어도 취소된 요청은 진행하지 않는다', async () => {
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ data: { currentUser: { id: 'u1', username: 'me' } } }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				})) as unknown as typeof fetch,
+		});
+		// 캐시를 채운다.
+		assert.equal(await resolveMyUsername(client), 'me');
+
+		const controller = new AbortController();
+		controller.abort();
+		await assert.rejects(
+			() => resolveMyUsername(client, controller.signal),
+			'캐시 적중 경로가 취소를 무시했다 — 취소 규약이 경로마다 달라진다',
+		);
+	});
+});
+
+describe('★ 쓰기의 결과 불명 — GraphQL 은 data 키 유무로 실행 여부를 말한다', () => {
+	function client() {
+		const c = new VelogClient({
+			auth: { kind: 'anonymous' },
+			sleepImpl: async () => {},
+			fetchImpl: (async () =>
+				// data 키가 **있고 값이 null** = 실행이 시작된 뒤 non-null 전파.
+				new Response(JSON.stringify({ data: null, errors: [{ message: 'boom' }] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				})) as unknown as typeof fetch,
+		});
+		return c;
+	}
+
+	test('mutation 이 data:null 을 받으면 반영 여부 불명이라고 알린다', async () => {
+		await assert.rejects(
+			() => client().mutate('mutation { writePost }'),
+			(e: Error) => /이미 반영됐을 수/.test(e.message),
+		);
+	});
+
+	test('읽기에는 그 경고를 붙이지 않는다 — 겁줄 이유가 없다', async () => {
+		await assert.rejects(
+			() => client().request('{ post }'),
+			(e: Error) => !/이미 반영됐을 수/.test(e.message),
+		);
+	});
+});
+
+/**
+ * ⚠️ 여기서 **덮지 못한 것** — 없는 척하지 않고 적어둔다.
+ *
+ * 1. `velog_upload_image` 가 줄에서 기다리다 취소됐을 때 파일을 읽지 않는지.
+ *    재현하려면 (a) 시그니처 검사를 통과하는 진짜 PNG 와 (b) 앞선 업로드로 줄을
+ *    점유한 상태가 동시에 필요한데, `serializeUpload` 가 모듈 내부라 테스트에서
+ *    줄을 잡을 방법이 없다. 지금은 `images.ts` 의 `signal.throwIfAborted()` 위치와
+ *    safety.test.ts 의 구조 테스트(업로드에 signal 이 실리는가)로만 지킨다.
+ * 2. `export` 의 50초 예산 자체. 벽시계가 필요하다 — 지금은 예산 시계를 켜는
+ *    **위치**만 safety.test.ts 가 고정한다(목록 조회보다 앞인지).
+ * 3. 다른 프로세스와의 TOCTOU. 벨로그에 ETag 가 없어 코드로 막을 수 없다
+ *    (tools/publish.ts 주석 참고).
+ *
+ * 이 목록이 줄어들 때마다 여기서 지운다. 늘어나면 여기에 적는다.
+ */

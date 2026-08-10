@@ -163,9 +163,15 @@ export function registerStatsTools(server: McpServer, client: VelogClient): void
 			},
 			annotations: READ_ONLY,
 		},
-		async ({ username, top, max_pages }) => {
-			const target = username ?? (await resolveMyUsername(client));
-			const { posts, truncated, outcome } = await fetchAllPosts(client, target, max_pages);
+		async ({ username, top, max_pages }, extra) => {
+			// ★ 최대 20페이지를 넘긴다. 취소를 안 보면 사용자가 포기한 뒤에도 계속 돈다.
+			const target = username ?? (await resolveMyUsername(client, extra.signal));
+			const { posts, truncated, outcome } = await fetchAllPosts(
+				client,
+				target,
+				max_pages,
+				extra.signal,
+			);
 			if (posts.length === 0) return textResult(`@${target} 의 공개 글이 없습니다.`);
 
 			const totals = sum(posts);
