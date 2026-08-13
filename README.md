@@ -259,10 +259,18 @@ becomes your thumbnail. `velog_update_post` **never replaces an existing thumbna
 editing a title should not change the card. There, `null` means "don't fill it in",
 not "delete it".
 
-#### Series
+#### Series — by name, in one call
 
-Omit `series_id` and the result includes **your series list** so you can pick one. If
-that lookup fails the post is already saved, so it **never fails the write**.
+Pass `series_name` and the server resolves it **before** saving, then sends the id in the
+**same request** — writing and filing happen in one call. Names are matched ignoring case
+and surrounding whitespace; `series_id` wins if you know it.
+
+⚠️ **If the name isn't found, nothing is written** — saving without the series would look
+like it worked. The available series are listed in the error.
+
+Omit both and the result carries **your series list**. That lookup never fails the write
+(cancellation included — reporting failure after a successful save makes retries duplicate
+the post).
 
 > ⚠️ The velog API cannot **create** a series — there is no series mutation, and
 > `WritePostInput` only accepts `series_id`. Create one on velog once, then this

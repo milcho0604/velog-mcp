@@ -28,6 +28,67 @@ interface SeriesRow {
 /** 힌트에 보여줄 최대 개수. 시리즈가 수십 개인 사람도 있다. */
 const MAX_SHOWN = 12;
 
+/** 목록을 사람이 고를 수 있게 줄로 만든다. */
+function listLines(list: SeriesRow[]): string {
+	const shown = list
+		.slice(0, MAX_SHOWN)
+		.map((s) => `   - ${s.name ?? '(이름 없음)'} (${s.posts_count ?? 0}편) — \`${s.id}\``)
+		.join('\n');
+	return list.length > MAX_SHOWN ? `${shown}\n   … 외 ${list.length - MAX_SHOWN}개` : shown;
+}
+
+/** 비교용 정규화 — 앞뒤 공백·대소문자·연속 공백 차이는 무시한다. */
+function norm(name: string): string {
+	return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * 시리즈 **이름**을 id 로 바꾼다. ★ 저장(mutation) **전에** 부른다.
+ *
+ * ★★ 왜 이름을 받나 — id 는 사람도 AI 도 모른다. 이름만 받을 수 있으면
+ *   "저장하면서 시리즈에 넣기"가 **한 번의 호출로** 끝난다. 예전엔
+ *   저장 → 목록 받기 → 다시 붙이기로 **세 번**이었다.
+ *
+ * ★ 못 찾으면 **던진다.** 이 시점엔 아직 아무것도 안 썼으므로 던지는 게 안전하고,
+ *   조용히 시리즈 없이 저장하면 사용자는 들어간 줄 안다. 벨로그 API 로는 시리즈를
+ *   만들 수 없으므로(뮤테이션 없음) 목록을 함께 보여주고 사람이 정하게 한다.
+ */
+export async function resolveSeriesId(
+	client: VelogClient,
+	username: string,
+	seriesName: string,
+	toolName: string,
+	signal?: AbortSignal,
+): Promise<string> {
+	const data = await client.request<{ seriesList: SeriesRow[] | null }>(
+		QUERY_SERIES_LIST,
+		{ input: { username } },
+		{ signal },
+	);
+	const list = data.seriesList ?? [];
+	const want = norm(seriesName);
+	const hit = list.filter((s) => typeof s.name === 'string' && norm(s.name) === want);
+
+	if (hit.length === 1) {
+		const id = hit[0]?.id;
+		if (id) return id;
+	}
+	if (hit.length > 1) {
+		throw new Error(
+			`${toolName}: "${seriesName}" 과 이름이 같은 시리즈가 ${hit.length}개입니다. ` +
+				`series_id 로 직접 지정하세요.\n${listLines(hit)}`,
+		);
+	}
+	throw new Error(
+		`${toolName}: "${seriesName}" 시리즈를 찾지 못했습니다. **글은 저장하지 않았습니다.**\n` +
+			(list.length === 0
+				? '   아직 만든 시리즈가 없습니다.'
+				: `   있는 시리즈:\n${listLines(list)}`) +
+			'\n   ⚠️ 벨로그 API 로는 시리즈를 **만들 수 없습니다**(조회만 열려 있습니다). ' +
+			'벨로그 웹에서 만든 뒤 다시 시도하거나, 위 목록의 이름을 쓰세요.',
+	);
+}
+
 /**
  * 내 시리즈 목록을 사람이 읽을 안내문으로 만든다.
  *
@@ -58,15 +119,10 @@ export async function describeSeriesOptions(
 		);
 	}
 
-	const shown = list
-		.slice(0, MAX_SHOWN)
-		.map((s) => `   - ${s.name ?? '(이름 없음)'} (${s.posts_count ?? 0}편) — \`${s.id}\``)
-		.join('\n');
-	const more = list.length > MAX_SHOWN ? `\n   … 외 ${list.length - MAX_SHOWN}개` : '';
-
 	return (
-		'\n\n📚 시리즈에 넣지 않았습니다. 넣으려면 series_id 에 아래 중 하나를 주세요.\n' +
-		`${shown}${more}\n` +
+		'\n\n📚 시리즈에 넣지 않았습니다. 넣으려면 **series_name** 에 아래 이름 중 하나를 주세요' +
+		'(다음부터는 저장과 동시에 붙습니다).\n' +
+		`${listLines(list)}\n` +
 		'   맞는 시리즈가 없으면 벨로그 웹에서 새로 만드세요 — API 로는 만들 수 없습니다.'
 	);
 }

@@ -17,6 +17,18 @@ import {
 } from '../thumbnail.ts';
 import { seriesHintSafely, describeSeriesOptions } from '../series.ts';
 import { VelogClient } from '../client.ts';
+import { createServer } from '../index.ts';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+/** 공개 발행이 열린 서버에 붙는다 — series_name 배선을 도구 경로로 확인하려고. */
+async function connectPublish(client: VelogClient): Promise<Client> {
+	const server = createServer(client, { publicPublish: true, editProfile: false });
+	const [ct, st] = InMemoryTransport.createLinkedPair();
+	const mcp = new Client({ name: 't', version: '0' });
+	await Promise.all([mcp.connect(ct), server.connect(st)]);
+	return mcp;
+}
 
 const IMG = 'https://velog.velcdn.com/images/me/post/aaa/image.png';
 const IMG2 = 'https://velog.velcdn.com/images/me/post/bbb/image.png';
@@ -277,5 +289,99 @@ describe('시리즈 힌트', () => {
 			'',
 			'저장이 끝난 뒤의 취소가 도구 호출 전체를 실패시킨다 — 재시도하면 글이 두 번 생긴다',
 		);
+	});
+});
+
+describe('★ 시리즈를 이름으로 — 저장과 같은 요청에 실린다', () => {
+	/** seriesList 와 writePost 를 모두 답하고, 나간 mutation 을 붙잡는 가짜 서버. */
+	function server(rows: Array<{ id: string; name: string; posts_count: number }>) {
+		let sentInput: Record<string, unknown> | null = null;
+		let wrote = false;
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async (_u: string, init: { body: string }) => {
+				const b = JSON.parse(init.body) as {
+					query: string;
+					variables?: { input?: Record<string, unknown> };
+				};
+				const json = (data: unknown): Response =>
+					new Response(JSON.stringify({ data }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				if (b.query.includes('seriesList')) return json({ seriesList: rows });
+				if (b.query.includes('currentUser')) {
+					return json({ currentUser: { id: 'u1', username: 'me' } });
+				}
+				if (b.query.includes('writePost')) {
+					wrote = true;
+					sentInput = b.variables?.input ?? {};
+					return json({
+						writePost: {
+							id: 'p1',
+							title: 't',
+							url_slug: 's',
+							is_temp: false,
+							is_private: false,
+							user: { username: 'me' },
+						},
+					});
+				}
+				return json({});
+			}) as unknown as typeof fetch,
+		});
+		return { client, sent: () => sentInput, wrote: () => wrote };
+	}
+
+	test('이름을 주면 mutation 에 series_id 가 실려 나간다', async () => {
+		const fake = server([{ id: 's-pg', name: 'PostgreSQL', posts_count: 6 }]);
+		const mcp = await connectPublish(fake.client);
+		await mcp.callTool({
+			name: 'velog_publish_post',
+			arguments: { title: 't', body: 'b', series_name: 'PostgreSQL' },
+		});
+		await mcp.close();
+		assert.equal(
+			fake.sent()?.['series_id'],
+			's-pg',
+			'이름을 줬는데 저장 요청에 series_id 가 안 실렸다 — 결국 두 번 손대야 한다',
+		);
+	});
+
+	test('대소문자·공백이 달라도 찾는다', async () => {
+		const fake = server([{ id: 's-pg', name: 'PostgreSQL', posts_count: 6 }]);
+		const mcp = await connectPublish(fake.client);
+		await mcp.callTool({
+			name: 'velog_publish_post',
+			arguments: { title: 't', body: 'b', series_name: '  postgresql ' },
+		});
+		await mcp.close();
+		assert.equal(fake.sent()?.['series_id'], 's-pg');
+	});
+
+	/** ★★ 못 찾으면 **아무것도 쓰지 않는다.** 조용히 시리즈 없이 저장하면 안 된다. */
+	test('없는 이름이면 글을 저장하지 않는다', async () => {
+		const fake = server([{ id: 's-pg', name: 'PostgreSQL', posts_count: 6 }]);
+		const mcp = await connectPublish(fake.client);
+		const res = (await mcp.callTool({
+			name: 'velog_publish_post',
+			arguments: { title: 't', body: 'b', series_name: '없는시리즈' },
+		})) as { isError?: boolean; content?: Array<{ text?: string }> };
+		await mcp.close();
+		assert.equal(fake.wrote(), false, '못 찾았는데 글이 저장됐다 — 시리즈 없이 남는다');
+		assert.match(res.content?.[0]?.text ?? '', /저장하지 않았습니다/);
+		assert.match(res.content?.[0]?.text ?? '', /PostgreSQL/, '고를 수 있는 목록을 안 준다');
+	});
+
+	test('대조군 — 이름을 안 주면 저장은 정상으로 된다', async () => {
+		const fake = server([{ id: 's-pg', name: 'PostgreSQL', posts_count: 6 }]);
+		const mcp = await connectPublish(fake.client);
+		await mcp.callTool({ name: 'velog_publish_post', arguments: { title: 't', body: 'b' } });
+		await mcp.close();
+		assert.equal(fake.wrote(), true, '계측이 죽었다면 위 테스트들이 무의미하다');
 	});
 });

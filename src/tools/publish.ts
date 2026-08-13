@@ -25,7 +25,7 @@ import {
 	chooseThumbnailForUpdate,
 	describeThumbnail,
 } from '../thumbnail.ts';
-import { seriesHintSafely } from '../series.ts';
+import { seriesHintSafely, resolveSeriesId } from '../series.ts';
 import { resolveMyUsername } from '../me.ts';
 
 const MUTATION_WRITE_POST = `
@@ -65,6 +65,7 @@ interface PublishArgs {
 	url_slug?: string | undefined;
 	thumbnail?: string | null | undefined;
 	series_id?: string | undefined;
+	series_name?: string | undefined;
 	is_private?: boolean | undefined;
 }
 
@@ -81,6 +82,7 @@ interface UpdatePostArgs {
 	url_slug?: string | undefined;
 	thumbnail?: string | null | undefined;
 	series_id?: string | undefined;
+	series_name?: string | undefined;
 	is_private?: boolean | undefined;
 }
 
@@ -342,6 +344,14 @@ export function registerPublishTools(
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
 				thumbnail: THUMBNAIL_FIELD,
 				series_id: z.string().optional(),
+				series_name: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'시리즈 **이름**(id 대신). 저장 전에 내 시리즈에서 찾아 같은 요청에 실어 보낸다 — ' +
+							'한 번의 호출로 시리즈까지 붙는다. 못 찾으면 저장하지 않고 목록을 알려준다',
+					),
 				...visibilityField,
 			},
 			// 공개 발행은 되돌릴 수 없다(RSS·검색·메일). destructive 로 표시한다.
@@ -351,8 +361,19 @@ export function registerPublishTools(
 			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
 			serializeWrite('post:new', async () => {
 				client.requireAuth('velog_publish_post');
-				const { title, body, tags, url_slug, thumbnail, series_id } = args;
+				const { title, body, tags, url_slug, thumbnail, series_name } = args;
+				let series_id = args.series_id?.trim() || undefined;
 				const isPrivate = resolvePrivacy(args.is_private);
+				// ★ 이름을 id 로 바꾼다. **저장 전에** 한다 — 못 찾으면 아무것도 안 쓴 채 멈춘다.
+				if (series_name !== undefined && series_id === undefined) {
+					series_id = await resolveSeriesId(
+						client,
+						await resolveMyUsername(client, extra.signal),
+						series_name,
+						'velog_publish_post',
+						extra.signal,
+					);
+				}
 				if (series_id) await assertOwnsSeries(client, series_id, 'velog_publish_post');
 				// ★ 상한은 '검증을 다 통과한 뒤' 소비한다. 앞에 두면 잘못된 입력으로
 				//   5번 실패해도 5분간 공개 발행이 막힌다.
@@ -540,6 +561,14 @@ export function registerPublishTools(
 				url_slug: z.string().optional().describe('생략하면 기존 주소 유지'),
 				thumbnail: THUMBNAIL_FIELD,
 				series_id: z.string().optional(),
+				series_name: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'시리즈 **이름**(id 대신). 저장 전에 내 시리즈에서 찾아 같은 요청에 실어 보낸다 — ' +
+							'한 번의 호출로 시리즈까지 붙는다. 못 찾으면 저장하지 않고 목록을 알려준다',
+					),
 				...visibilityFieldForUpdate,
 			},
 			// 생략 필드는 보존하지만 넘긴 필드는 덮어쓴다. MCP 명세상 false 는
@@ -554,7 +583,8 @@ export function registerPublishTools(
 				// ★ 빈 문자열은 '미지정'으로 읽는다. 예전엔 `'' ?? post.series?.id` 가
 				//   `''` 로 평가돼 기존 시리즈가 전송에서 빠졌고, 전체교체형 editPost 가
 				//   **연결을 끊었다.** 끊고 싶으면 벨로그에서 직접 할 일이다.
-				const series_id = args.series_id?.trim() || undefined;
+				let series_id = args.series_id?.trim() || undefined;
+				const { series_name } = args;
 
 				// ★ 병합 수정. 기존 값을 읽어 생략 필드를 채운다 — 초안 도구에서
 				//   '생략하면 초기화'가 사고를 부른다는 걸 확인했으므로 이쪽은 보존한다.
@@ -577,6 +607,16 @@ export function registerPublishTools(
 					);
 				}
 
+				// ★ 이름을 id 로 바꾼다. **저장 전에** 한다 — 못 찾으면 아무것도 안 쓴 채 멈춘다.
+				if (series_name !== undefined && series_id === undefined) {
+					series_id = await resolveSeriesId(
+						client,
+						post.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+						series_name,
+						'velog_update_post',
+						extra.signal,
+					);
+				}
 				if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_post');
 
 				// ★★ 공개 범위는 **기존 값을 잇는다.** 게이트가 꺼져 있어도 마찬가지다.

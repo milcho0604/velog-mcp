@@ -22,7 +22,7 @@ import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
 import { serializeWrite } from '../serial.ts';
 import { chooseThumbnail, describeThumbnail } from '../thumbnail.ts';
-import { seriesHintSafely } from '../series.ts';
+import { seriesHintSafely, resolveSeriesId } from '../series.ts';
 
 /**
  * ★ 발행 차단 지점. 이 값은 파라미터가 아니라 상수다.
@@ -131,14 +131,36 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 							'초안 생성 후 velog_update_draft 로 다시 지정해야 실제로 붙는다. ' +
 							'생략하면 결과에 내 시리즈 목록을 함께 돌려준다',
 					),
+				series_name: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'시리즈 **이름**(id 대신). 저장 전에 내 시리즈에서 찾는다. ' +
+							'못 찾으면 저장하지 않고 목록을 알려준다',
+					),
 			},
 			// 되돌릴 수 있는 쓰기다 — 비공개 초안이므로 파괴적이지 않다.
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
-		async ({ title, body, tags, url_slug, thumbnail, series_id }, extra) =>
+		async (
+			{ title, body, tags, url_slug, thumbnail, series_id: rawSeriesId, series_name },
+			extra,
+		) =>
 			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
 			serializeWrite('post:new', async () => {
 				client.requireAuth('velog_create_draft');
+				let series_id = rawSeriesId?.trim() || undefined;
+				// ★ 이름을 id 로. **저장 전에** 한다 — 못 찾으면 아무것도 안 쓴 채 멈춘다.
+				if (series_name !== undefined && series_id === undefined) {
+					series_id = await resolveSeriesId(
+						client,
+						await resolveMyUsername(client, extra.signal),
+						series_name,
+						'velog_create_draft',
+						extra.signal,
+					);
+				}
 				if (series_id) await assertOwnsSeries(client, series_id, 'velog_create_draft');
 				// ★ 초안은 is_private:true 라 벨로그 계수(is_private:false 만 셈)에
 				//   잡히지 않는다. 그래서 상한을 걸지 않는다 — 상한은 '공개 발행' 쪽에 있다.
@@ -207,12 +229,23 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				url_slug: z.string().optional(),
 				thumbnail: THUMBNAIL_FIELD,
 				series_id: z.string().optional(),
+				series_name: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'시리즈 **이름**(id 대신). 저장 전에 내 시리즈에서 찾는다. ' +
+							'못 찾으면 저장하지 않고 목록을 알려준다',
+					),
 			},
 			// ★ destructive 가 맞다. 생략 필드가 보존되지 않고 초기화된다 —
 			//   MCP 명세상 destructiveHint:false 는 '추가만 한다'는 뜻이라 거짓이 된다.
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
 		},
-		async ({ id, title, body, tags, url_slug, thumbnail, series_id }, extra) =>
+		async (
+			{ id, title, body, tags, url_slug, thumbnail, series_id: rawSeriesId, series_name },
+			extra,
+		) =>
 			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
 			serializeWrite(`post:${id}`, async () => {
 				client.requireAuth('velog_update_draft');
@@ -235,6 +268,16 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					);
 				}
 				await assertOwned(client, before.post, 'velog_update_draft');
+				let series_id = rawSeriesId?.trim() || undefined;
+				if (series_name !== undefined && series_id === undefined) {
+					series_id = await resolveSeriesId(
+						client,
+						before.post.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+						series_name,
+						'velog_update_draft',
+						extra.signal,
+					);
+				}
 				if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_draft');
 				if (before.post.is_temp !== true) {
 					throw new Error(
