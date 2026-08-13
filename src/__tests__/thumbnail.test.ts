@@ -385,3 +385,114 @@ describe('★ 시리즈를 이름으로 — 저장과 같은 요청에 실린다
 		assert.equal(fake.wrote(), true, '계측이 죽었다면 위 테스트들이 무의미하다');
 	});
 });
+
+/**
+ * ★ 코덱스가 지적한 구멍 — series_name 회귀 테스트가 publish_post 에만 있었다.
+ *   나머지 경로도 같은 계약을 지키는지 고정한다.
+ */
+describe('★ series_name — 나머지 경로도 같은 계약인가', () => {
+	/** 발행글 조회·수정·시리즈목록을 모두 답하는 가짜 서버. */
+	function fullServer(rows: Array<{ id: string; name: string; posts_count: number }>) {
+		const sent: Array<Record<string, unknown>> = [];
+		let seriesLookups = 0;
+		let wrote = false;
+		const stored = {
+			id: 'p1',
+			title: '원래제목',
+			body: '원래본문',
+			url_slug: 'slug',
+			is_temp: false,
+			is_private: false,
+			thumbnail: null,
+			tags: [],
+			meta: {},
+			series: null,
+			user: { username: 'me' },
+		};
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async (_u: string, init: { body: string }) => {
+				const b = JSON.parse(init.body) as {
+					query: string;
+					variables?: { input?: Record<string, unknown> };
+				};
+				const json = (data: unknown): Response =>
+					new Response(JSON.stringify({ data }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				if (b.query.includes('seriesList')) {
+					seriesLookups++;
+					return json({ seriesList: rows });
+				}
+				if (b.query.includes('currentUser')) {
+					return json({ currentUser: { id: 'u1', username: 'me' } });
+				}
+				if (b.query.includes('editPost')) {
+					wrote = true;
+					sent.push(b.variables?.input ?? {});
+					Object.assign(stored, b.variables?.input ?? {});
+					return json({ editPost: { ...stored } });
+				}
+				if (b.query.includes('post(input')) return json({ post: { ...stored } });
+				return json({});
+			}) as unknown as typeof fetch,
+		});
+		return {
+			client,
+			sent: () => sent,
+			wrote: () => wrote,
+			seriesLookups: () => seriesLookups,
+		};
+	}
+
+	test('update_post 도 이름으로 붙는다', async () => {
+		const fake = fullServer([{ id: 's-dk', name: 'docker', posts_count: 4 }]);
+		const mcp = await connectPublish(fake.client);
+		await mcp.callTool({
+			name: 'velog_update_post',
+			arguments: { id: 'p1', title: '새 제목', series_name: 'docker' },
+		});
+		await mcp.close();
+		assert.equal(fake.sent()[0]?.['series_id'], 's-dk', 'update_post 에선 이름이 안 먹는다');
+	});
+
+	test('update_post — 없는 이름이면 수정도 하지 않는다', async () => {
+		const fake = fullServer([{ id: 's-dk', name: 'docker', posts_count: 4 }]);
+		const mcp = await connectPublish(fake.client);
+		const res = (await mcp.callTool({
+			name: 'velog_update_post',
+			arguments: { id: 'p1', title: '새 제목', series_name: '없음' },
+		})) as { content?: Array<{ text?: string }> };
+		await mcp.close();
+		assert.equal(fake.wrote(), false, '못 찾았는데 글이 수정됐다');
+		assert.match(res.content?.[0]?.text ?? '', /저장하지 않았습니다/);
+	});
+
+	/**
+	 * ★ 둘 다 주면 id 가 이기고 **이름 해석은 건너뛴다.**
+	 *   ⚠️ 조회가 0 이 아니라 **1** 이다 — `assertOwnsSeries` 가 소유권을 보느라
+	 *   seriesList 를 한 번 부른다(남의 시리즈에 내 글을 못 넣게 하는 검사라 필수).
+	 *   2회 이상이면 이름 해석이나 힌트가 불필요하게 돈 것이다.
+	 *   (처음엔 0 을 기대했다가 이 테스트에 잡혔다.)
+	 */
+	test('series_id 와 series_name 을 둘 다 주면 id 가 이기고 조회를 안 한다', async () => {
+		const fake = fullServer([{ id: 's-dk', name: 'docker', posts_count: 4 }]);
+		const mcp = await connectPublish(fake.client);
+		await mcp.callTool({
+			name: 'velog_update_post',
+			arguments: { id: 'p1', title: 't', series_id: 's-dk', series_name: 'docker' },
+		});
+		await mcp.close();
+		assert.equal(fake.sent()[0]?.['series_id'], 's-dk');
+		assert.equal(
+			fake.seriesLookups(),
+			1,
+			`id 를 줬는데 목록 조회가 ${fake.seriesLookups()}회다 — 1회(소유권 검사)만이어야 한다`,
+		);
+	});
+});
