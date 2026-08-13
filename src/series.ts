@@ -72,21 +72,29 @@ export async function describeSeriesOptions(
 }
 
 /**
- * 힌트를 만들되 **절대 던지지 않는다.**
+ * 힌트를 만들되 **어떤 경우에도 던지지 않는다.**
  *
- * ⚠️ 취소(AbortError)는 그대로 올린다. 사용자가 멈추라고 한 것을 삼키면
- *   취소가 안 먹는 것처럼 보인다.
+ * ★★ 이 함수는 **글이 이미 저장된 뒤에만** 불린다. 그래서 취소조차 삼킨다.
+ *   여기서 던지면 저장이 끝난 호출이 '실패'로 보고되고, 사용자는 안 써진 줄 알고
+ *   다시 부른다 → **글이 두 번 생긴다.** 취소를 존중하는 것보다 중복 생성을
+ *   막는 게 크다. 취소는 mutation **전·중**에 이미 걸러진다.
+ *   (코덱스 교차검증에서 잡혔다: mutation 성공 후 취소 시 wrote=true 인데
+ *    최종 Promise 가 rejected 였다.)
+ *
+ * ★ username 을 **함수로 받는 이유** — 예전엔 `resolveMyUsername()` 을 인자
+ *   위치에서 await 했는데, 그러면 **이 try 밖에서** 평가되어 그 조회가 실패하면
+ *   똑같이 도구 호출이 통째로 실패했다. 안에서 부른다.
  */
 export async function seriesHintSafely(
 	client: VelogClient,
-	username: string,
+	resolveUsername: () => string | Promise<string>,
 	requested: string | undefined,
 	signal?: AbortSignal,
 ): Promise<string> {
 	try {
+		const username = await resolveUsername();
 		return await describeSeriesOptions(client, username, requested, signal);
-	} catch (error) {
-		if (signal?.aborted === true) throw error;
+	} catch {
 		return '';
 	}
 }

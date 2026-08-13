@@ -380,7 +380,8 @@ export function registerPublishTools(
 				// ★ 힌트 조회가 실패해도 발행은 이미 끝났다 — 삼킨다(취소만 올린다).
 				const seriesNote = await seriesHintSafely(
 					client,
-					data.writePost.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+					async () =>
+						data.writePost.user?.username ?? (await resolveMyUsername(client, extra.signal)),
 					series_id,
 					extra.signal,
 				);
@@ -549,7 +550,11 @@ export function registerPublishTools(
 			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts
 			serializeWrite(`post:${args.id}`, async () => {
 				client.requireAuth('velog_update_post');
-				const { id, title, body, tags, url_slug, thumbnail, series_id } = args;
+				const { id, title, body, tags, url_slug, thumbnail } = args;
+				// ★ 빈 문자열은 '미지정'으로 읽는다. 예전엔 `'' ?? post.series?.id` 가
+				//   `''` 로 평가돼 기존 시리즈가 전송에서 빠졌고, 전체교체형 editPost 가
+				//   **연결을 끊었다.** 끊고 싶으면 벨로그에서 직접 할 일이다.
+				const series_id = args.series_id?.trim() || undefined;
 
 				// ★ 병합 수정. 기존 값을 읽어 생략 필드를 채운다 — 초안 도구에서
 				//   '생략하면 초기화'가 사고를 부른다는 걸 확인했으므로 이쪽은 보존한다.
@@ -643,7 +648,7 @@ export function registerPublishTools(
 				// ★ 이미 시리즈에 들어 있으면(nextSeries) 참견하지 않는다.
 				const seriesNote = await seriesHintSafely(
 					client,
-					post.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+					async () => post.user?.username ?? (await resolveMyUsername(client, extra.signal)),
 					nextSeries,
 					extra.signal,
 				);

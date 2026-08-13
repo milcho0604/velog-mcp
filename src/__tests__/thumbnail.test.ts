@@ -127,10 +127,14 @@ describe('병합 수정에서는 기존 썸네일이 우선', () => {
 		assert.equal(c.url, IMG2, '기존 썸네일이 본문 첫 이미지에 덮였다');
 	});
 
-	test('기존이 없을 때만 자동으로 채운다', () => {
+	/**
+	 * ★★ 코덱스 교차검증에서 뒤집힌 계약. 예전엔 기존이 비었으면 본문 첫 이미지로
+	 *   채웠는데, 이 도구는 "생략한 필드는 유지된다"고 약속해 뒀다. 제목만 고치는
+	 *   호출이 **일부러 비워 둔 썸네일을 채우면** 그 약속이 깨진다.
+	 */
+	test('기존이 비어 있어도 생략하면 채우지 않는다', () => {
 		const c = chooseThumbnailForUpdate(undefined, null, `![a](${IMG})`);
-		assert.equal(c.url, IMG);
-		assert.equal(c.reason, 'auto');
+		assert.equal(c.url, undefined, '비워 둔 썸네일이 본문 이미지로 채워졌다');
 	});
 
 	test('명시하면 기존을 바꾼다', () => {
@@ -224,17 +228,38 @@ describe('시리즈 힌트', () => {
 				throw new Error('네트워크 끊김');
 			}) as unknown as typeof fetch,
 		});
-		assert.equal(await seriesHintSafely(client, 'me', undefined), '');
+		assert.equal(await seriesHintSafely(client, () => 'me', undefined), '');
+	});
+
+	/**
+	 * ★★ 코덱스 [높음]의 핵심. 예전엔 username 을 **인자 위치에서** await 해서
+	 *   그 조회가 실패하면 try 밖이라 그대로 터졌다 — 글은 이미 저장된 뒤인데.
+	 */
+	test('username 해석이 실패해도 던지지 않는다', async () => {
+		const fake = seriesServer([{ id: 's1', name: 'A', posts_count: 1 }]);
+		const note = await seriesHintSafely(
+			fake.client,
+			() => {
+				throw new Error('계정 조회 실패');
+			},
+			undefined,
+		);
+		assert.equal(note, '', 'username 해석 실패가 저장된 글의 호출을 실패시킨다');
 	});
 
 	test('대조군 — 정상일 때는 실제로 내용이 나온다', async () => {
 		const fake = seriesServer([{ id: 's1', name: 'A', posts_count: 1 }]);
-		const note = await seriesHintSafely(fake.client, 'me', undefined);
+		const note = await seriesHintSafely(fake.client, () => 'me', undefined);
 		assert.notEqual(note, '', '삼키기만 하고 정상 경로가 죽었다면 위 테스트는 무의미하다');
 	});
 
-	/** ⚠️ 취소는 삼키면 안 된다. 사용자가 멈추라고 한 것이다. */
-	test('취소는 그대로 올린다', async () => {
+	/**
+	 * ★★ 계약이 뒤집혔다 — 여기서는 **취소도 삼킨다.**
+	 *   이 함수는 글이 **이미 저장된 뒤**에만 불린다. 던지면 저장이 끝난 호출이
+	 *   실패로 보고되고, 사용자가 다시 부르면 글이 두 번 생긴다.
+	 *   취소는 mutation 전·중에 이미 걸러진다. (코덱스 교차검증)
+	 */
+	test('저장 뒤 취소는 삼킨다 — 중복 생성을 막는 게 크다', async () => {
 		const ac = new AbortController();
 		ac.abort();
 		const client = new VelogClient({
@@ -247,6 +272,10 @@ describe('시리즈 힌트', () => {
 				throw new Error('should not reach');
 			}) as unknown as typeof fetch,
 		});
-		await assert.rejects(() => seriesHintSafely(client, 'me', undefined, ac.signal));
+		assert.equal(
+			await seriesHintSafely(client, () => 'me', undefined, ac.signal),
+			'',
+			'저장이 끝난 뒤의 취소가 도구 호출 전체를 실패시킨다 — 재시도하면 글이 두 번 생긴다',
+		);
 	});
 });

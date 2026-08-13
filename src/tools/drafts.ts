@@ -173,10 +173,12 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					? '\n\n⚠️ 시리즈는 **적용되지 않았습니다.** 벨로그가 임시저장 생성 단계에서는' +
 						' series_id 를 무시합니다. 방금 만든 초안 id 로 velog_update_draft 를' +
 						' 한 번 호출하면 그때 실제로 붙습니다.'
-					: // ★ 힌트 조회가 실패해도 저장은 이미 끝났다 — 삼킨다(취소만 올린다).
+					: // ★ 힌트 조회가 실패해도 저장은 이미 끝났다 — 전부 삼킨다.
 						await seriesHintSafely(
 							client,
-							data.writePost.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+							async () =>
+								data.writePost.user?.username ??
+								(await resolveMyUsername(client, extra.signal)),
 							series_id,
 							extra.signal,
 						);
@@ -292,9 +294,10 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				//   이미 재조회했으므로 그 결과를 얹는다.
 				// ★ 초안 수정은 series_id 가 실제로 먹는 경로다(생성과 달리). 그래서
 				//   여기서는 "안 넣었으면 무엇에 넣을 수 있는지"를 알리는 값이 크다.
+				const ownerName = before.post.user?.username;
 				const seriesNote = await seriesHintSafely(
 					client,
-					before.post.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+					async () => ownerName ?? (await resolveMyUsername(client, extra.signal)),
 					series_id,
 					extra.signal,
 				);

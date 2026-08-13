@@ -118,11 +118,13 @@ export function chooseThumbnailForUpdate(
 	if (typeof requested === 'string' && requested.trim() !== '') {
 		return { url: requested, candidates: extractImageUrls(body), reason: 'explicit' };
 	}
-	if (existing) {
-		// 기존 값을 그대로 잇는다. 안내도 하지 않는다 — 바뀐 게 없다.
-		return { url: existing, candidates: [], reason: 'explicit' };
-	}
-	return chooseThumbnail(requested, body);
+	// ★★ 생략하면 **기존 값을 그대로 잇는다. 비어 있어도 마찬가지다.**
+	//   예전엔 기존이 비었을 때 본문 첫 이미지로 채웠는데, 이 도구는 문서에
+	//   "생략한 필드는 유지된다"고 약속해 뒀다. 제목만 고치려던 호출이 **일부러
+	//   비워 둔 썸네일을 채워버리는** 건 그 약속을 깨는 것이다.
+	//   자동 채움은 새로 쓰는 경로(create/publish)에만 둔다.
+	//   (코덱스 교차검증에서 잡혔다.)
+	return { url: existing ?? undefined, candidates: [], reason: 'explicit' };
 }
 
 /**
