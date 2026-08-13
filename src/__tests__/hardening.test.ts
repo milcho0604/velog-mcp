@@ -221,7 +221,12 @@ describe('★ 발행 차단 — 실제 전송 payload 로 검증한다', () => {
 			auth: authed,
 			sleepImpl: async () => {},
 			fetchImpl: jsonFetch((body) => {
-				sent = body as typeof sent;
+				// ★ **writePost 요청만** 붙잡는다. 예전엔 마지막 요청을 무조건 담았는데,
+				//   초안 저장 뒤에 시리즈 힌트 조회가 한 번 더 나가면서 그 조회가
+				//   mutation 을 밀어냈다 — is_temp 를 검사한다면서 seriesList 의
+				//   variables 를 보고 있었다. "마지막 = 내가 보려던 것"은 가정일 뿐이다.
+				const q = (body as { query?: string }).query ?? '';
+				if (q.includes('writePost')) sent = body as typeof sent;
 				return {
 					body: {
 						data: {

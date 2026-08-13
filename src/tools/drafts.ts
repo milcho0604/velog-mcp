@@ -21,6 +21,8 @@ import { assertOwned, assertOwnsSeries } from '../ownership.ts';
 import type { VelogPostSummary } from '../types.ts';
 import { READ_ONLY } from './posts.ts';
 import { serializeWrite } from '../serial.ts';
+import { chooseThumbnail, describeThumbnail } from '../thumbnail.ts';
+import { seriesHintSafely } from '../series.ts';
 
 /**
  * ★ 발행 차단 지점. 이 값은 파라미터가 아니라 상수다.
@@ -59,6 +61,25 @@ interface WrittenPost {
 	is_temp?: boolean | null;
 	user?: { username?: string } | null;
 }
+
+/**
+ * 썸네일 입력 — 세 상태를 구분해야 한다.
+ *
+ *   미지정(undefined) → 본문 첫 이미지로 **자동** 채운다
+ *   URL              → 그대로 쓴다
+ *   `null` / `""`    → **자동 채움을 끈다** (일부러 비워 두는 사람의 의도를 지킨다)
+ *
+ * ★ nullable 을 뺐다가는 "끄는 방법"이 사라진다. 그러면 자동 채움이 강제가 된다.
+ */
+const THUMBNAIL_FIELD = z
+	.string()
+	.refine((v) => v === '' || isSafeImageUrl(v), 'http(s) 이미지 URL 만 허용합니다')
+	.nullable()
+	.optional()
+	.describe(
+		'썸네일 이미지 URL (http/https). 생략하면 본문 첫 이미지로 자동 설정한다. ' +
+			'자동 설정을 원하지 않으면 null 을 준다',
+	);
 
 /** 벨로그가 정말 임시저장으로 받았는지 응답으로 확인한다. */
 function assertStayedDraft(post: WrittenPost): void {
@@ -101,17 +122,14 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				body: z.string().min(1).describe('본문 (마크다운)'),
 				tags: z.array(z.string()).default([]).describe('태그 목록'),
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
-				thumbnail: z
-					.string()
-					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
-					.optional()
-					.describe('썸네일 이미지 URL (http/https 만)'),
+				thumbnail: THUMBNAIL_FIELD,
 				series_id: z
 					.string()
 					.optional()
 					.describe(
 						'소속시킬 시리즈 id. ★ 벨로그는 임시저장 단계에서 이걸 무시한다 — ' +
-							'초안 생성 후 velog_update_draft 로 다시 지정해야 실제로 붙는다',
+							'초안 생성 후 velog_update_draft 로 다시 지정해야 실제로 붙는다. ' +
+							'생략하면 결과에 내 시리즈 목록을 함께 돌려준다',
 					),
 			},
 			// 되돌릴 수 있는 쓰기다 — 비공개 초안이므로 파괴적이지 않다.
@@ -133,7 +151,9 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					meta: {},
 					...DRAFT_ONLY, // ★ 마지막에 펼쳐서 위 값들이 덮어쓸 수 없게 한다
 				};
-				if (thumbnail) input['thumbnail'] = thumbnail;
+				// ★ 본문에 그림이 있으면 썸네일로 쓴다. 결정 근거는 아래에서 그대로 알린다.
+				const thumb = chooseThumbnail(thumbnail, body);
+				if (thumb.url) input['thumbnail'] = thumb.url;
 				if (series_id) input['series_id'] = series_id;
 
 				// mutate 는 재시도하지 않는다 — 응답 유실 시 초안이 중복 생성된다.
@@ -153,8 +173,16 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					? '\n\n⚠️ 시리즈는 **적용되지 않았습니다.** 벨로그가 임시저장 생성 단계에서는' +
 						' series_id 를 무시합니다. 방금 만든 초안 id 로 velog_update_draft 를' +
 						' 한 번 호출하면 그때 실제로 붙습니다.'
-					: '';
-				return textResult(draftResult(data.writePost, '저장') + seriesNote);
+					: // ★ 힌트 조회가 실패해도 저장은 이미 끝났다 — 삼킨다(취소만 올린다).
+						await seriesHintSafely(
+							client,
+							data.writePost.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+							series_id,
+							extra.signal,
+						);
+				return textResult(
+					draftResult(data.writePost, '저장') + describeThumbnail(thumb) + seriesNote,
+				);
 			}),
 	);
 
@@ -175,10 +203,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				body: z.string().min(1).describe('본문 전체 (마크다운). 부분 수정이 아니라 교체다'),
 				tags: z.array(z.string()).default([]),
 				url_slug: z.string().optional(),
-				thumbnail: z
-					.string()
-					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
-					.optional(),
+				thumbnail: THUMBNAIL_FIELD,
 				series_id: z.string().optional(),
 			},
 			// ★ destructive 가 맞다. 생략 필드가 보존되지 않고 초기화된다 —
@@ -228,7 +253,8 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					meta: before.post.meta ?? {},
 					...DRAFT_ONLY,
 				};
-				if (thumbnail) input['thumbnail'] = thumbnail;
+				const thumb = chooseThumbnail(thumbnail, body);
+				if (thumb.url) input['thumbnail'] = thumb.url;
 				if (series_id) input['series_id'] = series_id;
 
 				const data = await client.mutate<{ editPost: WrittenPost }>(
@@ -264,11 +290,21 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				// ★ data.editPost 는 '갱신 전' 객체다(공식 서버가 그렇게 반환한다).
 				//   그걸로 문구를 만들면 제목을 바꿔도 옛 제목이 표시된다.
 				//   이미 재조회했으므로 그 결과를 얹는다.
+				// ★ 초안 수정은 series_id 가 실제로 먹는 경로다(생성과 달리). 그래서
+				//   여기서는 "안 넣었으면 무엇에 넣을 수 있는지"를 알리는 값이 크다.
+				const seriesNote = await seriesHintSafely(
+					client,
+					before.post.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+					series_id,
+					extra.signal,
+				);
 				return textResult(
 					draftResult(
 						{ ...data.editPost, title: after.post.title ?? data.editPost.title ?? null },
 						'수정',
-					),
+					) +
+						describeThumbnail(thumb) +
+						seriesNote,
 				);
 			}),
 	);

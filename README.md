@@ -68,7 +68,7 @@ Published on npm, so nothing to clone — your MCP client runs it via `npx`. See
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.4.2
+  -- npx -y @milcho0604/velog-mcp@0.5.0
 ```
 
 The token stays in your client's config file here. The plugin route above puts it in
@@ -91,7 +91,7 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, �
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.4.2"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.5.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
@@ -104,7 +104,7 @@ With the Claude Code CLI:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.4.2
+  -- npx -y @milcho0604/velog-mcp@0.5.0
 ```
 
 To run a local checkout instead, swap the command for
@@ -241,6 +241,32 @@ Full reasoning: [docs/security.md](docs/security.md)
 
 > `velog_update_draft` resets what you omit; `velog_update_post` preserves it.
 > The asymmetry is deliberate — see [docs/tools.md](docs/tools.md).
+
+#### Automatic thumbnail
+
+Omit `thumbnail` and the **first image in the body** becomes the thumbnail, so list and
+share cards aren't text-only. What was chosen is always reported back, along with the
+other candidates when there is more than one.
+
+| `thumbnail` | Behaviour |
+| --- | --- |
+| omitted | first image in the body |
+| a URL | used as given |
+| `null` | **opt out** — leave it empty on purpose |
+
+Images inside code fences and inline code are excluded, so a markdown example never
+becomes your thumbnail. `velog_update_post` **never replaces an existing thumbnail** —
+editing a title should not change the card. There, `null` means "don't fill it in",
+not "delete it".
+
+#### Series
+
+Omit `series_id` and the result includes **your series list** so you can pick one. If
+that lookup fails the post is already saved, so it **never fails the write**.
+
+> ⚠️ The velog API cannot **create** a series — there is no series mutation, and
+> `WritePostInput` only accepts `series_id`. Create one on velog once, then this
+> server can attach posts to it.
 
 Tools that take a `username` — `velog_list_drafts`, `velog_blog_stats`,
 `velog_export_posts`, `velog_search_posts` — fall back to your own account when you

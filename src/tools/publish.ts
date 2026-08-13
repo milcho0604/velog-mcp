@@ -20,6 +20,13 @@ import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { assertOwned, assertOwnsSeries } from '../ownership.ts';
 import type { PublishRateLimiter } from '../ratelimit.ts';
 import { serializeWrite } from '../serial.ts';
+import {
+	chooseThumbnail,
+	chooseThumbnailForUpdate,
+	describeThumbnail,
+} from '../thumbnail.ts';
+import { seriesHintSafely } from '../series.ts';
+import { resolveMyUsername } from '../me.ts';
 
 const MUTATION_WRITE_POST = `
   mutation PublishPost($input: WritePostInput!) {
@@ -56,7 +63,7 @@ interface PublishArgs {
 	body: string;
 	tags: string[];
 	url_slug?: string | undefined;
-	thumbnail?: string | undefined;
+	thumbnail?: string | null | undefined;
 	series_id?: string | undefined;
 	is_private?: boolean | undefined;
 }
@@ -72,10 +79,24 @@ interface UpdatePostArgs {
 	body?: string | undefined;
 	tags?: string[] | undefined;
 	url_slug?: string | undefined;
-	thumbnail?: string | undefined;
+	thumbnail?: string | null | undefined;
 	series_id?: string | undefined;
 	is_private?: boolean | undefined;
 }
+
+/**
+ * 썸네일 입력 — 세 상태를 구분한다 (drafts.ts 와 같은 규약).
+ *   미지정 → 본문 첫 이미지로 자동 / URL → 그대로 / null·"" → 자동 채움 끄기
+ */
+const THUMBNAIL_FIELD = z
+	.string()
+	.refine((v) => v === '' || isSafeImageUrl(v), 'http(s) 이미지 URL 만 허용합니다')
+	.nullable()
+	.optional()
+	.describe(
+		'썸네일 이미지 URL (http/https). 생략하면 본문 첫 이미지로 자동 설정한다. ' +
+			'자동 설정을 원하지 않으면 null 을 준다',
+	);
 
 interface PostState {
 	id: string;
@@ -319,10 +340,7 @@ export function registerPublishTools(
 				body: z.string().min(1).describe('본문 (마크다운)'),
 				tags: z.array(z.string()).default([]),
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
-				thumbnail: z
-					.string()
-					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
-					.optional(),
+				thumbnail: THUMBNAIL_FIELD,
 				series_id: z.string().optional(),
 				...visibilityField,
 			},
@@ -350,7 +368,8 @@ export function registerPublishTools(
 					is_private: isPrivate,
 					meta: {},
 				};
-				if (thumbnail) input['thumbnail'] = thumbnail;
+				const thumb = chooseThumbnail(thumbnail, body);
+				if (thumb.url) input['thumbnail'] = thumb.url;
 				if (series_id) input['series_id'] = series_id;
 
 				const data = await client.mutate<{ writePost: PostState }>(
@@ -358,7 +377,16 @@ export function registerPublishTools(
 					{ input },
 					{ signal: extra.signal },
 				);
-				return textResult(resultLines(data.writePost, '발행'));
+				// ★ 힌트 조회가 실패해도 발행은 이미 끝났다 — 삼킨다(취소만 올린다).
+				const seriesNote = await seriesHintSafely(
+					client,
+					data.writePost.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+					series_id,
+					extra.signal,
+				);
+				return textResult(
+					resultLines(data.writePost, '발행') + describeThumbnail(thumb) + seriesNote,
+				);
 			}),
 	);
 
@@ -509,10 +537,7 @@ export function registerPublishTools(
 				body: z.string().min(1).optional().describe('생략하면 기존 본문 유지'),
 				tags: z.array(z.string()).optional().describe('생략하면 기존 태그 유지'),
 				url_slug: z.string().optional().describe('생략하면 기존 주소 유지'),
-				thumbnail: z
-					.string()
-					.refine(isSafeImageUrl, 'http(s) 이미지 URL 만 허용합니다')
-					.optional(),
+				thumbnail: THUMBNAIL_FIELD,
 				series_id: z.string().optional(),
 				...visibilityFieldForUpdate,
 			},
@@ -595,8 +620,13 @@ export function registerPublishTools(
 					// ★ meta 를 {} 로 보내면 short_description 등이 지워진다. 기존 값 유지.
 					meta: post.meta ?? {},
 				};
-				const nextThumbnail = thumbnail ?? post.thumbnail;
-				if (nextThumbnail) input['thumbnail'] = nextThumbnail;
+				// ★ 병합 수정이라 기존 썸네일이 우선이다 — 규칙은 thumbnail.ts 참고.
+				const thumb = chooseThumbnailForUpdate(
+					thumbnail,
+					post.thumbnail,
+					body ?? post.body ?? '',
+				);
+				if (thumb.url) input['thumbnail'] = thumb.url;
 				const nextSeries = series_id ?? post.series?.id;
 				if (nextSeries) input['series_id'] = nextSeries;
 
@@ -610,7 +640,16 @@ export function registerPublishTools(
 					is_private: isPrivate,
 					content: input,
 				});
-				return textResult(resultLines(after, '수정'));
+				// ★ 이미 시리즈에 들어 있으면(nextSeries) 참견하지 않는다.
+				const seriesNote = await seriesHintSafely(
+					client,
+					post.user?.username ?? (await resolveMyUsername(client, extra.signal)),
+					nextSeries,
+					extra.signal,
+				);
+				return textResult(
+					resultLines(after, '수정') + describeThumbnail(thumb) + seriesNote,
+				);
 			}),
 	);
 }

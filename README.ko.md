@@ -63,7 +63,7 @@ npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 �
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.4.2
+  -- npx -y @milcho0604/velog-mcp@0.5.0
 ```
 
 이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
@@ -85,7 +85,7 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.4.2"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.5.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
@@ -98,7 +98,7 @@ Claude Code CLI 라면:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.4.2
+  -- npx -y @milcho0604/velog-mcp@0.5.0
 ```
 
 로컬 체크아웃으로 돌리려면 command 를
@@ -229,6 +229,32 @@ if (count >= 10) {
 
 > `velog_update_draft` 는 생략하면 초기화하고, `velog_update_post` 는 유지한다.
 > 의도한 비대칭이고 이유는 [docs/tools.md](docs/tools.md) 에 있다.
+
+#### 썸네일 자동 채움
+
+`thumbnail` 을 생략하면 **본문 첫 이미지**를 썸네일로 쓴다. 목록·공유 카드가 글자만
+나오는 걸 막기 위해서다. 무엇을 넣었는지는 결과에 항상 표시하고, 후보가 여럿이면
+나머지도 함께 보여준다.
+
+| `thumbnail` 값 | 동작 |
+| --- | --- |
+| 생략 | 본문 첫 이미지로 자동 설정 |
+| URL | 그대로 사용 |
+| `null` | **자동 채움 끄기** — 일부러 비워 두는 경우 |
+
+코드블록·인라인코드 안의 이미지는 후보에서 **제외**한다(예제로 적어둔 마크다운이
+썸네일이 되면 안 되므로). `velog_update_post` 는 **기존 썸네일이 있으면 덮지 않는다** —
+제목만 고쳤는데 목록 카드가 바뀌는 일이 없도록 한 것이고, 이때 `null` 은 "채우지 마라"이지
+"지워라"가 아니다.
+
+#### 시리즈
+
+`series_id` 를 생략하면 결과에 **내 시리즈 목록**을 함께 돌려준다. 어디에 넣을 수 있는지
+보고 고르라는 뜻이다. 이 조회가 실패해도 글은 이미 저장된 뒤이므로 **저장을 실패시키지 않는다**.
+
+> ⚠️ 벨로그 API 로는 **시리즈를 만들 수 없다.** 뮤테이션에 시리즈 관련이 하나도 없고
+> `WritePostInput` 도 `series_id` 만 받는다. 새 시리즈는 벨로그 웹에서 한 번 만들면
+> 그 뒤부터 이 도구로 붙일 수 있다.
 
 `username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·
 `velog_export_posts`·`velog_search_posts` 는 생략하면 **내 계정**을 쓴다.
