@@ -363,6 +363,7 @@ export function registerPublishTools(
 				client.requireAuth('velog_publish_post');
 				const { title, body, tags, url_slug, thumbnail, series_name } = args;
 				let series_id = args.series_id?.trim() || undefined;
+				let seriesFromName = false;
 				const isPrivate = resolvePrivacy(args.is_private);
 				// ★ 이름을 id 로 바꾼다. **저장 전에** 한다 — 못 찾으면 아무것도 안 쓴 채 멈춘다.
 				if (series_name !== undefined && series_id === undefined) {
@@ -373,8 +374,14 @@ export function registerPublishTools(
 						'velog_publish_post',
 						extra.signal,
 					);
+					seriesFromName = true;
 				}
-				if (series_id) await assertOwnsSeries(client, series_id, 'velog_publish_post');
+				// ★ 이름으로 찾은 id 는 **내 시리즈 목록에서 고른 것**이라 소유권이 이미
+				//   증명돼 있다. 다시 목록을 받아 확인하면 같은 질의를 두 번 하는 것뿐이다.
+				//   검사가 필요한 것은 **사용자가 준** series_id 다 — safety.test.ts 의 A11 이
+				//   스스로 그 범위를 적어두고 있다.
+				if (series_id && !seriesFromName)
+					await assertOwnsSeries(client, series_id, 'velog_publish_post');
 				// ★ 상한은 '검증을 다 통과한 뒤' 소비한다. 앞에 두면 잘못된 입력으로
 				//   5번 실패해도 5분간 공개 발행이 막힌다.
 				guardIfPublic(isPrivate, limiter);
@@ -584,6 +591,7 @@ export function registerPublishTools(
 				//   `''` 로 평가돼 기존 시리즈가 전송에서 빠졌고, 전체교체형 editPost 가
 				//   **연결을 끊었다.** 끊고 싶으면 벨로그에서 직접 할 일이다.
 				let series_id = args.series_id?.trim() || undefined;
+				let seriesFromName = false;
 				const { series_name } = args;
 
 				// ★ 병합 수정. 기존 값을 읽어 생략 필드를 채운다 — 초안 도구에서
@@ -616,8 +624,14 @@ export function registerPublishTools(
 						'velog_update_post',
 						extra.signal,
 					);
+					seriesFromName = true;
 				}
-				if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_post');
+				// ★ 이름으로 찾은 id 는 **내 시리즈 목록에서 고른 것**이라 소유권이 이미
+				//   증명돼 있다. 다시 목록을 받아 확인하면 같은 질의를 두 번 하는 것뿐이다.
+				//   검사가 필요한 것은 **사용자가 준** series_id 다 — safety.test.ts 의 A11 이
+				//   스스로 그 범위를 적어두고 있다.
+				if (series_id && !seriesFromName)
+					await assertOwnsSeries(client, series_id, 'velog_update_post');
 
 				// ★★ 공개 범위는 **기존 값을 잇는다.** 게이트가 꺼져 있어도 마찬가지다.
 				//
