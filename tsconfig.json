@@ -6,7 +6,7 @@
     "moduleResolution": "nodenext",
     "outDir": "dist",
 
-    // Node 24 는 .ts 를 직접 실행한다(타입 스트리핑). 그래서 소스는 '.ts' 로 import 하고,
+    // Node 는 22.18 부터 .ts 를 직접 실행한다(타입 스트리핑). 그래서 소스는 '.ts' 로 import 하고,
     // tsc 로 빌드할 때만 상대경로 확장자를 .js 로 바꿔 내보낸다.
     // → 테스트는 빌드 없이 `node --test src/**/*.test.ts` 로 바로 돌고,
     //   배포본은 정상적인 ESM .js 가 된다.

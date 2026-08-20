@@ -30,13 +30,13 @@ calls. Six server-side quirks are written up in
 empty list, and one that can turn your published posts private.
 
 **3. Two runtime dependencies.** `@modelcontextprotocol/sdk` and `zod`. HTTP, test
-runner, and TypeScript execution all come from Node 24 itself.
+runner, and TypeScript execution all come from Node itself.
 
 ---
 
 ## Install
 
-Requires **Node.js 24 or newer**.
+Requires **Node.js 22.18 or newer**. What runs is the compiled `dist/index.js`, but development and verification execute `.ts` directly, and 22.18 is the first release where that works without a flag. CI covers 22.18, 24 and 26.
 
 ### As a Claude Code plugin (recommended)
 

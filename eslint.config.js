@@ -50,7 +50,7 @@ export default defineConfig(
 				{ argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
 			],
 
-			// ── Node 24 타입 스트리핑 제약 (docs/architecture.md) ──────
+			// ── Node 타입 스트리핑 제약 (docs/architecture.md) ──────
 			// 스트리핑은 '지우기만' 하므로 코드 생성이 필요한 문법은 못 쓴다.
 			// 실제로 파라미터 프로퍼티가 ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX 로 죽었다.
 			'@typescript-eslint/parameter-properties': ['error', { prefer: 'class-property' }],
