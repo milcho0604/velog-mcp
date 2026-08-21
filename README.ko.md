@@ -1,7 +1,7 @@
 # velog-mcp
 
 [![npm](https://img.shields.io/npm/v/@milcho0604/velog-mcp)](https://www.npmjs.com/package/@milcho0604/velog-mcp)
-[![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.18-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-2-lightgrey)](package.json)
 
@@ -27,13 +27,13 @@
 있다 — 오류 없이 빈 결과를 주는 경우, 발행글을 비공개로 만드는 경우 포함.
 
 **3. 런타임 의존성 2개.** `@modelcontextprotocol/sdk` 와 `zod` 뿐이다.
-HTTP·테스트 러너·타입스크립트 실행은 전부 Node 24 내장을 쓴다.
+HTTP 와 테스트 러너와 타입스크립트 실행은 전부 Node 내장을 쓴다.
 
 ---
 
 ## 설치
 
-**Node.js 24 이상**이 필요하다.
+**Node.js 22.18 이상**이 필요하다. 실행되는 것은 컴파일된 `dist/index.js` 지만, 개발과 검증이 `.ts` 를 직접 실행하고 그게 플래그 없이 도는 첫 버전이 22.18 이다. CI 는 22.18 과 24 와 26 에서 돌린다.
 
 ### Claude Code 플러그인으로 (권장)
 
@@ -63,7 +63,7 @@ npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 �
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.5.0
+  -- npx -y @milcho0604/velog-mcp@0.6.0
 ```
 
 이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
@@ -85,7 +85,7 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.5.0"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.6.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
@@ -98,7 +98,7 @@ Claude Code CLI 라면:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.5.0
+  -- npx -y @milcho0604/velog-mcp@0.6.0
 ```
 
 로컬 체크아웃으로 돌리려면 command 를

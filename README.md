@@ -1,7 +1,7 @@
 # velog-mcp
 
 [![npm](https://img.shields.io/npm/v/@milcho0604/velog-mcp)](https://www.npmjs.com/package/@milcho0604/velog-mcp)
-[![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.18-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-2-lightgrey)](package.json)
 
@@ -30,13 +30,13 @@ calls. Six server-side quirks are written up in
 empty list, and one that can turn your published posts private.
 
 **3. Two runtime dependencies.** `@modelcontextprotocol/sdk` and `zod`. HTTP, test
-runner, and TypeScript execution all come from Node 24 itself.
+runner, and TypeScript execution all come from Node itself.
 
 ---
 
 ## Install
 
-Requires **Node.js 24 or newer**.
+Requires **Node.js 22.18 or newer**. What runs is the compiled `dist/index.js`, but development and verification execute `.ts` directly, and 22.18 is the first release where that works without a flag. CI covers 22.18, 24 and 26.
 
 ### As a Claude Code plugin (recommended)
 
@@ -68,7 +68,7 @@ Published on npm, so nothing to clone â€” your MCP client runs it via `npx`. See
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.5.0
+  -- npx -y @milcho0604/velog-mcp@0.6.0
 ```
 
 The token stays in your client's config file here. The plugin route above puts it in
@@ -91,7 +91,7 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, â
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.5.0"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.6.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
@@ -104,7 +104,7 @@ With the Claude Code CLI:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.5.0
+  -- npx -y @milcho0604/velog-mcp@0.6.0
 ```
 
 To run a local checkout instead, swap the command for

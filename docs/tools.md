@@ -157,7 +157,7 @@ views: 16323
 | `tags` | | 태그 배열. 기본 `[]` |
 | `url_slug` | | 생략하면 제목에서 생성. 한글 그대로 둔다 |
 | `thumbnail` | | 이미지 URL |
-| `series_id` | | `velog_list_series` 에서 얻은 id. ★ 초안 생성 단계에서는 **벨로그가 무시한다** — `velog_update_draft` 를 한 번 더 불러야 실제로 붙는다 |
+| `series_id` | | `velog_list_series` 에서 얻은 id. 벨로그가 초안 생성 단계에서 이걸 버리므로, 이 도구가 저장 직후 한 번 더 붙이고 붙었는지 확인해 결과에 적는다 |
 
 성공하면 편집 URL 과 함께 **"아직 발행되지 않았습니다"** 를 명시한다.
 
