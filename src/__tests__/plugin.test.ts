@@ -1117,10 +1117,21 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		//    `npm run build; npm run verify:dist`, `... || true` 가 전부 통과한다.
 		//    가운데 것은 **빌드가 실패해도** 낡은 dist 검증이 성공하면 발행이 계속된다.
 		//    그래서 정확한 명령을 못 박는다.
+		//
+		// ★★ 관문이 `verify` 를 부르도록 바뀌었다. 예전에는 build 와 verify:dist 만
+		//   돌아서 **로직 회귀를 잡는 테스트가 발행 경로에 없었다.** 실측 — 교착 가드를
+		//   지운 회귀가 예전 관문은 통과하고 새 관문은 막는다.
+		//   한 단계 간접이 생겼으므로 **끝까지 따라가서** 확인한다. 이름만 보고
+		//   넘어가면 `verify` 가 속이 비어도 통과한다.
 		assert.equal(
 			scripts['prepublishOnly'],
-			'npm run build && npm run verify:dist',
+			'npm run verify',
 			'앞이 실패하면 멈춰야 한다 — `;` 나 `|| true` 는 관문이 아니다',
+		);
+		assert.equal(
+			scripts['verify'],
+			'npm run typecheck && npm run lint && npm test && npm run build && npm run verify:dist',
+			'발행 관문이 부르는 verify 가 비었거나 && 로 이어지지 않는다',
 		);
 
 		// ⚠️ 정규식이면 `node scripts/verify-dist.ts || true` 나 `echo scripts/verify-dist.ts`
