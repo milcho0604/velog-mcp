@@ -73,7 +73,7 @@ GraphQL POST 한 함수 + 도구 정의들이라 규모가 크지 않다.
 
 ## 결과
 
-- 런타임 의존성 2개 유지 (MCP SDK, zod). fetch·테스트 러너·타입 스트리핑은 Node 24 내장
+- 런타임 의존성 2개 유지 (MCP SDK, zod). fetch 와 테스트 러너와 타입 스트리핑은 Node 내장
 - introspection 실측을 `docs/api-reference.md` 에 날짜와 함께 고정
 - 발행·삭제·소셜·계정 mutation 은 **미구현**. `docs/security.md` 에 목록과 이유 기록
 

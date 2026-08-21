@@ -50,6 +50,20 @@ const QUERY_POST_STATE = `
 `;
 
 /**
+ * 초안 생성 직후 시리즈를 붙일 때 쓴다. `meta` 는 다시 실어 보내야 하고
+ * (editPost 는 전체 교체다), `series` 는 붙었는지 **확인**하는 데 쓴다.
+ */
+const QUERY_POST_FOR_SERIES = `
+  query PostForSeries($input: ReadPostInput!) {
+    post(input: $input) {
+      id title body tags url_slug thumbnail is_temp meta
+      series { id name }
+      user { username }
+    }
+  }
+`;
+
+/**
  * 벨로그 응답. ★ 공식 스키마에서 title·url_slug·is_temp 는 nullable 이다
  * (Post.gql). 선언을 낙관적으로 적으면 `!== true` 같은 방어가 '불필요한 비교'로
  * 보여 지워지고, 그러면 실제 null 에 그대로 당한다. updated_at 으로 겪은 일이다.
@@ -91,6 +105,158 @@ function assertStayedDraft(post: WrittenPost): void {
 	}
 }
 
+/**
+ * 초안을 만든 **직후** 시리즈를 붙인다.
+ *
+ * ★★ 왜 한 번 더 부르나 — 벨로그는 임시저장 **생성** 단계에서 `series_id` 를
+ *   조용히 버린다(호출부 주석의 서버 코드). `edit` 경로에는 그 조건이 없다.
+ *   이 시점의 서버는 초안 id 와 해석 끝난 series_id 를 이미 쥐고 있으므로
+ *   사용자가 두 번 부를 이유가 없다.
+ *
+ * ★★ **`post:<id>` 줄에서 돈다.** 생성은 `post:new` 줄에 있는데, 그 줄에 그대로
+ *   두면 `update_draft` 나 `publish_draft` 와 **다른 줄**이 되어 서로를 못 본다.
+ *   실제로 겹치면 늦게 도착한 이 edit 이 `DRAFT_ONLY` 로 방금 발행된 글을 다시
+ *   비공개 초안으로 내린다. 두 도구 다 성공을 보고하므로 아무도 모른다.
+ *   (코덱스 교차검증 1차에서 재현됨. `velog_list_drafts` 는 직렬화되지 않아
+ *    생성이 끝나기 전에도 새 id 를 볼 수 있다.)
+ *
+ * ★★ 어떤 경우에도 **던지지 않는다.** 초안은 이미 저장됐다. 여기서 던지면 저장이
+ *   끝난 호출이 실패로 보고되고 사용자가 다시 부른다.
+ *   ⚠️ 다만 이것이 중복 생성을 **막지는 못한다.** MCP SDK 는 호출이 취소되면
+ *   서버가 무엇을 반환하든 호출자 쪽 Promise 를 reject 한다. 취소된 뒤 재시도하면
+ *   초안은 두 개가 된다. 이건 이 함수가 없을 때도 마찬가지이고(생성 자체가 그렇다),
+ *   여기서 하는 일은 그 창을 넓히지 않는 것뿐이다. 예전 주석은 이걸 막는다고
+ *   적고 있었는데 사실이 아니었다.
+ *
+ * ★ `meta` 를 다시 읽어서 실어 보낸다. editPost 는 전체 교체라 `{}` 를 보내면
+ *   벨로그가 생성 때 만들어 둔 short_description 등이 지워진다.
+ *
+ * ★ 붙었다고 **말하기 전에 재조회로 확인한다.** editPost 응답은 갱신 전에 읽은
+ *   post 를 돌려주므로 그것만 보고는 알 수 없다.
+ *
+ * ★ 실패를 두 종류로 나눈다. 아무것도 안 쓴 것이 확실하면 '적용되지 않음'이고,
+ *   edit 을 보낸 뒤 확인에 실패했으면 '반영 여부 불명'이다. 후자를 전자로 적으면
+ *   사용자가 붙어 있는 시리즈를 다시 붙이려 든다.
+ *
+ * @returns 결과에 이어붙일 안내문. 성공이든 실패든 사람이 읽을 말을 돌려준다.
+ */
+function manualFixNote(postId: string, seriesId: string, lead: string): string {
+	return (
+		`${lead}\n\n` +
+		`   이어서 붙이려면 \`velog_update_draft\` 를 부르되, **전체 교체**라서 원래 값을 ` +
+		`다시 줘야 합니다. \`id="${postId}"\`, \`series_id="${seriesId}"\`, 그리고 방금 저장한 ` +
+		`title 과 body 를 그대로. tags 와 url_slug 와 thumbnail 을 생략하면 지워지거나 ` +
+		`새로 만들어집니다. 현재 값은 \`velog_get_post\` 로 읽을 수 있습니다.`
+	);
+}
+
+interface DraftSnapshot {
+	id: string;
+	title?: string | null;
+	body?: string | null;
+	tags?: string[] | null;
+	url_slug?: string | null;
+	thumbnail?: string | null;
+	is_temp?: boolean;
+	meta?: unknown;
+	series?: { id?: string; name?: string } | null;
+	user?: { username?: string } | null;
+}
+
+async function attachSeriesToNewDraft(
+	client: VelogClient,
+	postId: string,
+	seriesId: string,
+	signal?: AbortSignal,
+): Promise<string> {
+	const notApplied = manualFixNote(
+		postId,
+		seriesId,
+		'\n\n⚠️ 시리즈는 **적용되지 않았습니다.** 벨로그가 임시저장 생성 단계에서' +
+			' series_id 를 무시하는데, 이어서 붙이려던 시도도 실패했습니다.',
+	);
+	const unknown = manualFixNote(
+		postId,
+		seriesId,
+		'\n\n⚠️ 시리즈가 **붙었는지 확인하지 못했습니다.** 수정 요청은 보냈지만 결과를' +
+			' 확인하는 조회가 실패했습니다. 이미 붙어 있을 수 있으니 먼저 확인하세요.',
+	);
+	// ★ 이 글 전용 줄로 넘긴다. 이유는 위 주석.
+	// ⚠️ 바깥은 `post:new` 줄이다. 서버가 id 로 하필 "new" 를 돌려주면 두 키가 같아져
+	//   안쪽이 바깥쪽을 기다리는 교착이 된다. 그때는 붙이기를 포기하는 쪽이 낫다.
+	if (postId === 'new') return notApplied;
+	return serializeWrite(`post:${postId}`, async () => {
+		let sent = false;
+		try {
+			const before = await client.request<{ post: DraftSnapshot | null }>(
+				QUERY_POST_FOR_SERIES,
+				{ input: { id: postId } },
+				{ signal },
+			);
+			// 방금 만든 글을 못 읽으면 손대지 않는다.
+			if (!before.post || before.post.is_temp !== true) return notApplied;
+			// ★ 이미 붙어 있으면 아무것도 쓰지 않는다. 벨로그가 언젠가 생성 단계에서도
+			//   붙이기 시작하면 이 함수는 조회 한 번으로 끝나야 한다.
+			if (before.post.series?.id === seriesId) {
+				return `\n\n📚 시리즈 **${before.post.series.name ?? seriesId}** 에 넣었습니다.`;
+			}
+			// ★ 우리가 방금 만든 글이라 소유권은 자명해 보이지만 검증한다. 이 레포는
+			//   "자명하다"에 이미 당했고(ownership.ts), 구조 테스트가 editPost 마다 짝을
+			//   요구한다. 여기에 예외를 만들면 그 가드가 그만큼 헐거워진다.
+			await assertOwned(client, before.post, 'velog_create_draft');
+
+			// ★★ **생성 당시의 입력이 아니라 방금 읽은 현재 값**으로 전체교체를 만든다.
+			//   editPost 는 전체 교체다. 생성 응답이 늦는 사이 update_draft 가 먼저
+			//   `post:<id>` 줄을 잡고 제목·본문을 고칠 수 있는데, 그때 낡은 생성 입력을
+			//   다시 펼치면 그 수정이 통째로 되돌아간다. 두 호출 다 성공을 보고하므로
+			//   아무도 모른다. (코덱스 재검증에서 재현됨)
+			const input: Record<string, unknown> = {
+				id: postId,
+				title: before.post.title ?? '',
+				body: before.post.body ?? '',
+				tags: before.post.tags ?? [],
+				url_slug: before.post.url_slug ?? undefined,
+				meta: before.post.meta ?? {},
+				series_id: seriesId,
+				...DRAFT_ONLY, // ★ 마지막에 펼친다 — 초안 상태를 무엇도 못 덮게
+			};
+			// ★ 썸네일은 있을 때만 싣는다. 빈 값을 보내면 일부러 비워 둔 상태를 덮는다.
+			if (before.post.thumbnail) input['thumbnail'] = before.post.thumbnail;
+
+			// ★ `sent` 를 세우는 자리가 중요하다. mutate() 는 fetch 보다 **먼저**
+			//   취소를 검사한다(client.ts 의 `options.signal?.throwIfAborted()`).
+			//   호출 직전에 무조건 세우면 요청이 0회인데도 '보냈다'가 되어, 아무것도
+			//   안 쓴 실패를 '반영 여부 불명'으로 잘못 보고한다. 같은 검사를 여기서
+			//   먼저 해서 그 경우를 '미적용' 쪽으로 갈라낸다.
+			signal?.throwIfAborted();
+			sent = true;
+			await client.mutate<{ editPost: WrittenPost }>(
+				MUTATION_EDIT_POST,
+				{ input },
+				{ signal },
+			);
+
+			const after = await client.request<{ post: DraftSnapshot | null }>(
+				QUERY_POST_FOR_SERIES,
+				{ input: { id: postId } },
+				{ signal },
+			);
+			// ★ 초안이 아니게 됐으면 붙었는지보다 그게 급하다.
+			if (after.post?.is_temp !== true) {
+				return (
+					'\n\n🚨 시리즈를 붙이는 과정에서 이 글이 **임시저장이 아니게 됐습니다**' +
+					` (is_temp=${String(after.post?.is_temp)}, id=${postId}). 즉시 벨로그에서 확인하세요.`
+				);
+			}
+			if (after.post.series?.id !== seriesId) return notApplied;
+			return `\n\n📚 시리즈 **${after.post.series.name ?? seriesId}** 에 넣었습니다.`;
+		} catch {
+			// 보내기 전에 죽었으면 아무것도 안 썼다. 보낸 뒤라면 반영됐을 수 있다.
+			return sent ? unknown : notApplied;
+		}
+	});
+}
+
 function draftResult(post: WrittenPost, verb: string): string {
 	const username = post.user?.username;
 	const where = username
@@ -127,8 +293,8 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					.string()
 					.optional()
 					.describe(
-						'소속시킬 시리즈 id. ★ 벨로그는 임시저장 단계에서 이걸 무시한다 — ' +
-							'초안 생성 후 velog_update_draft 로 다시 지정해야 실제로 붙는다. ' +
+						'소속시킬 시리즈 id. 벨로그가 임시저장 생성 단계에서 이걸 버리므로 ' +
+							'이 도구가 저장 직후 한 번 더 붙이고, 붙었는지 확인해 결과에 적는다. ' +
 							'생략하면 결과에 내 시리즈 목록을 함께 돌려준다',
 					),
 				series_name: z
@@ -151,6 +317,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			serializeWrite('post:new', async () => {
 				client.requireAuth('velog_create_draft');
 				let series_id = rawSeriesId?.trim() || undefined;
+				let seriesFromName = false;
 				// ★ 이름을 id 로. **저장 전에** 한다 — 못 찾으면 아무것도 안 쓴 채 멈춘다.
 				if (series_name !== undefined && series_id === undefined) {
 					series_id = await resolveSeriesId(
@@ -160,8 +327,14 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 						'velog_create_draft',
 						extra.signal,
 					);
+					seriesFromName = true;
 				}
-				if (series_id) await assertOwnsSeries(client, series_id, 'velog_create_draft');
+				// ★ 이름으로 찾은 id 는 **내 시리즈 목록에서 고른 것**이라 소유권이 이미
+				//   증명돼 있다. 다시 목록을 받아 확인하면 같은 질의를 두 번 하는 것뿐이다.
+				//   검사가 필요한 것은 **사용자가 준** series_id 다 — safety.test.ts 의 A11 이
+				//   스스로 그 범위를 적어두고 있다.
+				if (series_id && !seriesFromName)
+					await assertOwnsSeries(client, series_id, 'velog_create_draft');
 				// ★ 초안은 is_private:true 라 벨로그 계수(is_private:false 만 셈)에
 				//   잡히지 않는다. 그래서 상한을 걸지 않는다 — 상한은 '공개 발행' 쪽에 있다.
 
@@ -189,12 +362,10 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				// ★ 벨로그는 임시저장 생성 시 series_id 를 조용히 버린다:
 				//   // apps/server/src/services/PostApiService/index.mts
 				//   if (series_id && !data.is_temp) await appendToSeries(...)
-				// edit 경로에는 이 조건이 없어 update_draft 로는 붙는다. 이 비대칭을
-				// 사용자가 알 방법이 없으므로 직접 알린다.
+				// edit 경로에는 이 조건이 없다. 그래서 여기서 edit 을 한 번 더 쳐서 붙인다.
 				const seriesNote = series_id
-					? '\n\n⚠️ 시리즈는 **적용되지 않았습니다.** 벨로그가 임시저장 생성 단계에서는' +
-						' series_id 를 무시합니다. 방금 만든 초안 id 로 velog_update_draft 를' +
-						' 한 번 호출하면 그때 실제로 붙습니다.'
+					? // ★ 버려진 series_id 를 여기서 직접 다시 붙인다. 던지지 않는다.
+						await attachSeriesToNewDraft(client, data.writePost.id, series_id, extra.signal)
 					: // ★ 힌트 조회가 실패해도 저장은 이미 끝났다 — 전부 삼킨다.
 						await seriesHintSafely(
 							client,
@@ -269,6 +440,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				}
 				await assertOwned(client, before.post, 'velog_update_draft');
 				let series_id = rawSeriesId?.trim() || undefined;
+				let seriesFromName = false;
 				if (series_name !== undefined && series_id === undefined) {
 					series_id = await resolveSeriesId(
 						client,
@@ -277,8 +449,14 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 						'velog_update_draft',
 						extra.signal,
 					);
+					seriesFromName = true;
 				}
-				if (series_id) await assertOwnsSeries(client, series_id, 'velog_update_draft');
+				// ★ 이름으로 찾은 id 는 **내 시리즈 목록에서 고른 것**이라 소유권이 이미
+				//   증명돼 있다. 다시 목록을 받아 확인하면 같은 질의를 두 번 하는 것뿐이다.
+				//   검사가 필요한 것은 **사용자가 준** series_id 다 — safety.test.ts 의 A11 이
+				//   스스로 그 범위를 적어두고 있다.
+				if (series_id && !seriesFromName)
+					await assertOwnsSeries(client, series_id, 'velog_update_draft');
 				if (before.post.is_temp !== true) {
 					throw new Error(
 						`id=${id} 는 이미 발행된 글입니다. 이 도구로 수정하면 임시저장으로 내려가 ` +

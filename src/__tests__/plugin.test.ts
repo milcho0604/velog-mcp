@@ -25,7 +25,7 @@ import { spawn, execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import { satisfies } from 'semver';
+import { satisfies, minVersion } from 'semver';
 
 import {
 	looksUnsubstituted,
@@ -809,6 +809,84 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 				`.mcp.json 이 ${key} 를 넘기는데 코드에서 읽는 곳이 없다 (오타이거나 죽은 설정)`,
 			);
 		}
+	});
+
+	test('P15b — 문서가 안내하는 환경변수를 서버가 실제로 읽는다', async () => {
+		// P15 의 반대 방향이다. P15 는 **플러그인이 넘기는** 이름만 본다. 사용자
+		// 대다수는 플러그인이 아니라 README 를 보고 손으로 설정을 적는다. 문서에
+		// `VELOG_ALLOW_PUBIC` 같은 오타가 있으면 아무 데서도 안 걸리고, 증상은
+		// "안내대로 켰는데 안 켜짐"이 된다. 이 서버의 안전장치가 전부 환경변수
+		// 이름에 걸려 있으므로 그 침묵은 비싸다.
+		//
+		// ⚠️ 문서에 '틀린 이름'을 일부러 예시로 적으면 여기서 걸린다. 그때는 그
+		//    예시를 코드 폰트 밖으로 빼거나 이 목록에서 제외할 것.
+		const docs = ['README.md', 'README.ko.md'];
+		const texts = await Promise.all(
+			docs.map(async (f) => readFile(new URL(`../../${f}`, import.meta.url), 'utf8')),
+		);
+		const documented = new Set(
+			texts.flatMap((t) => [...t.matchAll(/\bVELOG_[A-Z0-9_]+/g)].map((m) => m[0])),
+		);
+		// ★ 대조군 — 못 읽었으면 이 테스트는 아무것도 안 지킨다.
+		assert.ok(
+			documented.size >= 3,
+			`문서에서 환경변수를 못 찾았다 (${documented.size}개) — 경로나 정규식을 확인하라`,
+		);
+
+		const sources = await readAllSources(new URL('../', import.meta.url));
+		const consumed = new Set(
+			sources.flatMap(([, code]) =>
+				[...code.matchAll(/\benv\['(VELOG_[A-Z0-9_]+)'\]/g)].map((m) => m[1] as string),
+			),
+		);
+		for (const key of documented) {
+			assert.ok(
+				consumed.has(key),
+				`문서가 ${key} 를 안내하는데 코드에서 읽는 곳이 없다 (오타이거나 죽은 안내다)`,
+			);
+		}
+	});
+
+	test('P27 — engines 하한과 CI 매트릭스 하한이 같다', async () => {
+		// 둘은 조용히 어긋난다. engines 를 내려도 CI 가 그 버전을 안 돌면 "지원한다"는
+		// 말에 근거가 없다.
+		// ⚠️ 반대 방향은 조용하다 — npm 은 `engine-strict` 가 꺼져 있으면(기본값)
+		//   engines 불일치에 **경고만** 하고 설치를 진행한다. 이 레포에는 그걸 켜는
+		//   .npmrc 가 없다. 그래서 "npm 이 막아줄 것"에 기대면 안 된다.
+		// ★ 비교는 **정확한 버전**으로 한다. CI 에 `22` 라고 적으면 최신 22.x 가
+		//   풀려서 하한인 22.18.0 은 한 번도 안 돈다.
+		const pkg = (await json(new URL('../../package.json', import.meta.url))) as {
+			engines?: { node?: string };
+		};
+		const floor = pkg.engines?.node;
+		assert.ok(floor, 'package.json 에 engines.node 가 없다');
+		const floorMajor = Number(/(\d+)/.exec(floor)?.[1]);
+		assert.ok(Number.isInteger(floorMajor), `engines.node 에서 메이저를 못 읽었다: ${floor}`);
+
+		const ci = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+		const listed = /^\s*node:\s*\[([^\]]+)\]/m.exec(ci)?.[1];
+		assert.ok(listed, 'ci.yml 에서 node 매트릭스를 못 찾았다 — 형식이 바뀌었다');
+		const entries = listed.split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, ''));
+		// ★ 대조군 — 못 읽었으면 아래 비교는 아무것도 안 지킨다.
+		assert.ok(entries.length >= 2 && entries.every((e) => /^\d/.test(e)), `매트릭스 파싱 실패: ${listed}`);
+
+		const exact = minVersion(floor);
+		assert.ok(exact, `engines 범위에서 최소 버전을 못 읽었다: ${floor}`);
+		assert.ok(
+			entries.includes(exact.version),
+			`engines 하한은 ${exact.version} 인데 CI 매트릭스는 ${listed} 다 — ` +
+				'그 버전을 한 번도 안 돌리면 "지원한다"는 근거가 없다',
+		);
+
+		// ★★ 매트릭스에 적어두는 것만으로는 아무 일도 안 일어난다. setup-node 가
+		//   그 값을 **실제로 써야** 그 버전에서 도는 것이다. `node-version: 24` 처럼
+		//   상수로 바꿔놓으면 잡 이름만 22.18.0 이고 실행은 24 가 되는데, 그건
+		//   거짓 초록이다 — 이름을 보고 필수 체크를 걸어둔 사람이 속는다.
+		assert.match(
+			ci,
+			/node-version:\s*\$\{\{\s*matrix\.node\s*\}\}/,
+			'setup-node 가 matrix.node 를 안 쓴다 — 잡 이름과 실제 실행 버전이 어긋난다',
+		);
 	});
 
 	test('P21 — 배포되는 모든 파일에 개인정보·로컬 경로가 실리지 않는다', async () => {

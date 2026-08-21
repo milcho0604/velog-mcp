@@ -32,7 +32,7 @@ import { registerImageTools } from './tools/images.ts';
 export const SERVER_NAME = 'velog-mcp';
 // ⚠️ 이 값은 네 곳이 함께 움직인다 — package.json / plugin.json / .mcp.json 의
 // npx 핀 / 여기. 어긋나면 P8 테스트가 잡는다. 손으로 맞추지 말고 테스트를 믿을 것.
-export const SERVER_VERSION = '0.5.0';
+export const SERVER_VERSION = '0.6.0';
 
 export function createServer(
 	client: VelogClient,

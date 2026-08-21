@@ -1,7 +1,7 @@
 /**
  * 벨로그 GraphQL 클라이언트.
  *
- * Node 24 내장 fetch 만 쓴다 — HTTP 라이브러리를 추가하지 않는다.
+ * Node 내장 fetch 만 쓴다 — HTTP 라이브러리를 추가하지 않는다.
  * 접속하는 호스트는 v3.velog.io 하나뿐이다 (docs/security.md).
  */
 
