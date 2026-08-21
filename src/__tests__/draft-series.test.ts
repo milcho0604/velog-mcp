@@ -345,3 +345,296 @@ describe('★ 소유권 검사 범위', () => {
 		assert.match(res.content?.[0]?.text ?? '', /시리즈가 아닙니다/);
 	});
 });
+
+/**
+ * ★★ 코덱스 재검증이 잡은 구멍.
+ *   `seriesFromName` 을 게으르게 `series_name !== undefined` 로 세우면
+ *   **남의 series_id + 아무 이름**을 함께 줬을 때 직접 id 검사를 건너뛴다.
+ *   기존 A11 은 이름 없이 id 만 주고, 앞의 테스트는 이름 단독만 봐서 둘 다 통과한다.
+ *   그래서 네 도구 × 네 조합을 표로 고정한다.
+ */
+describe('★★ 소유권 계약 — 네 도구 × 네 입력 조합', () => {
+	const MINE = { id: 's-mine', name: 'MCP', posts_count: 1 };
+
+	function srv(state: { is_temp: boolean }) {
+		const calls: string[] = [];
+		let wroteSeries: unknown;
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async (_u: string, init: { body: string }) => {
+				const b = JSON.parse(init.body) as {
+					query: string;
+					variables?: { input?: Record<string, unknown> };
+				};
+				const input = b.variables?.input ?? {};
+				const J = (d: unknown): Response =>
+					new Response(JSON.stringify({ data: d }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				if (b.query.includes('seriesList')) {
+					calls.push('seriesList');
+					return J({ seriesList: [MINE] });
+				}
+				if (b.query.includes('currentUser')) {
+					return J({ currentUser: { id: 'u1', username: 'me' } });
+				}
+				if (b.query.includes('writePost') || b.query.includes('editPost')) {
+					const op = b.query.includes('writePost') ? 'writePost' : 'editPost';
+					calls.push(op);
+					if (input['series_id'] !== undefined) wroteSeries = input['series_id'];
+					return J({
+						[op]: {
+							id: 'p1',
+							title: 't',
+							url_slug: 's',
+							is_temp: state.is_temp,
+							user: { username: 'me' },
+						},
+					});
+				}
+				if (b.query.includes('post(')) {
+					calls.push('post');
+					return J({
+						post: {
+							id: 'p1',
+							title: 't',
+							body: 'b',
+							tags: [],
+							url_slug: 's',
+							thumbnail: null,
+							is_temp: state.is_temp,
+							is_private: true,
+							meta: {},
+							series: wroteSeries ? { id: wroteSeries, name: MINE.name } : null,
+							user: { username: 'me' },
+						},
+					});
+				}
+				return J({});
+			}) as unknown as typeof fetch,
+		});
+		return { client, calls, series: () => wroteSeries };
+	}
+
+	const TOOLS: Array<{ tool: string; is_temp: boolean; extra: Record<string, unknown> }> = [
+		{ tool: 'velog_create_draft', is_temp: true, extra: { title: 't', body: 'b' } },
+		{ tool: 'velog_update_draft', is_temp: true, extra: { id: 'p1', title: 't', body: 'b' } },
+		{ tool: 'velog_publish_post', is_temp: false, extra: { title: 't', body: 'b' } },
+		{ tool: 'velog_update_post', is_temp: false, extra: { id: 'p1' } },
+	];
+
+	async function call(tool: string, is_temp: boolean, args: Record<string, unknown>) {
+		const f = srv({ is_temp });
+		const server = createServer(f.client, { publicPublish: true, editProfile: false });
+		const [ct, st] = InMemoryTransport.createLinkedPair();
+		const mcp = new Client({ name: 't', version: '0' });
+		await Promise.all([mcp.connect(ct), server.connect(st)]);
+		const res = (await mcp.callTool({ name: tool, arguments: args })) as {
+			isError?: boolean;
+			content?: Array<{ text?: string }>;
+		};
+		await mcp.close();
+		return { ...f, text: res.content?.[0]?.text ?? '' };
+	}
+
+	for (const { tool, is_temp, extra } of TOOLS) {
+		test(`${tool} — 남의 series_id 는 이름을 곁들여도 거부한다`, async () => {
+			const r = await call(tool, is_temp, {
+				...extra,
+				series_id: 'not-mine',
+				series_name: 'MCP',
+			});
+			assert.equal(r.series(), undefined, '남의 시리즈가 저장 요청에 실렸다');
+			assert.match(r.text, /시리즈가 아닙니다/);
+		});
+
+		test(`${tool} — 남의 series_id 만 줘도 거부한다`, async () => {
+			const r = await call(tool, is_temp, { ...extra, series_id: 'not-mine' });
+			assert.equal(r.series(), undefined);
+			assert.match(r.text, /시리즈가 아닙니다/);
+		});
+
+		test(`${tool} — 내 이름만 주면 붙고 목록은 한 번만 받는다`, async () => {
+			const r = await call(tool, is_temp, { ...extra, series_name: 'MCP' });
+			assert.equal(r.series(), 's-mine', '이름으로 찾은 시리즈가 안 실렸다');
+			assert.equal(
+				r.calls.filter((c) => c === 'seriesList').length,
+				1,
+				'같은 목록을 두 번 받아온다',
+			);
+		});
+
+		test(`${tool} — 없는 이름이면 아무것도 쓰지 않는다`, async () => {
+			const r = await call(tool, is_temp, { ...extra, series_name: '없는시리즈' });
+			assert.equal(
+				r.calls.filter((c) => c === 'writePost' || c === 'editPost').length,
+				0,
+				'못 찾았는데 저장 요청이 나갔다',
+			);
+		});
+	}
+});
+
+/**
+ * ★★ 코덱스 재검증 finding 1.
+ *   생성은 `post:new` 줄을 잡지만 `post:<id>` 줄은 **생성 응답을 받은 뒤에야** 잡는다.
+ *   그 틈에 `update_draft` 가 먼저 그 줄을 잡고 제목·본문을 고칠 수 있다. 그때 후속
+ *   edit 이 **생성 당시 입력**을 다시 펼치면 그 수정이 통째로 되돌아가고, 두 호출 다
+ *   성공을 보고한다. 그래서 후속 edit 은 반드시 **직전에 읽은 현재 값**을 실어야 한다.
+ */
+describe('★★ 후속 edit 은 생성 당시 입력이 아니라 현재 값을 싣는다', () => {
+	function raced() {
+		const sent: Array<Record<string, unknown>> = [];
+		const current = { title: '남이-고친-제목', body: '남이-고친-본문', tags: ['keep'] };
+		let series: unknown = null;
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async (_u: string, init: { body: string }) => {
+				const b = JSON.parse(init.body) as {
+					query: string;
+					variables?: { input?: Record<string, unknown> };
+				};
+				const input = b.variables?.input ?? {};
+				const J = (d: unknown): Response =>
+					new Response(JSON.stringify({ data: d }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				if (b.query.includes('seriesList')) return J({ seriesList: SERIES });
+				if (b.query.includes('currentUser')) {
+					return J({ currentUser: { id: 'u1', username: 'me' } });
+				}
+				if (b.query.includes('writePost')) {
+					return J({
+						writePost: {
+							id: 'p1',
+							title: '내가-만든-제목',
+							url_slug: 's',
+							is_temp: true,
+							user: { username: 'me' },
+						},
+					});
+				}
+				if (b.query.includes('editPost')) {
+					sent.push(input);
+					if (typeof input['series_id'] === 'string') series = input['series_id'];
+					return J({ editPost: { id: 'p1', is_temp: true, user: { username: 'me' } } });
+				}
+				if (b.query.includes('post(')) {
+					return J({
+						post: {
+							id: 'p1',
+							...current,
+							url_slug: 's',
+							thumbnail: null,
+							is_temp: true,
+							meta: { short_description: '유지되어야' },
+							series: series ? { id: series, name: 'PostgreSQL' } : null,
+							user: { username: 'me' },
+						},
+					});
+				}
+				return J({});
+			}) as unknown as typeof fetch,
+		});
+		return { client, sent };
+	}
+
+	test('중간에 바뀐 제목과 본문을 되돌리지 않는다', async () => {
+		const f = raced();
+		const mcp = await connect(f.client);
+		await mcp.callTool({
+			name: 'velog_create_draft',
+			arguments: { title: '내가-만든-제목', body: '내가-만든-본문', series_name: 'PostgreSQL' },
+		});
+		await mcp.close();
+
+		const edit = f.sent[0];
+		assert.ok(edit, '후속 edit 이 아예 안 나갔다');
+		assert.equal(
+			edit['title'],
+			'남이-고친-제목',
+			'생성 당시 제목을 다시 실었다 — 그 사이의 수정이 통째로 되돌아간다',
+		);
+		assert.equal(edit['body'], '남이-고친-본문', '생성 당시 본문을 다시 실었다');
+		assert.deepEqual(edit['tags'], ['keep'], '현재 태그를 안 실어 태그가 지워진다');
+		assert.deepEqual(
+			edit['meta'],
+			{ short_description: '유지되어야' },
+			'meta 를 다시 안 실으면 표시 데이터가 지워진다',
+		);
+	});
+});
+
+/**
+ * ★ 바깥은 `post:new` 줄이다. 서버가 id 로 하필 "new" 를 돌려주면 두 키가 같아져
+ *   안쪽이 바깥쪽을 기다린다. 가드가 없으면 이 테스트는 **끝나지 않는다** —
+ *   그래서 단언이 아니라 timeout 이 검출 장치다.
+ */
+describe('★ id 가 "new" 여도 멈추지 않는다', () => {
+	test('교착 대신 안내로 빠진다', { timeout: 8000 }, async () => {
+		const client = new VelogClient({
+			auth: {
+				kind: 'authenticated',
+				credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+			},
+			sleepImpl: async () => {},
+			fetchImpl: (async (_u: string, init: { body: string }) => {
+				const b = JSON.parse(init.body) as { query: string };
+				const J = (d: unknown): Response =>
+					new Response(JSON.stringify({ data: d }), {
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				if (b.query.includes('seriesList')) return J({ seriesList: SERIES });
+				if (b.query.includes('currentUser')) {
+					return J({ currentUser: { id: 'u1', username: 'me' } });
+				}
+				if (b.query.includes('writePost')) {
+					return J({
+						writePost: {
+							id: 'new',
+							title: 't',
+							url_slug: 's',
+							is_temp: true,
+							user: { username: 'me' },
+						},
+					});
+				}
+				if (b.query.includes('post(')) {
+					return J({
+						post: {
+							id: 'new',
+							title: 't',
+							body: 'b',
+							tags: [],
+							url_slug: 's',
+							thumbnail: null,
+							is_temp: true,
+							meta: {},
+							series: null,
+							user: { username: 'me' },
+						},
+					});
+				}
+				return J({});
+			}) as unknown as typeof fetch,
+		});
+		const mcp = await connect(client);
+		const res = (await mcp.callTool({
+			name: 'velog_create_draft',
+			arguments: { title: 't', body: 'b', series_name: 'PostgreSQL' },
+		})) as { content?: Array<{ text?: string }> };
+		await mcp.close();
+		assert.match(res.content?.[0]?.text ?? '', /초안을 저장했습니다/);
+	});
+});

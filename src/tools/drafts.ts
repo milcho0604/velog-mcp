@@ -55,7 +55,11 @@ const QUERY_POST_STATE = `
  */
 const QUERY_POST_FOR_SERIES = `
   query PostForSeries($input: ReadPostInput!) {
-    post(input: $input) { id is_temp meta series { id name } user { username } }
+    post(input: $input) {
+      id title body tags url_slug thumbnail is_temp meta
+      series { id name }
+      user { username }
+    }
   }
 `;
 
@@ -146,10 +150,22 @@ function manualFixNote(postId: string, seriesId: string, lead: string): string {
 	);
 }
 
+interface DraftSnapshot {
+	id: string;
+	title?: string | null;
+	body?: string | null;
+	tags?: string[] | null;
+	url_slug?: string | null;
+	thumbnail?: string | null;
+	is_temp?: boolean;
+	meta?: unknown;
+	series?: { id?: string; name?: string } | null;
+	user?: { username?: string } | null;
+}
+
 async function attachSeriesToNewDraft(
 	client: VelogClient,
 	postId: string,
-	baseInput: Record<string, unknown>,
 	seriesId: string,
 	signal?: AbortSignal,
 ): Promise<string> {
@@ -166,46 +182,65 @@ async function attachSeriesToNewDraft(
 			' 확인하는 조회가 실패했습니다. 이미 붙어 있을 수 있으니 먼저 확인하세요.',
 	);
 	// ★ 이 글 전용 줄로 넘긴다. 이유는 위 주석.
+	// ⚠️ 바깥은 `post:new` 줄이다. 서버가 id 로 하필 "new" 를 돌려주면 두 키가 같아져
+	//   안쪽이 바깥쪽을 기다리는 교착이 된다. 그때는 붙이기를 포기하는 쪽이 낫다.
+	if (postId === 'new') return notApplied;
 	return serializeWrite(`post:${postId}`, async () => {
 		let sent = false;
 		try {
-			const before = await client.request<{
-				post: {
-					id: string;
-					is_temp?: boolean;
-					meta?: unknown;
-					user?: { username?: string } | null;
-				} | null;
-			}>(QUERY_POST_FOR_SERIES, { input: { id: postId } }, { signal });
+			const before = await client.request<{ post: DraftSnapshot | null }>(
+				QUERY_POST_FOR_SERIES,
+				{ input: { id: postId } },
+				{ signal },
+			);
 			// 방금 만든 글을 못 읽으면 손대지 않는다.
 			if (!before.post || before.post.is_temp !== true) return notApplied;
+			// ★ 이미 붙어 있으면 아무것도 쓰지 않는다. 벨로그가 언젠가 생성 단계에서도
+			//   붙이기 시작하면 이 함수는 조회 한 번으로 끝나야 한다.
+			if (before.post.series?.id === seriesId) {
+				return `\n\n📚 시리즈 **${before.post.series.name ?? seriesId}** 에 넣었습니다.`;
+			}
 			// ★ 우리가 방금 만든 글이라 소유권은 자명해 보이지만 검증한다. 이 레포는
 			//   "자명하다"에 이미 당했고(ownership.ts), 구조 테스트가 editPost 마다 짝을
 			//   요구한다. 여기에 예외를 만들면 그 가드가 그만큼 헐거워진다.
 			await assertOwned(client, before.post, 'velog_create_draft');
 
+			// ★★ **생성 당시의 입력이 아니라 방금 읽은 현재 값**으로 전체교체를 만든다.
+			//   editPost 는 전체 교체다. 생성 응답이 늦는 사이 update_draft 가 먼저
+			//   `post:<id>` 줄을 잡고 제목·본문을 고칠 수 있는데, 그때 낡은 생성 입력을
+			//   다시 펼치면 그 수정이 통째로 되돌아간다. 두 호출 다 성공을 보고하므로
+			//   아무도 모른다. (코덱스 재검증에서 재현됨)
+			const input: Record<string, unknown> = {
+				id: postId,
+				title: before.post.title ?? '',
+				body: before.post.body ?? '',
+				tags: before.post.tags ?? [],
+				url_slug: before.post.url_slug ?? undefined,
+				meta: before.post.meta ?? {},
+				series_id: seriesId,
+				...DRAFT_ONLY, // ★ 마지막에 펼친다 — 초안 상태를 무엇도 못 덮게
+			};
+			// ★ 썸네일은 있을 때만 싣는다. 빈 값을 보내면 일부러 비워 둔 상태를 덮는다.
+			if (before.post.thumbnail) input['thumbnail'] = before.post.thumbnail;
+
+			// ★ `sent` 를 세우는 자리가 중요하다. mutate() 는 fetch 보다 **먼저**
+			//   취소를 검사한다(client.ts 의 `options.signal?.throwIfAborted()`).
+			//   호출 직전에 무조건 세우면 요청이 0회인데도 '보냈다'가 되어, 아무것도
+			//   안 쓴 실패를 '반영 여부 불명'으로 잘못 보고한다. 같은 검사를 여기서
+			//   먼저 해서 그 경우를 '미적용' 쪽으로 갈라낸다.
+			signal?.throwIfAborted();
 			sent = true;
 			await client.mutate<{ editPost: WrittenPost }>(
 				MUTATION_EDIT_POST,
-				{
-					input: {
-						...baseInput,
-						id: postId,
-						meta: before.post.meta ?? {},
-						series_id: seriesId,
-						...DRAFT_ONLY, // ★ 마지막에 펼친다 — 초안 상태를 무엇도 못 덮게
-					},
-				},
+				{ input },
 				{ signal },
 			);
 
-			const after = await client.request<{
-				post: {
-					id: string;
-					is_temp?: boolean;
-					series?: { id?: string; name?: string } | null;
-				} | null;
-			}>(QUERY_POST_FOR_SERIES, { input: { id: postId } }, { signal });
+			const after = await client.request<{ post: DraftSnapshot | null }>(
+				QUERY_POST_FOR_SERIES,
+				{ input: { id: postId } },
+				{ signal },
+			);
 			// ★ 초안이 아니게 됐으면 붙었는지보다 그게 급하다.
 			if (after.post?.is_temp !== true) {
 				return (
@@ -330,7 +365,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				// edit 경로에는 이 조건이 없다. 그래서 여기서 edit 을 한 번 더 쳐서 붙인다.
 				const seriesNote = series_id
 					? // ★ 버려진 series_id 를 여기서 직접 다시 붙인다. 던지지 않는다.
-						await attachSeriesToNewDraft(client, data.writePost.id, input, series_id, extra.signal)
+						await attachSeriesToNewDraft(client, data.writePost.id, series_id, extra.signal)
 					: // ★ 힌트 조회가 실패해도 저장은 이미 끝났다 — 전부 삼킨다.
 						await seriesHintSafely(
 							client,
