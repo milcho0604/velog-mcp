@@ -424,6 +424,7 @@ is not a test. Several in this repo did pass at first, and that is how they got 
 | [docs/security.md](docs/security.md) | Token handling, capability model, what's deliberately unimplemented |
 | [docs/tools.md](docs/tools.md) | Full tool catalog with gotchas |
 | [docs/decisions/](docs/decisions/) | Architecture decision records |
+| [CHANGELOG.md](CHANGELOG.md) | What was broken and what got fixed, per release |
 
 ## Notes
 

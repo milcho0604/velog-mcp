@@ -411,6 +411,7 @@ npm run schema:dump   # 현재 벨로그 GraphQL 스키마 덤프
 | [docs/security.md](docs/security.md) | 토큰 취급, 권한 모델, 의도적으로 뺀 기능 |
 | [docs/tools.md](docs/tools.md) | 도구 카탈로그와 주의사항 |
 | [docs/decisions/](docs/decisions/) | 설계 결정 기록 (ADR) |
+| [CHANGELOG.md](CHANGELOG.md) | 버전별로 무엇이 깨져 있었고 무엇이 고쳐졌나 |
 
 ## 참고
 
