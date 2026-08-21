@@ -215,6 +215,7 @@ function fail(message: string): never {
 const pkg = JSON.parse(await readFile(new URL('package.json', ROOT), 'utf8')) as {
 	name: string;
 	version: string;
+	files?: string[];
 };
 
 /**
@@ -329,7 +330,13 @@ for (const [label, base] of [
 		shipped.push([`${label}/${relative}`, new URL(relative, base)]);
 	}
 }
-for (const name of ['package.json', 'README.md', 'README.ko.md', 'LICENSE', 'npm-shrinkwrap.json']) {
+// ★★ 손으로 나열하면 `files` 에 새 파일을 추가할 때마다 여기가 조용히 뒤처진다.
+//   실제로 CHANGELOG.md 를 넣었을 때 npm 은 107개를 싣는데 이 검사는 106개만 봤다.
+//   검사에서 빠진 파일은 **개인정보 검사를 안 받고 나간다.** 그래서 package.json 의
+//   `files` 에서 읽고, npm 이 항상 싣는 것들을 더한다.
+const ALWAYS_SHIPPED = ['package.json', 'README.md', 'README.ko.md', 'LICENSE'];
+const listed = (pkg.files ?? []).filter((f) => !f.includes('/') && !['dist', 'docs'].includes(f));
+for (const name of new Set([...ALWAYS_SHIPPED, ...listed])) {
 	shipped.push([name, new URL(name, ROOT)]);
 }
 

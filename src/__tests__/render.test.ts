@@ -570,7 +570,7 @@ describe('★ R10 — 도형 이름·평면 key 는 좁혀져 있다', () => {
 			assert.equal(r.isError, true, `막았어야 한다: ${why}`);
 		}
 		// 겹치지 않으면 통과해야 한다 — '무조건 거부' 가 아님을 확인한다.
-		const ok = await client.callTool({
+		const ok = (await client.callTool({
 			name: 'velog_render_diagram',
 			arguments: {
 				title: 't',
@@ -580,9 +580,27 @@ describe('★ R10 — 도형 이름·평면 key 는 좁혀져 있다', () => {
 				],
 				upload: false,
 			},
-		});
-		assert.notEqual(ok.isError, true, '정상 입력까지 막혔다');
+		})) as { isError?: boolean; content?: Array<{ text?: string }> };
 		await client.close();
+
+		// ★★ 이 대조군이 확인하려는 것은 **검증 규칙이 정상 입력을 안 막는다**는 것 하나다.
+		//   그런데 이 호출은 실제로 크롬을 띄운다. CI 에서 크롬이 30초 상한에 걸리면
+		//   `isError` 가 서고, 예전 단언은 그걸 "정상 입력까지 막혔다"로 보고했다 —
+		//   원인은 렌더 타임아웃인데 증상은 검증 버그로 읽힌다. 실제로 main CI 가
+		//   30,036ms 로 그렇게 빨간불이 났다(chrome.ts 의 기본 상한이 30,000ms).
+		//   그래서 **거부 사유로 판정한다.** 중복 규칙에 걸린 것만 실패로 본다.
+		const text = ok.content?.[0]?.text ?? '';
+		assert.doesNotMatch(text, /노드 id 가 겹칩니다/, '정상 입력이 중복 규칙에 막혔다');
+		if (ok.isError === true) {
+			// 렌더 자체가 실패한 것은 이 테스트의 관심사가 아니다. 다만 **조용히 넘기지 않는다** —
+			// 무슨 이유였는지 남겨야 다음 사람이 "왜 초록인데 렌더가 깨졌지"를 겪지 않는다.
+			assert.match(
+				text,
+				/크롬이 \d+ms 안에 결과를 내지 못했습니다|크롬을 실행하지 못했습니다|크롬이 결과 없이 종료했습니다/,
+				`검증도 렌더도 아닌 알 수 없는 실패다: ${text.slice(0, 200)}`,
+			);
+			console.error(`[render.test] 대조군이 렌더 단계에서 실패했다(검증은 통과): ${text.slice(0, 120)}`);
+		}
 	});
 
 	// 좌표 상한이 없으면 요청 하나로 수억 픽셀 캔버스를 요구할 수 있다.
