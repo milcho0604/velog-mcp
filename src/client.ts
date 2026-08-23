@@ -289,9 +289,10 @@ export class VelogClient {
 	 *     where: { fk_user_id, released_at: { gt: 5분전 } },   // is_private 필터 없음
 	 *     data: { is_private: true } })
 	 *
-	 * 초안도 Prisma 기본값으로 `released_at = now()` 가 붙으므로(schema.prisma)
-	 * 이 카운트에 들어간다. 즉 초안을 몰아 만들면 **같은 시간대에 발행한 진짜 글이
-	 * 비공개로 내려간다.** 응답 유실로 인한 자동 재시도가 이 한계를 앞당길 수 있어
+	 * 계수(`count`)에는 `is_private:false` 필터가 있어 우리 초안(is_private:true)은
+	 * 카운터를 올리지 않는다. 하지만 쓸어내는 `updateMany` 에는 그 필터가 없다 —
+	 * 이미 공개 글 10건이 쌓인 상태에서 조치가 돌면 **같은 5분 안의 글이 전부**
+	 * 비공개로 내려간다. 응답 유실로 인한 자동 재시도가 그 순간을 앞당길 수 있어
 	 * 쓰기는 한 번만 친다. 실패하면 사용자가 상태를 확인하고 다시 부르게 한다.
 	 */
 	async mutate<T>(
