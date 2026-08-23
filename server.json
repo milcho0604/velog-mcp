@@ -1,0 +1,59 @@
+{
+	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+	"name": "io.github.milcho0604/velog",
+	"title": "Velog",
+	"description": "Read and write Velog (velog.io), the Korean developer blog. Public publishing is opt-in.",
+	"version": "0.6.1",
+	"websiteUrl": "https://github.com/milcho0604/velog-mcp#readme",
+	"repository": {
+		"url": "https://github.com/milcho0604/velog-mcp",
+		"source": "github"
+	},
+	"packages": [
+		{
+			"registryType": "npm",
+			"identifier": "@milcho0604/velog-mcp",
+			"version": "0.6.1",
+			"transport": {
+				"type": "stdio"
+			},
+			"environmentVariables": [
+				{
+					"name": "VELOG_ACCESS_TOKEN",
+					"description": "Velog access token. Either token enables writing; this one expires sooner.",
+					"format": "string",
+					"isRequired": false,
+					"isSecret": true
+				},
+				{
+					"name": "VELOG_REFRESH_TOKEN",
+					"description": "Velog refresh token. Either token enables writing; this one lasts 30 days.",
+					"format": "string",
+					"isRequired": false,
+					"isSecret": true
+				},
+				{
+					"name": "VELOG_ALLOW_PUBLIC",
+					"description": "Set to 1 to allow public publishing. Off by default; the model cannot set this.",
+					"format": "string",
+					"isRequired": false,
+					"isSecret": false
+				},
+				{
+					"name": "VELOG_ALLOW_PROFILE",
+					"description": "Set to 1 to allow editing profile fields. Reading the profile always works.",
+					"format": "string",
+					"isRequired": false,
+					"isSecret": false
+				},
+				{
+					"name": "VELOG_CHROME_PATH",
+					"description": "Path to a local Chrome binary, used for diagram and cover rendering.",
+					"format": "string",
+					"isRequired": false,
+					"isSecret": false
+				}
+			]
+		}
+	]
+}

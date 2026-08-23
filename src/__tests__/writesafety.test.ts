@@ -12,8 +12,9 @@
  *       data: { is_private: true } })                        // 최근 5분 글 전부 비공개
  *   }
  *
- * schema.prisma 의 `released_at DateTime? @default(now())` 때문에 초안도 이
- * 계수에 들어간다. 즉 초안을 몰아 만들면 같은 시간대에 발행한 진짜 글이 비공개가 된다.
+ * 계수(count)에는 `is_private:false` 필터가 있어 우리 초안은 카운터를 올리지 않는다.
+ * 하지만 쓸어내는 updateMany 에는 그 필터가 없어서, 이미 공개 글 10건이 쌓인 뒤에
+ * 조치가 돌면 같은 5분 안의 글이 전부 비공개가 된다. 상한은 공개 발행 쪽에 건다.
  */
 
 import { test, describe } from 'node:test';
@@ -32,7 +33,7 @@ const authed = {
 	credentials: { accessToken: 'tok12345678', refreshToken: undefined },
 };
 
-describe('초안 생성 속도 제한', () => {
+describe('공개 발행 속도 제한', () => {
 	test('우리 상한은 벨로그 파괴 임계보다 낮다', () => {
 		assert.ok(
 			PUBLIC_PUBLISH_LIMIT < VELOG_DESTRUCTIVE_THRESHOLD,
@@ -106,7 +107,7 @@ describe('★ mutation 은 재시도하지 않는다 (멱등하지 않음)', () 
 		assert.equal(
 			calls(),
 			1,
-			`${calls()}회 호출했다 — 응답 유실 시 초안이 중복 생성되고 벨로그 한계를 앞당긴다`,
+			`${calls()}회 호출했다 — 응답 유실 시 글이 중복 생성되고 벨로그 조치 시점을 앞당긴다`,
 		);
 	});
 
