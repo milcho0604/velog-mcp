@@ -558,8 +558,8 @@ export function registerPublishTools(
 				'초안 id 는 거부한다(초안 수정은 velog_update_draft).' +
 				(capabilities.publicPublish
 					? ' is_private 로 공개 범위도 바꿀 수 있고, 생략하면 현재 범위를 유지한다.'
-					: ' ★현재 설정에서는 공개 글을 수정하면 **비공개로 내려간다** — ' +
-						'공개 상태를 유지하려면 VELOG_ALLOW_PUBLIC=1 이 필요하다.'),
+					: ' 현재 설정에서는 공개 범위를 바꿀 수단이 없다 — 공개 글은 공개로, ' +
+						'비공개 글은 비공개로 그대로 남는다. 범위를 바꾸려면 VELOG_ALLOW_PUBLIC=1 이 필요하다.'),
 			inputSchema: {
 				id: z.string().min(1),
 				title: z.string().min(1).optional(),

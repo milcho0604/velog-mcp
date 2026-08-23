@@ -13,7 +13,7 @@ MCP 클라이언트 (Claude 등)
       ├── tools/profile.ts    사용자·시리즈·태그
       ├── tools/stats.ts      통계 (집계)
       ├── tools/export.ts     마크다운 백업 (파일 씀)
-      └── tools/drafts.ts     ★ 유일한 쓰기 경로
+      └── tools/drafts.ts     ★ 쓰기 경로 (다른 하나는 tools/publish.ts)
       │
       ▼
    client.ts ─────────── VelogClient.request()
