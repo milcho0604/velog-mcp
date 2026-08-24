@@ -63,7 +63,7 @@ npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 �
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.6.1
+  -- npx -y @milcho0604/velog-mcp@0.7.0
 ```
 
 이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
@@ -85,7 +85,7 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.6.1"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.7.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
@@ -98,7 +98,7 @@ Claude Code CLI 라면:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.6.1
+  -- npx -y @milcho0604/velog-mcp@0.7.0
 ```
 
 로컬 체크아웃으로 돌리려면 command 를
@@ -138,7 +138,7 @@ claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
 
 | 환경변수 | 되는 것 |
 | --- | --- |
-| *(설정 없음)* | 전체 읽기 · 초안 작성 · **비공개 발행** · 그림 생성·업로드 — 도구 21개 |
+| *(설정 없음)* | 전체 읽기 · 초안 작성 · **비공개 발행** · 그림 생성·업로드 — 도구 22개 |
 | `VELOG_ALLOW_PUBLIC=1` | …**공개 발행** 추가 (`is_private` 파라미터가 생김) |
 | `VELOG_ALLOW_PROFILE=1` | …**프로필 수정** 추가 (도구 5개) |
 
@@ -187,7 +187,7 @@ if (count >= 10) {
 
 ## 도구
 
-21개. 벨로그 상태를 바꾸는 건 그중 9개뿐이다.
+22개. 벨로그 상태를 바꾸는 건 그중 10개뿐이다.
 
 ### 읽기 — 인증 불필요
 
@@ -276,6 +276,7 @@ series_id:   "e53810ca-..."   ← id 를 알면 이쪽이 우선
 | 도구 | 효과 |
 | --- | --- |
 | `velog_render_diagram` | 구성도·흐름도를 그려 올린다 |
+| `velog_render_sequence` | 참가자와 순서 있는 메시지로 시퀀스 다이어그램을 그린다 |
 | `velog_render_cover` | 글 표지 카드(1200×630)를 만든다 |
 | `velog_upload_image` | 로컬 이미지를 올리고 마크다운을 돌려준다 |
 
@@ -306,7 +307,7 @@ bbox 로 정하므로 그림이 잘릴 수가 없다.
 
 **크롬이 필요하다** (크로미움 계열이면 된다: Edge·Brave·Chromium). macOS·리눅스·
 윈도우에서 알아서 찾고, 다른 데 있으면 `VELOG_CHROME_PATH` 로 지정한다.
-이 중 브라우저를 쓰는 건 `velog_render_diagram`·`velog_render_cover` **둘뿐**이고,
+이 중 브라우저를 쓰는 건 `velog_render_diagram`, `velog_render_sequence`, `velog_render_cover` **셋뿐**이고,
 `velog_upload_image` 를 포함한 나머지 19개는 크롬 없이 동작한다.
 
 **비용은 실측해서 밝혀 둔다.** 그림 한 장에 크롬 9~11개·최대 약 1GB 를 3~4초 쓰고

@@ -34,8 +34,12 @@ import {
 	TONE_NAMES,
 	formatAudit,
 	formatCoverAudit,
+	type SequenceSpec,
+	SEQ_KINDS,
+	formatSequenceAudit,
 	renderCover,
 	renderDiagram,
+	renderSequence,
 } from '../render/index.ts';
 import { isHexColor } from '../render/tones.ts';
 import { makeSerializer } from '../serial.ts';
@@ -350,6 +354,36 @@ const planeSchema = z.object({
 		.describe('점선 (예: "6 4")'),
 });
 
+const participantSchema = z.object({
+	id: z.string().max(64).optional().describe('메시지에서 가리킬 이름. 생략하면 p0, p1 …'),
+	name: z.string().min(1).max(80),
+	sub: z.string().max(80).optional().describe('두 번째 줄. 짧게'),
+	icon: z.string().max(40).optional(),
+	icon_tone: toneField.optional(),
+	tag: z.string().max(40).optional().describe('오른쪽 위 작은 배지 (예: ":6820")'),
+	tag_tone: toneField.optional(),
+});
+
+const messageSchema = z.object({
+	kind: z
+		.enum(SEQ_KINDS)
+		.optional()
+		.describe("생략하면 call. return 은 활성 막대를 닫고, note 는 선이 아니라 설명 상자"),
+	from: z.string().max(64),
+	to: z.string().max(64).optional().describe('note 만 생략 가능. 자기호출은 from 과 같게'),
+	// ★ 라벨 길이는 그대로 열 폭이 된다 — 이 도구는 글자를 줄이지 않고 자리를 넓히므로
+	//   상한이 없으면 캔버스가 그만큼 커진다. 접히긴 하지만 행 높이로 옮겨갈 뿐이다.
+	label: z.string().max(200).optional(),
+});
+
+const fragmentSchema = z.object({
+	kind: z.string().min(1).max(16).describe("상자 종류 (예: 'alt', 'opt', 'loop', 'par')"),
+	label: z.string().max(120).optional().describe("조건 (예: '토큰이 살아 있으면')"),
+	from: z.number().int().min(0).max(199).describe('감쌀 첫 메시지 번호 (0부터)'),
+	to: z.number().int().min(0).max(199).describe('감쌀 마지막 메시지 번호 (포함)'),
+	tone: toneField.optional(),
+});
+
 function markdown(alt: string, url: string): string {
 	return `![${alt}](${url})`;
 }
@@ -542,6 +576,97 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 					alt: args.alt ?? args.title,
 					...(args.post_id ? { postId: args.post_id } : {}),
 					what: '다이어그램',
+					signal: extra.signal,
+				})).join('\n'),
+			);
+		},
+	);
+
+	server.registerTool(
+		'velog_render_sequence',
+		{
+			title: '시퀀스 다이어그램 그리기',
+			description:
+				'참가자와 순서 있는 메시지로 시퀀스 다이어그램을 그려 PNG 로 만들고 벨로그에 올린다.\n' +
+				'**좌표를 받지 않는다** — 열 간격, 행 높이, 활성 막대, 묶음 상자를 전부 렌더러가 실측으로 정한다. ' +
+				'라벨이 안 들어가면 글자를 줄이는 게 아니라 그 구간을 넓히고, 길면 접고, 접힌 만큼 행을 높인다.\n' +
+				'메시지는 배열 순서가 곧 시간 순서다. 중간에 하나를 끼워 넣어도 아래가 알아서 밀린다.\n' +
+				'구성도나 흐름도(시간 축이 없는 그림)는 velog_render_diagram 을 쓸 것.\n' +
+				'감사에 걸리면 **올리지 않고** 무엇이 문제인지 알려준다. 이 판단은 끌 수 없고, ' +
+				'감사에 걸린 산출물은 velog_upload_image 로도 받지 않는다.\n' +
+				`종류: ${SEQ_KINDS.join(' ')}\n아이콘: ${ICON_NAMES.join(' ')}\n톤: ${TONE_NAMES.join(' ')}`,
+			inputSchema: {
+				title: z.string().min(1).max(200).describe('그림 제목 (좌상단)'),
+				subtitle: z.string().max(300).optional().describe('한 줄 설명·근거'),
+				participants: z
+					.array(participantSchema)
+					.min(1)
+					.max(12)
+					.describe('왼쪽부터 순서대로 세로 열이 된다'),
+				messages: z
+					.array(messageSchema)
+					.min(1)
+					.max(200)
+					.describe('배열 순서가 시간 순서다'),
+				fragments: z
+					.array(fragmentSchema)
+					.max(12)
+					.optional()
+					.describe('alt·opt·loop 묶음 상자. 서로 완전히 포개거나 완전히 떨어져야 한다'),
+				legend: z.boolean().default(true),
+				numbers: z.boolean().default(true).describe('메시지 앞에 1. 2. 3. 을 붙인다'),
+				activations: z
+					.boolean()
+					.default(true)
+					.describe('call/return 짝에서 활성 막대를 뽑아 그린다'),
+				alt: z.string().max(300).optional().describe('이미지 대체 텍스트'),
+				upload: z.boolean().default(true),
+				post_id: z
+					.string()
+					.max(64)
+					.optional()
+					.describe('붙일 글 id. 주면 벨로그가 내 글인지 확인한 뒤 받는다'),
+			},
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+		},
+		async (args, extra) => {
+			if (args.upload) client.requireAuth('velog_render_sequence');
+			const spec: SequenceSpec = {
+				title: args.title,
+				participants: args.participants,
+				messages: args.messages,
+				legend: args.legend,
+				numbers: args.numbers,
+				activations: args.activations,
+			};
+			if (args.subtitle !== undefined) spec.subtitle = args.subtitle;
+			if (args.fragments !== undefined) spec.fragments = args.fragments;
+
+			const result = await renderSequence(spec);
+			const q = result.audit;
+			// ★ 항목을 하나 늘리고 여기에 안 더하면 결함 있는 그림이 조용히 올라간다.
+			//   render.test.ts 의 R7 이 SequenceAudit 의 배열 항목 전부가 여기 있는지 본다.
+			const seqClean =
+				q.over.length === 0 &&
+				q.collide.length === 0 &&
+				q.label.length === 0 &&
+				q.cross.length === 0 &&
+				q.frame.length === 0;
+
+			return textResult(
+				(await finish({
+					pngPath: result.pngPath,
+					htmlPath: result.htmlPath,
+					width: result.width,
+					height: result.height,
+					scale: result.scale,
+					bytes: result.bytes,
+					auditText: formatSequenceAudit(q),
+					clean: seqClean,
+					upload: args.upload,
+					alt: args.alt ?? args.title,
+					...(args.post_id ? { postId: args.post_id } : {}),
+					what: '시퀀스 다이어그램',
 					signal: extra.signal,
 				})).join('\n'),
 			);
