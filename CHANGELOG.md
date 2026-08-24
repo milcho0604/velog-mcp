@@ -136,3 +136,7 @@
 [0.7.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.0
 [0.6.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.6.1
 [0.6.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.6.0
+[0.5.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.5.0
+[0.4.2]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.4.2
+[0.4.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.4.1
+[0.4.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.4.0
