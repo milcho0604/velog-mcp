@@ -4,6 +4,12 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
+## [0.7.1] — 2026-08-24
+
+- 문서만 갱신. npm 에 실려 나가는 `docs/tools.md` 와 `CHANGELOG.md` 가 0.7.0 발행 뒤에
+  바뀌었는데, npm 은 같은 버전 재발행이 안 되므로 패치 릴리스로 내보낸다. 0.4.1 과 같은 이유다.
+  `dist` 는 0.7.0 발행본과 동일하다 — 동작은 바뀌지 않는다.
+
 ## [0.7.0] — 2026-08-24
 
 ### 추가
@@ -133,6 +139,7 @@
 
 - 첫 npm 공개 발행.
 
+[0.7.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.1
 [0.7.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.0
 [0.6.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.6.1
 [0.6.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.6.0
