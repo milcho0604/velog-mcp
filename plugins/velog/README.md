@@ -1,6 +1,6 @@
 # Velog — Claude Code 플러그인
 
-벨로그(velog.io)를 Claude Code 안에서 읽고 쓴다. 기본 도구 21개
+벨로그(velog.io)를 Claude Code 안에서 읽고 쓴다. 기본 도구 22개
 (프로필 수정을 켜면 5개가 더 붙는다).
 
 전체 문서는 저장소 루트에 있다 — [README.ko.md](../../README.ko.md) ·
@@ -30,10 +30,10 @@
 **첫 기동에는 npm 레지스트리 접근이 필요하다** — 완전 오프라인 상태의 새 기계에서는
 서버가 뜨지 않는다. 한 번 받고 나면 정확한 버전을 핀하므로 캐시에서 해결한다.
 
-**크롬(또는 크로미움 계열).** 그림을 그리는 두 도구에만 필요하다 —
-`velog_render_diagram` 과 `velog_render_cover`.
+**크롬(또는 크로미움 계열).** 그림을 그리는 세 도구에만 필요하다 —
+`velog_render_diagram`, `velog_render_sequence`, `velog_render_cover`.
 `velog_upload_image` 는 로컬 파일을 읽어 올릴 뿐이라 크롬 없이 된다.
-크롬이 없으면 **기동할 때 stderr 로 알려주고**, 그 둘만 실패한다. 나머지 19개는 다 된다.
+크롬이 없으면 **기동할 때 stderr 로 알려주고**, 그 셋만 실패한다. 나머지 19개는 다 된다.
 
 표준 위치(`/Applications/Google Chrome.app/…` 등)는 자동으로 찾는다.
 다른 데 있으면 `/plugin manage` 에서 경로를 지정한다.

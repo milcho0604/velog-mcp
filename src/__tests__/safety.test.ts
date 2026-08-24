@@ -203,6 +203,7 @@ describe('A4 — 도구 목록 스냅샷', () => {
 		'velog_recent_posts',
 		'velog_render_cover',
 		'velog_render_diagram',
+		'velog_render_sequence',
 		'velog_search_posts',
 		'velog_trending_posts',
 		'velog_unpublish_post',

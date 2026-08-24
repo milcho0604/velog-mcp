@@ -1081,7 +1081,7 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			const localNames = (importBlock?.[1] ?? '')
 				.split(',')
 				.map((part) => part.trim())
-				.filter((part) => /^render(?:Diagram|Cover)\b/.test(part))
+				.filter((part) => /^render(?:Diagram|Cover|Sequence)\b/.test(part))
 				.map((part) => (part.split(/\s+as\s+/)[1] ?? part).trim())
 				.filter((name) => name.length > 0);
 			if (localNames.length === 0) continue;
