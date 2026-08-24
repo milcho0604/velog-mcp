@@ -68,7 +68,7 @@ Published on npm, so nothing to clone — your MCP client runs it via `npx`. See
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.6.1
+  -- npx -y @milcho0604/velog-mcp@0.7.0
 ```
 
 The token stays in your client's config file here. The plugin route above puts it in
@@ -91,7 +91,7 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, �
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.6.1"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.7.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
@@ -104,7 +104,7 @@ With the Claude Code CLI:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.6.1
+  -- npx -y @milcho0604/velog-mcp@0.7.0
 ```
 
 To run a local checkout instead, swap the command for
@@ -148,7 +148,7 @@ and blog stats all work unauthenticated.
 
 | Environment | What you get |
 | --- | --- |
-| *(nothing set)* | Read everything · create drafts · **publish privately** · draw and upload images — 21 tools |
+| *(nothing set)* | Read everything · create drafts · **publish privately** · draw and upload images — 22 tools |
 | `VELOG_ALLOW_PUBLIC=1` | …plus **public publishing** (adds an `is_private` parameter) |
 | `VELOG_ALLOW_PROFILE=1` | …plus **profile editing** (adds 5 tools) |
 
@@ -199,7 +199,7 @@ Full reasoning: [docs/security.md](docs/security.md)
 
 ## Tools
 
-21 tools. Only 9 of them change anything on Velog.
+22 tools. Only 10 of them change anything on Velog.
 
 ### Reading — no auth required
 
@@ -285,6 +285,7 @@ omit it.
 | Tool | Effect |
 | --- | --- |
 | `velog_render_diagram` | Draw an architecture/flow diagram and upload it |
+| `velog_render_sequence` | Draw a sequence diagram from participants and ordered messages |
 | `velog_render_cover` | Draw a 1200×630 cover card for a post |
 | `velog_upload_image` | Upload a local image file, get the Markdown back |
 
@@ -318,7 +319,7 @@ from primitive shapes. Nothing is fetched — the renderer runs with DNS disable
 
 **Requires Chrome** (or any Chromium-based browser: Edge, Brave, Chromium). It is found
 automatically on macOS/Linux/Windows; set `VELOG_CHROME_PATH` if yours lives elsewhere.
-Only `velog_render_diagram` and `velog_render_cover` need it — `velog_upload_image`
+Only `velog_render_diagram`, `velog_render_sequence` and `velog_render_cover` need it — `velog_upload_image`
 just reads a local file, so it and the other 18 tools work without a browser.
 
 **Cost, measured:** one diagram is ~1 GB peak across 9–11 Chrome processes for 3–4

@@ -28,6 +28,12 @@ import {
 	parseAudit,
 } from './page.ts';
 import { type CoverAudit, type CoverSpec, buildCoverHtml } from './cover.ts';
+import {
+	type SequenceAudit,
+	type SequenceSpec,
+	buildSequenceHtml,
+	parseSequenceAudit,
+} from './sequence.ts';
 
 export interface RenderResult<A> {
 	/** 뽑아낸 PNG 경로 */
@@ -179,6 +185,15 @@ export function renderDiagram(
 	);
 }
 
+export function renderSequence(
+	spec: SequenceSpec,
+	scale = 2,
+): Promise<RenderResult<SequenceAudit>> {
+	return serialize(() =>
+		render({ html: buildSequenceHtml(spec), basename: 'sequence', scale }, parseSequenceAudit),
+	);
+}
+
 export function renderCover(
 	spec: CoverSpec,
 	scale = 2,
@@ -194,5 +209,11 @@ export function renderCover(
 
 export { type DiagramSpec, type AuditReport, formatAudit } from './page.ts';
 export { type CoverSpec, type CoverAudit, formatCoverAudit } from './cover.ts';
+export {
+	type SequenceSpec,
+	type SequenceAudit,
+	SEQ_KINDS,
+	formatSequenceAudit,
+} from './sequence.ts';
 export { ICON_NAMES } from './icons.ts';
 export { TONE_NAMES } from './tones.ts';

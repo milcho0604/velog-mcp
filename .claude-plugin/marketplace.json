@@ -10,7 +10,7 @@
 		{
 			"name": "velog",
 			"source": "./plugins/velog",
-			"description": "Read and write Velog (velog.io), the Korean developer blogging platform. Browse, search, trending, and blog stats work with no auth. Writing defaults to drafts and private posts — public publishing is opt-in at install. Also renders diagrams and cover images for your posts and uploads them (needs local Chrome). 벨로그 글을 읽고 쓰고, 다이어그램·표지도 그려서 올립니다.",
+			"description": "Read and write Velog (velog.io), the Korean developer blogging platform. Browse, search, trending, and blog stats work with no auth. Writing defaults to drafts and private posts — public publishing is opt-in at install. Also renders diagrams, sequence diagrams, and cover images for your posts and uploads them (needs local Chrome). 벨로그 글을 읽고 쓰고, 다이어그램과 시퀀스 다이어그램과 표지도 그려서 올립니다.",
 			"homepage": "https://github.com/milcho0604/velog-mcp#readme",
 			"category": "productivity",
 			"tags": ["blog", "velog", "writing", "publishing", "korean", "diagram"]
