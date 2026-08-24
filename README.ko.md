@@ -63,7 +63,7 @@ npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 �
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.7.1
+  -- npx -y @milcho0604/velog-mcp@0.7.2
 ```
 
 이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
@@ -85,7 +85,7 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.7.1"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.7.2"],
       "env": {
         "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
@@ -98,7 +98,7 @@ Claude Code CLI 라면:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.7.1
+  -- npx -y @milcho0604/velog-mcp@0.7.2
 ```
 
 로컬 체크아웃으로 돌리려면 command 를
