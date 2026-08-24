@@ -37,7 +37,13 @@ import { ICONS } from '../render/icons.ts';
 import { isHexColor, TONES } from '../render/tones.ts';
 import { sniffImage, registerImageTools } from '../tools/images.ts';
 import { dumpDom, findChrome, runForTest } from '../render/chrome.ts';
-import { renderCover, renderDiagram } from '../render/index.ts';
+import { renderCover, renderDiagram, renderSequence } from '../render/index.ts';
+import {
+	type SequenceAudit,
+	type SequenceSpec,
+	buildSequenceHtml,
+	parseSequenceAudit,
+} from '../render/sequence.ts';
 import { VelogClient, VELOG_UPLOAD_ENDPOINT } from '../client.ts';
 
 /**
@@ -190,7 +196,7 @@ describe('★ R3 — 렌더 페이지는 네트워크를 못 쓴다', () => {
 	});
 
 	test('렌더 모듈이 외부 리소스를 참조하지 않는다', async () => {
-		for (const name of ['page.ts', 'cover.ts', 'icons.ts', 'tones.ts', 'index.ts', 'chrome.ts']) {
+		for (const name of ['page.ts', 'sequence.ts', 'cover.ts', 'icons.ts', 'tones.ts', 'index.ts', 'chrome.ts']) {
 			const src = codeOnly(await readFile(new URL(`../render/${name}`, import.meta.url), 'utf8'));
 			const urls = src.match(/https?:\/\/[^\s'"`)]+/g) ?? [];
 			for (const url of urls) {
@@ -204,7 +210,7 @@ describe('★ R3 — 렌더 페이지는 네트워크를 못 쓴다', () => {
 	});
 
 	test('DOM 은 innerHTML 이 아니라 노드 API 로 만든다', async () => {
-		for (const name of ['page.ts', 'cover.ts']) {
+		for (const name of ['page.ts', 'sequence.ts', 'cover.ts']) {
 			const src = codeOnly(await readFile(new URL(`../render/${name}`, import.meta.url), 'utf8'));
 			for (const bad of ['innerHTML', 'outerHTML', 'document.write', 'insertAdjacentHTML']) {
 				assert.ok(!src.includes(bad), `${name} 이 ${bad} 를 쓴다`);
@@ -802,7 +808,7 @@ describe('★ R12 — 페이지에 URL 을 받는 자리가 없다', () => {
 	// 이게 1차 방어다. 크롬의 DNS 차단은 2차이고, 그 플래그는 이름 풀이를 막는 것이라
 	// IP 를 직접 적은 주소까지 막아주지 않는다. 그러니 '구멍이 없다'가 본질이다.
 	test('href/src/fetch 가 없고 url() 은 문서 내부 참조뿐이다', async () => {
-		for (const name of ['page.ts', 'cover.ts']) {
+		for (const name of ['page.ts', 'sequence.ts', 'cover.ts']) {
 			const src = codeOnly(await readFile(new URL(`../render/${name}`, import.meta.url), 'utf8'));
 			for (const sink of ['href', "'src'", '"src"', 'xlink', 'fetch(', 'XMLHttpRequest', 'import(']) {
 				assert.ok(!src.includes(sink), `${name} 에 URL 을 받는 자리가 생겼다: ${sink}`);
@@ -1025,7 +1031,7 @@ describe('★★ R14 — 감사에 걸린 그림은 실제로 업로드까지 �
 		await Promise.all([client.connect(a), server.connect(b)]);
 
 		const tools = (await client.listTools()).tools;
-		for (const name of ['velog_render_diagram', 'velog_render_cover']) {
+		for (const name of ['velog_render_diagram', 'velog_render_sequence', 'velog_render_cover']) {
 			const tool = tools.find((v) => v.name === name);
 			assert.ok(tool, `${name} 이 없다`);
 			const props = Object.keys(
@@ -1748,5 +1754,383 @@ describe('★ 실패한 렌더는 뒤를 남기지 않는다 (크롬 필요)', (
 			}),
 		);
 		assert.equal(await countRenderDirs(), afterOk, '실패한 렌더의 폴더가 남았다');
+	});
+});
+
+/**
+ * S1~S5 — 시퀀스 다이어그램.
+ *
+ * 이 도구는 좌표를 안 받는다. 그래서 "겹치지 않는다"의 책임이 전부 렌더러에 있고,
+ * 자가감사는 **내 배치 계산이 틀렸을 때 걸리라고** 있는 것이다.
+ * 그러니 '감사가 통과했다'만으로는 아무것도 증명되지 않는다 —
+ * 일부러 망가뜨렸을 때 **걸리는지**를 같이 봐야 검출력이 증명된다(S4).
+ */
+
+/** 다섯 가지 배치 계산을 모두 건드리는 표본. S4 의 변이가 이 위에서 돈다. */
+const SEQ_SAMPLE: SequenceSpec = {
+	title: '표본',
+	participants: [
+		{ id: 'a', name: '사용자', icon: 'user' },
+		{ id: 'b', name: 'flow-was', sub: 'JSP', icon: 'server' },
+		{ id: 'c', name: 'PostgreSQL', sub: 'condurealdb', icon: 'database' },
+		{ id: 'd', name: 'FCM', icon: 'cloud' },
+	],
+	messages: [
+		{ from: 'a', to: 'b', label: '글 작성 요청을 보낸다' },
+		{ kind: 'note', from: 'b', label: '여기서부터트랜잭션이열린다띄어쓰기없는긴토큰' },
+		{ from: 'b', to: 'c', label: 'INSERT INTO flow_post' },
+		{ kind: 'return', from: 'c', to: 'b', label: 'srno' },
+		{ from: 'b', to: 'b', label: '수신자 목록을 만든다' },
+		{ from: 'b', to: 'd', label: '푸시 발송 요청 (수신자 1,204명)' },
+		{ kind: 'return', from: 'd', to: 'b', label: '성공 3,842 / 실패 39' },
+		{ kind: 'return', from: 'b', to: 'a', label: '200 OK' },
+		// ★ 옆 열끼리 붙은 긴 라벨. 열 넓히기가 없으면 반드시 구간을 벗어난다 —
+		//   이게 없으면 S4 의 첫 변이가 결함을 못 만들고 조용히 통과한다(실제로 겪었다).
+		{ from: 'c', to: 'd', label: '옆 열에 붙은 제법 긴 라벨이라 열을 넓혀야 들어간다' },
+	],
+	fragments: [{ kind: 'tx', label: 'COMMIT 까지 열려 있다', from: 2, to: 6 }],
+};
+
+describe('★ S1 — 그릴 수 없는 입력은 그리기 전에 막는다', () => {
+	// 없는 참가자나 뒤집힌 범위는 그려봐야 의미가 없다. 그림 대신 무엇이 틀렸는지
+	// 말해주는 편이 낫다 — 감사로 넘기면 '그려놓고 실패'가 된다.
+	const base = {
+		title: 't',
+		participants: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+	};
+
+	test('없는 참가자를 가리키면 있는 참가자를 알려주며 막는다', () => {
+		assert.throws(
+			() => buildSequenceHtml({ ...base, messages: [{ from: 'a', to: '없는놈' }] }),
+			/없는 참가자 '없는놈'[\s\S]*a, b/,
+		);
+	});
+
+	test('note 가 아닌데 to 가 없으면 막는다', () => {
+		assert.throws(
+			() => buildSequenceHtml({ ...base, messages: [{ from: 'a' }] }),
+			/to 가 필요합니다/,
+		);
+	});
+
+	test('참가자 id 가 겹치면 막는다', () => {
+		assert.throws(
+			() =>
+				buildSequenceHtml({
+					title: 't',
+					participants: [{ id: 'a', name: 'A' }, { id: 'a', name: 'B' }],
+					messages: [{ from: 'a', to: 'a' }],
+				}),
+			/참가자 id 가 겹칩니다: a/,
+		);
+	});
+
+	test('프래그먼트 범위가 뒤집히거나 밖으로 나가면 막는다', () => {
+		const msgs = [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }];
+		assert.throws(
+			() => buildSequenceHtml({ ...base, messages: msgs, fragments: [{ kind: 'x', from: 1, to: 0 }] }),
+			/보다 뒤입니다/,
+		);
+		assert.throws(
+			() => buildSequenceHtml({ ...base, messages: msgs, fragments: [{ kind: 'x', from: 0, to: 9 }] }),
+			/메시지 범위\(0~1\) 밖입니다/,
+		);
+	});
+
+	test('서로 어긋나게 겹친 프래그먼트를 막는다', () => {
+		// 상자 둘이 서로를 반씩 물면 어느 쪽을 안쪽에 그려도 한쪽이 제 메시지를 못 감싼다.
+		const msgs = [
+			{ from: 'a', to: 'b' }, { from: 'b', to: 'a' },
+			{ from: 'a', to: 'b' }, { from: 'b', to: 'a' },
+		];
+		assert.throws(
+			() =>
+				buildSequenceHtml({
+					...base,
+					messages: msgs,
+					fragments: [{ kind: 'alt', from: 0, to: 2 }, { kind: 'opt', from: 1, to: 3 }],
+				}),
+			/어긋나게 겹칩니다/,
+		);
+		// 완전히 포갠 것과 완전히 떨어진 것은 통과해야 한다 (대조군).
+		assert.ok(
+			buildSequenceHtml({
+				...base,
+				messages: msgs,
+				fragments: [{ kind: 'alt', from: 0, to: 3 }, { kind: 'opt', from: 1, to: 2 }],
+			}),
+		);
+	});
+});
+
+describe('★ S2 — 페이지에 들어가는 것은 데이터뿐이다', () => {
+	// R1·R2 와 같은 규율. 시퀀스도 같은 통로를 쓰므로 같이 본다.
+	test('스크립트는 둘뿐이고 데이터에 마크업이 들어가지 않는다', () => {
+		const EVIL = '</script><script>alert(1)</script>';
+		const html = buildSequenceHtml({
+			title: EVIL,
+			subtitle: EVIL,
+			participants: [{ id: 'a', name: EVIL, sub: EVIL, tag: EVIL }],
+			messages: [{ from: 'a', to: 'a', label: EVIL }],
+			fragments: [{ kind: EVIL.slice(0, 16), label: EVIL, from: 0, to: 0 }],
+		});
+		const found = scripts(html);
+		assert.equal(found.length, 2, '스크립트가 둘이 아니다');
+		const json = found.find((v) => v.attrs.includes('application/json'));
+		assert.ok(json && !json.body.includes('<'), '데이터에 < 가 살아 있다');
+	});
+
+	test('페이지 스크립트가 문법으로 성립한다', () => {
+		const html = buildSequenceHtml(SEQ_SAMPLE);
+		const body = scripts(html).find((v) => !v.attrs.includes('application/json'))?.body ?? '';
+		assert.ok(body.length > 0, '페이지 스크립트를 못 찾았다');
+		// 문법 오류면 페이지가 통째로 안 돌고, 바깥에서는 '결과를 못 읽었다'만 남는다.
+		new Script(body);
+	});
+});
+
+describe('★★ S3 — 감사 항목이 늘면 업로드 차단 조건도 같이 늘어야 한다', () => {
+	// R7 과 같은 이유. 항목만 늘리고 clean 판정에서 빠뜨리면 결함 있는 그림이
+	// 조용히 올라간다.
+	test('SequenceAudit 의 모든 배열 항목이 clean 판정에 들어 있다', async () => {
+		const src = await readFile(new URL('../render/sequence.ts', import.meta.url), 'utf8');
+		const images = await readFile(new URL('../tools/images.ts', import.meta.url), 'utf8');
+		const block = /export interface SequenceAudit \{([\s\S]*?)\n\}/.exec(src)?.[1];
+		assert.ok(block, 'SequenceAudit 를 못 찾았다');
+		const fields = [...block.matchAll(/^\t(\w+): string\[\];/gm)].map((m) => m[1] ?? '');
+		assert.ok(fields.length >= 5, `감사 항목이 너무 적다: ${fields.join(',')}`);
+		const clean = /const seqClean =([\s\S]*?);/.exec(images)?.[1] ?? '';
+		assert.ok(clean.length > 0, 'seqClean 판정을 못 찾았다');
+		for (const f of fields) {
+			assert.ok(clean.includes(`q.${f}.length === 0`), `clean 판정에 q.${f} 가 빠졌다`);
+		}
+	});
+});
+
+describe('★★ S4 — 자가감사 검출력 (크롬 필요)', () => {
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+
+	/** 만들어진 HTML 을 그대로(또는 한 줄 바꿔) 크롬에 태우고 감사만 받아온다. */
+	async function auditOf(html: string): Promise<SequenceAudit> {
+		const dir = await mkdtemp(join(tmpdir(), 'velog-mcp-seqtest-'));
+		const profileDir = await mkdtemp(join(tmpdir(), 'velog-mcp-seqprof-'));
+		try {
+			const file = join(dir, 'x.html');
+			await writeFile(file, html, 'utf8');
+			return parseSequenceAudit(await dumpDom(pathToFileURL(file).href, { profileDir }));
+		} finally {
+			await rm(dir, { recursive: true, force: true }).catch(() => {});
+			await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+		}
+	}
+
+	const count = (a: SequenceAudit): number =>
+		a.over.length + a.collide.length + a.label.length + a.cross.length + a.frame.length;
+
+	// ★ 배치 계산 다섯 갈래를 하나씩 망가뜨린다. 각 변이는 서로 다른 감사 항목이
+	//   걸려야 한다 — 한 항목이 전부를 대신 잡으면 나머지는 죽은 검사라는 뜻이다.
+	/** 배지만 있고 아이콘이 없는 카드. 이때 제목이 배지와 같은 높이로 올라온다. */
+	const TAG_SAMPLE: SequenceSpec = {
+		title: '배지',
+		legend: false,
+		participants: [
+			{ id: 'a', name: 'A' },
+			{ id: 'b', name: 'FCM googleapis', tag: 'v1' },
+		],
+		messages: [{ from: 'a', to: 'b', label: 'x' }],
+	};
+
+	/** 이모지는 같은 font-size 라도 글리프가 높다. 줄높이를 상수로 두면 줄이 물린다. */
+	const EMOJI_SAMPLE: SequenceSpec = {
+		title: '이모지',
+		legend: false,
+		participants: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+		messages: [
+			{ from: 'a', to: 'b', label: '👨‍👩‍👧‍👦 가족 이모지가 들어간아주긴토큰🎉🎊🥳🚀✨💡🔥⚡️🌈🍀' },
+		],
+	};
+
+	/** 조건이 상자보다 넓은 프래그먼트. */
+	const CHIP_SAMPLE: SequenceSpec = {
+		title: '긴 조건',
+		legend: false,
+		participants: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+		messages: [{ from: 'a', to: 'b', label: '짧다' }],
+		fragments: [
+			{
+				kind: 'critical',
+				label: '조건이 아주 길게 적혀 있어서 상자보다 라벨이 넓어지는 경우를 본다',
+				from: 0,
+				to: 0,
+			},
+		],
+	};
+
+	const MUTATIONS: Array<{
+		what: string;
+		from: string;
+		to: string;
+		field: 'over' | 'collide' | 'label' | 'cross' | 'frame';
+		spec?: SequenceSpec;
+	}> = [
+		{
+			what: '열 넓히기를 끈다',
+			from: 'if (cur < sp.need) {',
+			to: 'if (false) {',
+			field: 'label',
+		},
+		{
+			what: '행 높이에서 라벨 줄 수를 뺀다',
+			from: 'mr.h = mr.th + 12;',
+			to: 'mr.h = 12;',
+			field: 'label',
+		},
+		{
+			what: '카드 폭을 글자보다 좁게 만든다',
+			from: 'p.w = Math.ceil(need);',
+			to: 'p.w = 70;',
+			field: 'over',
+		},
+		{
+			// ⚠️ 처음엔 '+300 밀기'였다. 그건 **내 기계의 열 폭**에 기댄 값이라
+			//    폰트가 다른 CI 에서는 빈 자리에 떨어져 아무것도 안 걸렸다.
+			//    마지막 참가자의 생명선 좌표를 직접 겨냥해 환경과 무관하게 만든다.
+			what: '노트를 남의 열 위로 민다',
+			from: 'mx.box = {x:P[mx.a].cx + NOTE_OFF,',
+			to: 'mx.box = {x:P[P.length - 1].cx - 20,',
+			field: 'collide',
+		},
+		{
+			what: '프래그먼트 아래 여유를 없앤다',
+			from: 'fr.y2 = M[fr.to].top + M[fr.to].h + 16 + fr.tailOff;',
+			to: 'fr.y2 = M[fr.to].top;',
+			field: 'frame',
+		},
+		// ★ 아래 셋은 험한 입력을 돌려보다 **실제로 나온 결함**이다. 고친 뒤 여기에 남긴다.
+		{
+			what: '배지 몫을 카드 폭에서 뺀다',
+			from: 'if (p.tag && !p.icon) need = Math.max(need, Math.max(tw, sw) + 2 * p.tagW + 34);',
+			to: '',
+			field: 'collide',
+			spec: TAG_SAMPLE,
+		},
+		{
+			// ⚠️ 처음엔 'm.lh = 15' 로 되돌리는 변이였다. 이모지 글리프가 15px 보다
+			//    높다는 데 기댄 것인데, **이모지 폰트가 없는 CI 에서는 안 높다.**
+			//    그래서 줄을 확실히 겹치게 만드는 값으로 바꾼다 — 여기서 증명하려는 건
+			//    '줄이 겹치면 감사가 잡는가'다.
+			//    ⚠️ 다만 이 변이는 '줄높이를 재서 정한다'는 규칙 자체를 지키지는 못한다.
+			//    상수 15 로 되돌리는 회귀는 **이모지가 실제로 높게 그려지는 환경에서만**
+			//    잡힌다. 대조군(이모지)이 그 자리를 메운다.
+			what: '줄높이를 겹치게 만든다',
+			from: 'm.lh = lineHeightOf(m.lines, m.cls);',
+			to: 'm.lh = 1;',
+			field: 'label',
+			spec: EMOJI_SAMPLE,
+		},
+		{
+			what: '프래그먼트 칩 넓히기를 끈다',
+			from: 'if (fr.x2 - fr.x < chipNeed) fr.x2 = fr.x + chipNeed;',
+			to: '',
+			field: 'over',
+			spec: CHIP_SAMPLE,
+		},
+	];
+
+	// ★ 대조군을 표본마다 다 돌린다. 변이가 걸렸다는 사실만으로는 부족하다 —
+	//   원래부터 걸리는 표본이었으면 그 시험은 아무것도 증명하지 않는다.
+	for (const [name, spec] of [
+		['기본', SEQ_SAMPLE],
+		['배지', TAG_SAMPLE],
+		['이모지', EMOJI_SAMPLE],
+		['긴 조건', CHIP_SAMPLE],
+	] as const) {
+		test(`대조군(${name})은 통과한다`, async (t) => {
+			if (!(await hasChrome())) {
+				t.skip('크롬이 없어 건너뜀');
+				return;
+			}
+			const a = await auditOf(buildSequenceHtml(spec));
+			assert.equal(count(a), 0, `대조군이 걸렸다: ${JSON.stringify(a)}`);
+		});
+	}
+
+	for (const m of MUTATIONS) {
+		test(`변이: ${m.what} → ${m.field} 가 걸린다`, async (t) => {
+			if (!(await hasChrome())) {
+				t.skip('크롬이 없어 건너뜀');
+				return;
+			}
+			const html = buildSequenceHtml(m.spec ?? SEQ_SAMPLE);
+			// ★ 치환이 조용히 빗나가면 '원본을 원본과 비교'하게 된다 — 그러면 이 시험은
+			//   아무것도 증명하지 않으면서 초록이 된다. 실제로 한 번 그렇게 당했다.
+			assert.ok(html.includes(m.from), `변이 대상이 코드에 없다: ${m.from}`);
+			const broken = html.replace(m.from, m.to);
+			assert.notEqual(broken, html, '치환이 적용되지 않았다');
+
+			const a = await auditOf(broken);
+			assert.ok(
+				a[m.field].length > 0,
+				`${m.what} 를 했는데 ${m.field} 가 비었다 — 그 검사에 검출력이 없다: ${JSON.stringify(a)}`,
+			);
+		});
+	}
+});
+
+describe('★ S6 — 캔버스 상한은 크기를 설정하기 전에 걸린다 (크롬 필요)', () => {
+	// ★ page.ts 와 같은 이유다. 브라우저는 width/height 를 받는 순간 그만한 표면을
+	//   잡는다 — 실측으로 40068×40150 을 설정했더니 0.2초 만에 43GB 를 잡았다.
+	//   그래서 바깥이 아니라 **페이지 안에서** 거른다. 여기서 보는 건 그 순서가
+	//   지켜지는지다: 막힌 그림은 렌더 결과가 아니라 **예외**로 나와야 한다.
+	test('메시지가 너무 많으면 그리지 않고 막는다', async (t) => {
+		if (!(await findChrome().then(() => true, () => false))) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		await assert.rejects(
+			renderSequence({
+				title: '너무 김',
+				legend: false,
+				participants: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+				messages: Array.from({ length: 200 }, (_, i) => ({
+					from: 'a',
+					to: 'b',
+					label: `m${i}`,
+				})),
+			}),
+			/그림이 너무 큽니다/,
+		);
+	});
+});
+
+describe('★ S5 — 글자를 줄이는 대신 자리를 넓힌다 (크롬 필요)', () => {
+	test('긴 라벨을 넣어도 통과하고, 라벨이 길수록 그림이 넓어진다', async (t) => {
+		if (!(await findChrome().then(() => true, () => false))) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const make = (label: string): SequenceSpec => ({
+			title: '폭 시험',
+			legend: false,
+			// ★ 캔버스에는 최소 폭 720 이 있다. 참가자가 둘뿐이면 짧은 쪽도 긴 쪽도
+			//   바닥에 걸려 폭이 같게 나온다 — 비교 자체가 성립하지 않는다(처음에 그렇게 틀렸다).
+			participants: ['A', 'B', 'C', 'D', 'E', 'F'].map((n) => ({ id: n, name: n })),
+			messages: [{ from: 'A', to: 'B', label }],
+		});
+		const short = await renderSequence(make('짧다'));
+		const long = await renderSequence(make('열을 넓혀야 들어가는 제법 긴 라벨'));
+		assert.ok(short.width > 720, `최소 폭에 걸려 비교가 성립하지 않는다: ${short.width}`);
+		for (const r of [short, long]) {
+			const a = r.audit;
+			assert.equal(
+				a.over.length + a.collide.length + a.label.length + a.cross.length + a.frame.length,
+				0,
+				`감사에 걸렸다: ${JSON.stringify(a)}`,
+			);
+		}
+		assert.ok(
+			long.width > short.width,
+			`라벨이 긴데 그림이 안 넓어졌다 — 글자를 줄였을 수 있다 (${short.width} → ${long.width})`,
+		);
 	});
 });

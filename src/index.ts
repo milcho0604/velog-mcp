@@ -32,7 +32,7 @@ import { registerImageTools } from './tools/images.ts';
 export const SERVER_NAME = 'velog-mcp';
 // ⚠️ 이 값은 네 곳이 함께 움직인다 — package.json / plugin.json / .mcp.json 의
 // npx 핀 / 여기. 어긋나면 P8 테스트가 잡는다. 손으로 맞추지 말고 테스트를 믿을 것.
-export const SERVER_VERSION = '0.6.1';
+export const SERVER_VERSION = '0.7.0';
 
 export function createServer(
 	client: VelogClient,
@@ -102,7 +102,11 @@ async function main(): Promise<void> {
  * 그래서 개수를 세지 않고 **이름을 적는다.** 숫자는 코드와 따로 놀 수 있지만
  * 이름은 테스트가 실물과 대조할 수 있다(P22).
  */
-export const CHROME_TOOLS = ['velog_render_diagram', 'velog_render_cover'] as const;
+export const CHROME_TOOLS = [
+	'velog_render_diagram',
+	'velog_render_sequence',
+	'velog_render_cover',
+] as const;
 
 /**
  * 그 도구들이 지금 쓸 수 있는 상태인지 기동할 때 말한다.
