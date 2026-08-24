@@ -4,6 +4,13 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
+## [0.7.3] — 2026-08-24
+
+- 문서만 갱신. `docs/decisions/0006-ship-as-plugin.md` 의 도구 개수가 0.7.0 이후로 낡아
+  있었다. 이 레포는 지난 결정 기록을 고쳐 쓰지 않고 배너로 정정하므로(ADR 0001, 0002,
+  0004 전례) 본문은 두고 머리에 배너를 달았다. `docs` 가 `files` 에 걸려 npm 으로
+  실려 나가는 파일이라 패치 릴리스로 내보낸다. `dist` 는 0.7.2 발행본과 동일하다.
+
 ## [0.7.2] — 2026-08-24
 
 - MCP 레지스트리 목록에 뜨는 한 줄 설명에 시퀀스 다이어그램이 빠져 있었다. 0.7.0 에서 도구를
@@ -148,6 +155,7 @@
 
 - 첫 npm 공개 발행.
 
+[0.7.3]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.3
 [0.7.2]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.1
 [0.7.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.0
