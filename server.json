@@ -2,8 +2,8 @@
 	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
 	"name": "io.github.milcho0604/velog",
 	"title": "Velog",
-	"description": "Read and write Velog (velog.io), the Korean developer blog. Public publishing is opt-in.",
-	"version": "0.7.1",
+	"description": "Read and write Velog (velog.io), Korean dev blog. Diagrams, sequences. Public publishing is opt-in.",
+	"version": "0.7.2",
 	"websiteUrl": "https://github.com/milcho0604/velog-mcp#readme",
 	"repository": {
 		"url": "https://github.com/milcho0604/velog-mcp",
@@ -13,7 +13,7 @@
 		{
 			"registryType": "npm",
 			"identifier": "@milcho0604/velog-mcp",
-			"version": "0.7.1",
+			"version": "0.7.2",
 			"transport": {
 				"type": "stdio"
 			},
@@ -48,7 +48,7 @@
 				},
 				{
 					"name": "VELOG_CHROME_PATH",
-					"description": "Path to a local Chrome binary, used for diagram and cover rendering.",
+					"description": "Path to a local Chrome binary, used for diagram, sequence, and cover rendering.",
 					"format": "string",
 					"isRequired": false,
 					"isSecret": false
