@@ -25,7 +25,7 @@ import { platform } from 'node:process';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { Script } from 'node:vm';
+import { Script, createContext } from 'node:vm';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -1190,6 +1190,18 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 					.trim(),
 			) || 0;
 
+		// ★ 이 검사는 **전역 프로세스 수**를 센다. 그래서 앞 시험이 남긴 크롬이
+		//   그대로 섞인다 — 렌더러는 SIGKILL 만 보내고 종료를 기다리지 않기 때문이다
+		//   (그건 의도된 설계다. 산출물이 나오면 기다릴 이유가 없다).
+		//   실제로 CI 에서 17 이 찍혀 빨간불이 났는데, 9(앞판 잔여) + 8(이번 판)이었다.
+		//   재실행하면 통과했다. 「빨간불이면 재실행」이 습관이 되면 진짜 실패도
+		//   플레이키로 넘기게 되므로, 잔여를 먼저 걷어내고 **늘어난 만큼**으로 잰다.
+		const settle = Date.now() + 8000;
+		while (count() > 0 && Date.now() < settle) {
+			await new Promise((r) => setTimeout(r, 100));
+		}
+		const base = count();
+
 		let peak = 0;
 		const timer = setInterval(() => {
 			const n = count();
@@ -1218,8 +1230,11 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 			'동시 요청 중 실패한 것이 있다',
 		);
 		// 한 판이 9개다. 앞판 정리와 뒷판 기동이 겹칠 수 있어 여유를 둔다.
-		assert.ok(peak > 0, '크롬 프로세스를 한 번도 못 봤다 — 이 검사는 의미가 없다');
-		assert.ok(peak <= 14, `동시에 크롬이 ${peak}개까지 떴다 — 직렬화가 풀렸다`);
+		assert.ok(peak > base, '크롬 프로세스를 한 번도 못 봤다 — 이 검사는 의미가 없다');
+		assert.ok(
+			peak - base <= 14,
+			`동시에 크롬이 ${peak - base}개까지 늘었다(바닥 ${base}, 최고 ${peak}) — 직렬화가 풀렸다`,
+		);
 	});
 
 	// 줄을 세우면 '앞 작업이 실패했을 때 줄이 끊기는' 실수를 하기 쉽다.
@@ -2015,20 +2030,6 @@ describe('★★ S4 — 자가감사 검출력 (크롬 필요)', () => {
 			spec: TAG_SAMPLE,
 		},
 		{
-			// ⚠️ 처음엔 'm.lh = 15' 로 되돌리는 변이였다. 이모지 글리프가 15px 보다
-			//    높다는 데 기댄 것인데, **이모지 폰트가 없는 CI 에서는 안 높다.**
-			//    그래서 줄을 확실히 겹치게 만드는 값으로 바꾼다 — 여기서 증명하려는 건
-			//    '줄이 겹치면 감사가 잡는가'다.
-			//    ⚠️ 다만 이 변이는 '줄높이를 재서 정한다'는 규칙 자체를 지키지는 못한다.
-			//    상수 15 로 되돌리는 회귀는 **이모지가 실제로 높게 그려지는 환경에서만**
-			//    잡힌다. 대조군(이모지)이 그 자리를 메운다.
-			what: '줄높이를 겹치게 만든다',
-			from: 'm.lh = lineHeightOf(m.lines, m.cls);',
-			to: 'm.lh = 1;',
-			field: 'label',
-			spec: EMOJI_SAMPLE,
-		},
-		{
 			what: '프래그먼트 칩 넓히기를 끈다',
 			from: 'if (fr.x2 - fr.x < chipNeed) fr.x2 = fr.x + chipNeed;',
 			to: '',
@@ -2071,7 +2072,11 @@ describe('★★ S4 — 자가감사 검출력 (크롬 필요)', () => {
 			const a = await auditOf(broken);
 			assert.ok(
 				a[m.field].length > 0,
-				`${m.what} 를 했는데 ${m.field} 가 비었다 — 그 검사에 검출력이 없다: ${JSON.stringify(a)}`,
+				`${m.what} 를 했는데 ${m.field} 가 비었다 — 그 검사에 검출력이 없다.\n` +
+					'⚠️ 코드가 맞아서가 아니라 **환경 때문**일 수 있다. 이 기계에 없는 글자는 ' +
+					'보통 높이로 그려져서, 그걸 전제한 변이가 아무 일도 못 한다. ' +
+					'이모지가 걸린 변이라면 러너에 이모지 폰트가 있는지부터 볼 것.\n' +
+					`감사: ${JSON.stringify(a)}`,
 			);
 		});
 	}
@@ -2131,6 +2136,67 @@ describe('★ S5 — 글자를 줄이는 대신 자리를 넓힌다 (크롬 필�
 		assert.ok(
 			long.width > short.width,
 			`라벨이 긴데 그림이 안 넓어졌다 — 글자를 줄였을 수 있다 (${short.width} → ${long.width})`,
+		);
+	});
+});
+
+describe('★★ S7 — 줄높이는 상수가 아니라 잰 값에서 온다', () => {
+	/**
+	 * ⚠️ 이 검사는 **두 번 실패하고 나서** 이 모양이 됐다.
+	 *
+	 * 처음엔 이모지 라벨을 렌더해서 잡았다. 이모지 글리프가 11.5px 글꼴에서도
+	 * 15px 보다 높아 줄이 물리기 때문이다. 맥에서는 잡혔고 CI 에서는 안 잡혔다.
+	 * 러너에 이모지 폰트가 없어서라고 보고 `fonts-noto-color-emoji` 를 깔았다.
+	 * **그래도 안 잡혔다.** 폰트는 확실히 깔렸는데(fc-list 로 확인) 변이가 여전히
+	 * 무반응이었다 — 리눅스의 NotoColorEmoji 는 같은 글꼴 크기에서 bbox 가 낮아
+	 * 15px 바닥값을 못 넘는다는 뜻이다.
+	 *
+	 * 그래서 렌더로 잡기를 그만뒀다. 어느 글자가 얼마나 높은지는 기계마다 다르고,
+	 * 그걸 전제한 시험은 **한쪽에서 조용히 헛돈다.** 대신 계산식을 소스에서 꺼내
+	 * 재기 함수를 가짜로 물린다. 이러면 폰트가 무엇이든 답이 같다.
+	 */
+	const SRC = new URL('../render/sequence.ts', import.meta.url);
+
+	/** 페이지 스크립트에서 계산식만 떼어내 가짜 측정값으로 돌린다. */
+	async function lineHeightWith(heights: number[], floor = 15): Promise<number> {
+		const src = await readFile(SRC, 'utf8');
+		const fn = /function lineHeightOf\(lines, cls\)\{[\s\S]*?\n\}/.exec(src)?.[0];
+		assert.ok(fn, 'lineHeightOf 를 소스에서 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것');
+		const ctx = createContext({
+			LH: floor,
+			box: (s: string) => ({ w: 0, h: Number(s) }),
+			lines: heights.map(String),
+			out: 0,
+		});
+		new Script(`${fn}
+out = lineHeightOf(lines, 'm-label');`).runInContext(ctx);
+		return (ctx as { out: number }).out;
+	}
+
+	test('가장 높은 줄을 따라간다 (상수면 이 값이 안 변한다)', async () => {
+		assert.equal(await lineHeightWith([30]), 33, '잰 값 30 이면 33 이어야 한다');
+		assert.equal(await lineHeightWith([12, 30, 9]), 33, '여러 줄이면 가장 높은 것을 쓴다');
+		assert.equal(await lineHeightWith([80]), 83, '높을수록 그만큼 벌어져야 한다');
+	});
+
+	test('바닥값 아래로는 안 내려간다', async () => {
+		assert.equal(await lineHeightWith([1]), 15, '작아도 15 아래로는 안 간다');
+		assert.equal(await lineHeightWith([]), 15, '줄이 없어도 바닥값');
+	});
+
+	// ★ 계산식이 맞아도 **부르지 않으면** 소용이 없다. 배선을 따로 본다.
+	//   렌더로 잡을 수 없게 된 규칙이라 이 검사가 유일한 자물쇠다.
+	test('메시지마다 그 계산식을 실제로 부른다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		assert.match(
+			src,
+			/m\.lh = lineHeightOf\(m\.lines, m\.cls\);/,
+			'줄높이를 상수로 되돌렸다 — 이모지처럼 글리프가 높은 글자에서 줄이 물린다',
+		);
+		assert.match(
+			src,
+			/m\.th = m\.lines\.length \* m\.lh;/,
+			'행 높이가 그 줄높이를 안 쓰고 있다',
 		);
 	});
 });
