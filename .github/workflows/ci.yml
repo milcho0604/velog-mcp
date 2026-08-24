@@ -80,31 +80,5 @@ jobs:
             .catch(e => { console.error('크롬 없음 —', e.message.split('\n')[0]); process.exit(1); });
           "
 
-      # ★ 같은 이유로 이모지 폰트도 못 박는다.
-      #
-      # 줄높이는 상수가 아니라 **글자를 재서** 정한다(sequence.ts 의 lineHeightOf).
-      # 이 규칙이 필요한 이유가 이모지다 — 같은 font-size 라도 글리프가 15px 보다
-      # 높아서, 상수로 쌓으면 같은 라벨의 두 줄이 서로 물린다.
-      #
-      # ⚠️ 그런데 러너에 이모지 폰트가 없으면 이모지가 보통 글자 높이로 그려진다.
-      #    그러면 규칙을 상수로 되돌려도 아무 일이 안 일어나고, 그걸 잡으라고 둔
-      #    변이시험이 **아무것도 증명하지 않으면서 초록이 된다.** 실제로 그랬다.
-      #    (2026-08-24: 맥에서는 잡히고 CI 에서는 안 잡혔다.)
-      - name: 이모지 폰트 설치
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq fonts-noto-color-emoji
-          fc-cache -f > /dev/null
-
-      # 깔렸는지 흉내내지 말고 확인한다. 크롬 가드와 같은 규율이다 —
-      # 없으면 조용히 넘어가는 대신 여기서 빨갛게 죽는 편이 낫다.
-      - name: 이모지 폰트 확인 (변이시험이 헛돌지 않게)
-        run: |
-          if ! fc-list | grep -qi emoji; then
-            echo "이모지 폰트가 없다 — S4 의 줄높이 변이가 헛돈다" >&2
-            exit 1
-          fi
-          fc-list | grep -i emoji | head -3
-
       - name: Verify
         run: npm run verify
