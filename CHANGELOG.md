@@ -4,6 +4,15 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
+## [0.7.2] — 2026-08-24
+
+- MCP 레지스트리 목록에 뜨는 한 줄 설명에 시퀀스 다이어그램이 빠져 있었다. 0.7.0 에서 도구를
+  넣으면서 README 와 플러그인 설명은 고쳤는데 `server.json` 만 못 고쳤다. 레지스트리를 찾아
+  들어오는 사람은 이 한 줄만 보고 판단하므로, 그 사람 눈에는 그림 도구가 없는 것이나 같았다.
+  `description` 에 100자 상한이 있어 문구를 줄여 넣었고, 공개 발행이 선택이라는 안전 문구는
+  그대로 뒀다. `VELOG_CHROME_PATH` 설명도 시퀀스를 포함하도록 고쳤다.
+  `dist` 는 0.7.1 발행본과 동일하다 — 동작은 바뀌지 않는다.
+
 ## [0.7.1] — 2026-08-24
 
 - 문서만 갱신. npm 에 실려 나가는 `docs/tools.md` 와 `CHANGELOG.md` 가 0.7.0 발행 뒤에
@@ -139,6 +148,7 @@
 
 - 첫 npm 공개 발행.
 
+[0.7.2]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.1
 [0.7.0]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.0
 [0.6.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.6.1
