@@ -592,6 +592,12 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'라벨이 안 들어가면 글자를 줄이는 게 아니라 그 구간을 넓히고, 길면 접고, 접힌 만큼 행을 높인다.\n' +
 				'메시지는 배열 순서가 곧 시간 순서다. 중간에 하나를 끼워 넣어도 아래가 알아서 밀린다.\n' +
 				'구성도나 흐름도(시간 축이 없는 그림)는 velog_render_diagram 을 쓸 것.\n' +
+				'**깔끔하게 나오는 건 레이아웃이 아니라 입력이 정한다.** 세로 길이를 지배하는 셋:\n' +
+				'- `call` 에는 짝이 되는 `return` 을 붙인다. 안 닫힌 활성 막대는 계단처럼 겹쳐 쌓인다.\n' +
+				'- `note` 는 한 줄로 쓴다. 접힌 줄 수만큼 그 행이 통째로 높아진다.\n' +
+				'- 긴 라벨은 접을 자리를 직접 끊어준다. 안 그러면 `USE_INTT_ID` 가 `USE` 와 `_INTT_ID` 로 쪼개진다.\n' +
+				'⚠️ **자가감사 통과는 「보기 좋다」가 아니다.** 감사는 기하만 본다 — 삐져나옴, 겹침, 관통, 상자 범위. ' +
+				'쌓인 막대도 어색한 줄바꿈도 통과시킨다.\n' +
 				'감사에 걸리면 **올리지 않고** 무엇이 문제인지 알려준다. 이 판단은 끌 수 없고, ' +
 				'감사에 걸린 산출물은 velog_upload_image 로도 받지 않는다.\n' +
 				`종류: ${SEQ_KINDS.join(' ')}\n아이콘: ${ICON_NAMES.join(' ')}\n톤: ${TONE_NAMES.join(' ')}`,
@@ -607,7 +613,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 					.array(messageSchema)
 					.min(1)
 					.max(200)
-					.describe('배열 순서가 시간 순서다'),
+					.describe('배열 순서가 시간 순서다. call 마다 짝이 되는 return 을 넣어야 활성 막대가 닫힌다'),
 				fragments: z
 					.array(fragmentSchema)
 					.max(12)
