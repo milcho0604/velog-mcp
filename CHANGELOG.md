@@ -4,6 +4,21 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
+## [0.7.4] — 2026-08-26
+
+### 고침
+
+- **시퀀스 도구가 처음부터 깔끔하게 나오도록 작성 요령을 도구 설명에 넣었다.** 실제로
+  구성도를 하나 그려보니 첫 판이 지저분했는데, 원인은 렌더러가 아니라 **입력**이었다.
+  같은 그림을 2904×2508 에서 2370×2178 로 줄인 건 셋뿐이다 — `call` 마다 `return` 을
+  붙여 활성 막대를 닫고, `note` 를 한 줄로 줄이고, 긴 라벨의 접을 자리를 직접 끊는 것.
+  이 요령이 설명에 없어서 부르는 쪽은 매번 첫 판을 다시 만들게 돼 있었다.
+  `messages` 필드 설명과 `docs/tools.md` 에도 같이 적었다.
+- 함께 적었다: **자가감사 통과는 「보기 좋다」가 아니다.** 계단처럼 쌓인 막대도 어색하게
+  끊긴 라벨도 겹침 0건으로 통과한다. 감사는 렌더러의 배치 계산이 틀렸는지만 본다.
+
+렌더러 코드는 바뀌지 않았다. 같은 입력을 주면 같은 그림이 나온다.
+
 ## [0.7.3] — 2026-08-24
 
 - 문서만 갱신. `docs/decisions/0006-ship-as-plugin.md` 의 도구 개수가 0.7.0 이후로 낡아
@@ -155,6 +170,7 @@
 
 - 첫 npm 공개 발행.
 
+[0.7.4]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.4
 [0.7.3]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.3
 [0.7.2]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.7.1
