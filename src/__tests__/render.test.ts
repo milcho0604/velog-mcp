@@ -1220,11 +1220,13 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 			results.every((r) => r.width > 0),
 			'동시 요청 중 실패한 것이 있다',
 		);
-		// 직렬이면 한 번에 한 판, 곧 프로필 2개다. 앞판 정리와 뒷판 기동이 겹칠 수 있어
-		// 한 판 몫(2개)만 여유를 준다. 병렬로 풀리면 3판 × 2 = 6 이 되어 바로 걸린다.
+		// 직렬이면 한 번에 한 판, 곧 프로필 **정확히 2개**다. 프로필은 finally 에서
+		// 지운 뒤에야 다음 판이 시작하므로 겹칠 구간이 없다.
+		// ⚠️ 여유를 4 로 두면 **렌더 두 판이 동시에 도는 것을 통과시킨다**(코덱스 2차 지적).
+		//    그건 이 검사가 막으려던 바로 그 상태다.
 		assert.ok(peak > 0, '프로필을 한 번도 못 봤다 — 이 검사는 의미가 없다');
 		assert.ok(
-			peak <= 4,
+			peak <= 2,
 			`동시에 크롬 프로필이 ${peak}개까지 늘었다 — 한 판은 2개다. 직렬화가 풀렸다`,
 		);
 	});
@@ -1814,6 +1816,22 @@ const SEQ_SAMPLE: SequenceSpec = {
 	fragments: [{ kind: 'tx', label: 'COMMIT 까지 열려 있다', from: 2, to: 6 }],
 };
 
+/** 막대가 깊게 쌓인 **첫 열**에 노트가 붙는 표본. 노트 뒤에도 그 열이 등장해야 막대가 이어진다. */
+const BAR_NOTE_SAMPLE: SequenceSpec = {
+	title: '막대 위 노트',
+	participants: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+	messages: [
+		...Array.from({ length: 10 }, (_, i) => ({
+			from: 'b',
+			to: 'a',
+			kind: 'call' as const,
+			label: `호출 ${i + 1}`,
+		})),
+		{ kind: 'note' as const, from: 'a', label: '막대 위에 붙는 설명' },
+		{ from: 'b', to: 'a', kind: 'call' as const, label: '뒤에도 한 번' },
+	],
+};
+
 describe('★ S1 — 그릴 수 없는 입력은 그리기 전에 막는다', () => {
 	// 없는 참가자나 뒤집힌 범위는 그려봐야 의미가 없다. 그림 대신 무엇이 틀렸는지
 	// 말해주는 편이 낫다 — 감사로 넘기면 '그려놓고 실패'가 된다.
@@ -1996,6 +2014,19 @@ describe('★★ S4 — 자가감사 검출력 (크롬 필요)', () => {
 		field: 'over' | 'collide' | 'label' | 'cross' | 'frame';
 		spec?: SequenceSpec;
 	}> = [
+		{
+			// ★ 코덱스 2차 지적 — S11 이 «문구가 소스에 있나» 만 보고 있었다. 감사를
+			//   `if (false && ...)` 로 죽여도 문구가 남아 통과한다. 그래서 **진짜 변이**로 옮긴다.
+			// ⚠️ 표본 조건이 까다롭다. 셋 다 갖춰야 재현된다.
+			//   ① 노트를 **첫 열**에 붙인다 — 왼쪽에 열이 없어 오른쪽으로 강제된다.
+			//   ② 그 열에 막대를 깊게 쌓는다 — 얕으면 NOTE_OFF(26) 안에 들어와 안 겹친다.
+			//   ③ 노트 **뒤에** 그 참가자가 한 번 더 나온다 — 아니면 막대가 노트 위에서 끝난다.
+			what: '노트가 막대 몫을 안 비킨다',
+			from: 'var nOff = mx.left ? -(NOTE_OFF + bw0) : NOTE_OFF + (mx.inset || 0);',
+			to: 'var nOff = mx.left ? -(NOTE_OFF + bw0) : NOTE_OFF;',
+			field: 'collide',
+			spec: BAR_NOTE_SAMPLE,
+		},
 		{
 			what: '열 넓히기를 끈다',
 			from: 'if (cur < sp.need) {',
@@ -2410,6 +2441,19 @@ describe('★★ S10 — 한 열짜리 설명은 덜 벌리는 쪽에 붙는다'
 		assert.equal(await sideOf(0, 100, W, [10, 10, 10]), false, '왼쪽에 열이 없는데 왼쪽으로 갔다');
 	});
 
+	// ★ 코덱스 2차 지적 — inset 인자를 받게 해놓고 전부 0 으로만 불렀다. 그러면
+	//   defR 이 실수로 npadL 을 써도 두 값이 같아 위 검사가 전부 통과한다.
+	test('막대가 쌓인 쪽은 비용이 올라 반대편을 고른다', async () => {
+		// 간격이 같고 inset 이 0 이면 규칙대로 오른쪽.
+		assert.equal(await sideOf(1, 100, W, [300, 300, 300], 0), false, '기준선이 이미 왼쪽이다');
+		// 같은 조건에서 오른쪽에만 막대 몫이 붙으면 왼쪽이 싸진다.
+		assert.equal(
+			await sideOf(1, 100, W, [300, 300, 300], 80),
+			true,
+			'오른쪽에 막대가 쌓였는데도 오른쪽을 골랐다 — npadR 이 막대 몫을 안 쓴다',
+		);
+	});
+
 	test('마지막 열은 흡수할 간격이 없어 왼쪽이 유리하다', async () => {
 		// 오른쪽으로 가면 캔버스가 npad 만큼 통째로 늘어난다. 왼쪽 간격이 넉넉하면 왼쪽.
 		assert.equal(await sideOf(3, 100, W, [100, 100, 600]), true, '캔버스를 늘리는 쪽을 골랐다');
@@ -2492,7 +2536,7 @@ describe('★★ S11 — 열 넓히기가 활성 막대 몫을 뺀다', () => {
 		const src = await readFile(SRC, 'utf8');
 		assert.match(
 			src,
-			/if \(mb\.note\) \{ if \(mb\.a === mb\.b\) mb\.inset = insetOf\(preOpen\[mb\.a\]\); continue; \}/,
+			/mb\.inset = insetOf\(preOpen\[mb\.a\]\);\s*\n\s*mb\.insetL =/,
 			'노트가 막대 몫 계산에서 통째로 빠졌다',
 		);
 		assert.match(
@@ -2500,10 +2544,22 @@ describe('★★ S11 — 열 넓히기가 활성 막대 몫을 뺀다', () => {
 			/var npadR = NOTE_OFF \+ \(mm\.inset \|\| 0\) \+ mm\.tw/,
 			'오른쪽 노트가 막대 몫만큼 안 비켜난다',
 		);
+		// ★ 왼쪽에 붙을 때 걸리는 상대는 **왼쪽 이웃**의 막대다(코덱스 2차 지적).
+		//   막대가 오른쪽으로만 자라니 제 막대는 안 걸리지만 이웃 것은 걸린다.
+		assert.match(
+			src,
+			/var npadL = NOTE_OFF \+ \(mm\.insetL \|\| 0\) \+ mm\.tw/,
+			'왼쪽 노트가 왼쪽 이웃의 막대를 안 비킨다',
+		);
 		assert.doesNotMatch(
 			src,
-			/var npadL = NOTE_OFF \+ \(mm\.inset/,
-			'왼쪽에도 막대 몫을 더하고 있다 — 막대는 오른쪽으로만 밀리므로 헛되이 벌린다',
+			/var npadL = NOTE_OFF \+ \(mm\.inset \|\| 0\)/,
+			'왼쪽에 **제** 막대 몫을 더하고 있다 — 제 막대는 오른쪽으로만 자라 안 걸린다',
+		);
+		assert.match(
+			src,
+			/mb\.insetL = mb\.a > 0 \? insetOf\(preOpen\[mb\.a - 1\]\) : 0;/,
+			'왼쪽 이웃의 막대 깊이를 세는 곳이 사라졌다',
 		);
 	});
 

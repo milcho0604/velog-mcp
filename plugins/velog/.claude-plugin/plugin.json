@@ -2,7 +2,7 @@
 	"$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
 	"name": "velog",
 	"displayName": "Velog",
-	"version": "0.8.4",
+	"version": "0.8.5",
 	"description": "Read and write Velog (velog.io), the Korean developer blogging platform. Browse, search, trending, and blog stats work with no auth. Writing defaults to drafts and private posts — public publishing is opt-in at install. Also renders diagrams, sequence diagrams, and cover images for your posts and uploads them (needs local Chrome). 벨로그 글을 읽고 쓰고, 다이어그램과 시퀀스 다이어그램과 표지도 그려서 올립니다.",
 	"author": {
 		"name": "Changhyun Kim",

@@ -527,7 +527,15 @@ for (mi = 0; mi < M.length; mi++) {
   mb.inset = 0;
   if (!S.activations) continue;
   // 노트는 스택을 바꾸지 않지만, 붙는 자리는 막대 바깥이어야 한다.
-  if (mb.note) { if (mb.a === mb.b) mb.inset = insetOf(preOpen[mb.a]); continue; }
+  // 오른쪽에 붙으면 제 막대를, 왼쪽에 붙으면 **왼쪽 이웃**의 막대를 비켜야 한다.
+  // 막대는 오른쪽으로만 자라므로 방향에 따라 걸리는 상대가 다르다(코덱스 2차 지적).
+  if (mb.note) {
+    if (mb.a === mb.b) {
+      mb.inset = insetOf(preOpen[mb.a]);
+      mb.insetL = mb.a > 0 ? insetOf(preOpen[mb.a - 1]) : 0;
+    }
+    continue;
+  }
   if (mb.self) { mb.inset = insetOf(preOpen[mb.a]); continue; }
   if (mb.kind === 'return') {
     if (preOpen[mb.a] > 0) preOpen[mb.a]--;
@@ -573,7 +581,7 @@ for (mi = 0; mi < M.length; mi++) {
     // ★ 활성 막대는 깊이만큼 **오른쪽으로만** 밀린다(rect x = cx + depth*BAR_STEP - BAR_W/2).
     //   그래서 오른쪽에 붙일 때만 그 몫을 비켜준다. 안 그러면 노트가 막대 위에 얹힌다.
     var npadR = NOTE_OFF + (mm.inset || 0) + mm.tw + 28 + 16;
-    var npadL = NOTE_OFF + mm.tw + 28 + 16;
+    var npadL = NOTE_OFF + (mm.insetL || 0) + mm.tw + 28 + 16;
     var defR = mm.a < P.length - 1
       ? Math.max(0, npadR + P[mm.a+1].w / 2 - gaps[mm.a])
       : npadR;                      // 마지막 열이면 흡수할 간격이 없어 캔버스가 그만큼 늘어난다
@@ -975,12 +983,18 @@ for (var nb1 = 0; nb1 < noteBoxes.length; nb1++) {
   }
   // ★ 노트가 **활성 막대**를 덮는지. 카드, 노트, 생명선은 보면서 막대는 아무도 안 봤다.
   //   막대는 깊이만큼 오른쪽으로 밀리므로 NOTE_OFF(26) 만 띄우면 5겹부터 밑에 깔린다(실측).
-  for (i = 0; i < P.length; i++) {
-    for (var ab2 = 0; ab2 < ACT[i].length; ab2++) {
-      var bb = ACT[i][ab2];
-      if (rectsOverlap(noteBoxes[nb1][0], {x:P[i].cx + bb.depth * BAR_STEP - BAR_W / 2,
-                                           y:bb.y1, w:BAR_W, h:Math.max(20, bb.y2 - bb.y1)})) {
-        collide.push('노트가 ' + P[i].name + ' 의 활성막대를 덮음 (막대 몫만큼 더 비켜야 한다)');
+  // ⚠️ **한 열짜리 노트만 본다.** 두 열에 걸친 노트는 그 구간을 덮는 것이 설계다
+  //   (from~to 를 가리킨다고 해놓고 가운데만 떠 있으면 어디 얘기인지 모른다).
+  //   그걸 안 가리고 다 보면 걸친 노트 + 열린 막대가 **1겹부터 무조건** 걸려서
+  //   멀쩡한 그림이 거부된다(코덱스 2차 지적, 실측으로 재현).
+  if (noteBoxes[nb1][2].lo === noteBoxes[nb1][2].hi) {
+    for (i = 0; i < P.length; i++) {
+      for (var ab2 = 0; ab2 < ACT[i].length; ab2++) {
+        var bb = ACT[i][ab2];
+        if (rectsOverlap(noteBoxes[nb1][0], {x:P[i].cx + bb.depth * BAR_STEP - BAR_W / 2,
+                                             y:bb.y1, w:BAR_W, h:Math.max(20, bb.y2 - bb.y1)})) {
+          collide.push('노트가 ' + P[i].name + ' 의 활성막대를 덮음 (막대 몫만큼 더 비켜야 한다)');
+        }
       }
     }
   }
