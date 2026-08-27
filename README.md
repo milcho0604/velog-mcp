@@ -68,7 +68,7 @@ Published on npm, so nothing to clone â€” your MCP client runs it via `npx`. See
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.7.4
+  -- npx -y @milcho0604/velog-mcp@0.8.0
 ```
 
 The token stays in your client's config file here. The plugin route above puts it in
@@ -91,7 +91,7 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, â
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.7.4"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.8.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
@@ -104,7 +104,7 @@ With the Claude Code CLI:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.7.4
+  -- npx -y @milcho0604/velog-mcp@0.8.0
 ```
 
 To run a local checkout instead, swap the command for
