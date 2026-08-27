@@ -2027,8 +2027,8 @@ describe('★★ S4 — 자가감사 검출력 (크롬 필요)', () => {
 			//    폰트가 다른 CI 에서는 빈 자리에 떨어져 아무것도 안 걸렸다.
 			//    마지막 참가자의 생명선 좌표를 직접 겨냥해 환경과 무관하게 만든다.
 			what: '노트를 남의 열 위로 민다',
-			from: 'mx.box = {x:(mx.left ? P[mx.a].cx - NOTE_OFF - bw0 : P[mx.a].cx + NOTE_OFF),',
-			to: 'mx.box = {x:(P[P.length - 1].cx - 20),',
+			from: 'mx.box = {x:P[mx.a].cx + nOff,',
+			to: 'mx.box = {x:P[P.length - 1].cx - 20,',
 			field: 'collide',
 		},
 		{
@@ -2379,13 +2379,19 @@ describe('★★ S10 — 한 열짜리 설명은 덜 벌리는 쪽에 붙는다'
 	const SRC = new URL('../render/sequence.ts', import.meta.url);
 
 	/** 배치 결정식만 떼어내 가짜 열 폭과 간격으로 돌린다. */
-	async function sideOf(a: number, tw: number, widths: number[], gaps: number[]): Promise<boolean> {
+	async function sideOf(
+		a: number,
+		tw: number,
+		widths: number[],
+		gaps: number[],
+		inset = 0,
+	): Promise<boolean> {
 		const src = await readFile(SRC, 'utf8');
-		const blk = /var npad = NOTE_OFF[\s\S]*?mm\.left = defL < defR;/.exec(src)?.[0];
+		const blk = /var npadR = NOTE_OFF[\s\S]*?mm\.left = defL < defR;/.exec(src)?.[0];
 		assert.ok(blk, '배치 결정식을 소스에서 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것');
 		const ctx = createContext({
 			NOTE_OFF: 26,
-			mm: { a, tw, left: false },
+			mm: { a, tw, left: false, inset },
 			P: widths.map((w) => ({ w })),
 			gaps,
 		});
@@ -2422,8 +2428,8 @@ describe('★★ S10 — 한 열짜리 설명은 덜 벌리는 쪽에 붙는다'
 		const src = await readFile(SRC, 'utf8');
 		assert.match(
 			src,
-			/mx\.box = \{x:\(mx\.left \? P\[mx\.a\]\.cx - NOTE_OFF - bw0 : P\[mx\.a\]\.cx \+ NOTE_OFF\)/,
-			'상자 x 가 좌우 결정을 안 쓰고 있다 — 결정만 하고 늘 오른쪽에 그린다',
+			/var nOff = mx\.left \? -\(NOTE_OFF \+ bw0\) : NOTE_OFF \+ \(mx\.inset \|\| 0\);/,
+			'상자 x 가 좌우 결정이나 막대 몫을 안 쓰고 있다',
 		);
 		assert.match(
 			src,
@@ -2476,6 +2482,45 @@ describe('★★ S11 — 열 넓히기가 활성 막대 몫을 뺀다', () => {
 			src,
 			/mb\.inset = insetOf\(preOpen\[mb\.a\]\) \+ insetOf\(preOpen\[mb\.b\]\)/,
 			'호출 쪽 막대 몫 계산이 사라졌다',
+		);
+	});
+
+	// ★ 아래 셋은 «막대 몫» 을 spans 에만 넣고 끝냈다가 **나중에 따로 터진 것**이다.
+	//   spans 를 안 타는 경로가 둘 더 있었다. 감사가 못 보던 자리도 하나 있었다.
+	test('자기호출 넓히기도 막대 몫을 더한다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		assert.match(
+			src,
+			/widenOne\(mm\.a, \(mm\.inset \|\| 0\) \+ SELF_W \+ 10 \+ mm\.tw/,
+			'자기호출은 spans 를 안 탄다 — 여기서 직접 안 더하면 깊은 막대 위에서 라벨이 넘친다',
+		);
+	});
+
+	test('노트도 막대 몫을 세고, 오른쪽에 붙을 때만 비켜준다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		assert.match(
+			src,
+			/if \(mb\.note\) \{ if \(mb\.a === mb\.b\) mb\.inset = insetOf\(preOpen\[mb\.a\]\); continue; \}/,
+			'노트가 막대 몫 계산에서 통째로 빠졌다',
+		);
+		assert.match(
+			src,
+			/var npadR = NOTE_OFF \+ \(mm\.inset \|\| 0\) \+ mm\.tw/,
+			'오른쪽 노트가 막대 몫만큼 안 비켜난다',
+		);
+		assert.doesNotMatch(
+			src,
+			/var npadL = NOTE_OFF \+ \(mm\.inset/,
+			'왼쪽에도 막대 몫을 더하고 있다 — 막대는 오른쪽으로만 밀리므로 헛되이 벌린다',
+		);
+	});
+
+	test('감사가 노트와 활성막대의 겹침을 본다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		assert.match(
+			src,
+			/의 활성막대를 덮음/,
+			'감사에 노트 대 막대 검사가 없다 — 카드, 노트, 생명선은 보면서 막대만 안 봤다',
 		);
 	});
 });

@@ -525,7 +525,9 @@ function insetOf(depth){ return depth > 0 ? (depth - 1) * BAR_STEP + BAR_W / 2 :
 for (mi = 0; mi < M.length; mi++) {
   var mb = M[mi];
   mb.inset = 0;
-  if (mb.note || !S.activations) continue;
+  if (!S.activations) continue;
+  // 노트는 스택을 바꾸지 않지만, 붙는 자리는 막대 바깥이어야 한다.
+  if (mb.note) { if (mb.a === mb.b) mb.inset = insetOf(preOpen[mb.a]); continue; }
   if (mb.self) { mb.inset = insetOf(preOpen[mb.a]); continue; }
   if (mb.kind === 'return') {
     if (preOpen[mb.a] > 0) preOpen[mb.a]--;
@@ -568,20 +570,26 @@ for (mi = 0; mi < M.length; mi++) {
     //   설명인지 모르게 되므로 생명선에서 상자까지 짧은 연결선을 긋는다.
     // ★ 어느 쪽에 붙일지는 **덜 벌리는 쪽**으로 고른다. 늘 오른쪽에만 붙이면
     //   왼쪽에 자리가 남아도 안 쓰고 오른쪽 열을 밀어 그림이 옆으로 길어진다.
-    var npad = NOTE_OFF + mm.tw + 28 + 16;
+    // ★ 활성 막대는 깊이만큼 **오른쪽으로만** 밀린다(rect x = cx + depth*BAR_STEP - BAR_W/2).
+    //   그래서 오른쪽에 붙일 때만 그 몫을 비켜준다. 안 그러면 노트가 막대 위에 얹힌다.
+    var npadR = NOTE_OFF + (mm.inset || 0) + mm.tw + 28 + 16;
+    var npadL = NOTE_OFF + mm.tw + 28 + 16;
     var defR = mm.a < P.length - 1
-      ? Math.max(0, npad + P[mm.a+1].w / 2 - gaps[mm.a])
-      : npad;                       // 마지막 열이면 흡수할 간격이 없어 캔버스가 그만큼 늘어난다
+      ? Math.max(0, npadR + P[mm.a+1].w / 2 - gaps[mm.a])
+      : npadR;                      // 마지막 열이면 흡수할 간격이 없어 캔버스가 그만큼 늘어난다
     var defL = mm.a > 0
-      ? Math.max(0, npad + P[mm.a-1].w / 2 - gaps[mm.a-1])
+      ? Math.max(0, npadL + P[mm.a-1].w / 2 - gaps[mm.a-1])
       : Infinity;                   // 첫 열은 왼쪽에 열이 없다
     mm.left = defL < defR;          // 같으면 오른쪽 — 읽는 방향과 같다
-    if (mm.left) widenOne(mm.a - 1, npad + P[mm.a-1].w / 2);
-    else if (mm.a < P.length - 1) widenOne(mm.a, npad + P[mm.a+1].w / 2);
+    if (mm.left) widenOne(mm.a - 1, npadL + P[mm.a-1].w / 2);
+    else if (mm.a < P.length - 1) widenOne(mm.a, npadR + P[mm.a+1].w / 2);
   } else if (mm.self) {
     // 자기호출은 고리와 라벨이 오른쪽으로 나간다. 마지막 열이면 캔버스가 늘어난다.
+    // ★ 고리도 생명선이 아니라 **막대 가장자리**에서 시작한다(barEdge). 막대가 쌓인
+    //   구간이면 그만큼 오른쪽으로 밀리므로 그 몫을 같이 넣는다. spans 를 안 타는
+    //   경로라 ②-b 에서 센 값을 여기서 직접 써야 한다.
     if (mm.a < P.length - 1) {
-      widenOne(mm.a, SELF_W + 10 + mm.tw + 16 + P[mm.a+1].w / 2);
+      widenOne(mm.a, (mm.inset || 0) + SELF_W + 10 + mm.tw + 16 + P[mm.a+1].w / 2);
     }
   }
 }
@@ -678,8 +686,9 @@ for (mi = 0; mi < M.length; mi++) {
   if (mx.note) {
     var bw0 = mx.tw + 28;
     if (mx.a === mx.b) {
-      mx.box = {x:(mx.left ? P[mx.a].cx - NOTE_OFF - bw0 : P[mx.a].cx + NOTE_OFF),
-                y:mx.boxY, w:bw0, h:mx.h};
+      // 오른쪽에 붙을 때만 막대 몫을 비켜준다 — 막대는 깊이만큼 오른쪽으로만 밀린다.
+      var nOff = mx.left ? -(NOTE_OFF + bw0) : NOTE_OFF + (mx.inset || 0);
+      mx.box = {x:P[mx.a].cx + nOff, y:mx.boxY, w:bw0, h:mx.h};
       mx.lo = mx.left ? mx.box.x : P[mx.a].cx - BAR_W;
       mx.hi = mx.left ? P[mx.a].cx + BAR_W : mx.box.x + bw0;
     } else {
@@ -963,6 +972,17 @@ for (var nb1 = 0; nb1 < noteBoxes.length; nb1++) {
   }
   for (var nb2 = nb1 + 1; nb2 < noteBoxes.length; nb2++) {
     if (rectsOverlap(noteBoxes[nb1][0], noteBoxes[nb2][0])) collide.push('노트끼리 겹침');
+  }
+  // ★ 노트가 **활성 막대**를 덮는지. 카드, 노트, 생명선은 보면서 막대는 아무도 안 봤다.
+  //   막대는 깊이만큼 오른쪽으로 밀리므로 NOTE_OFF(26) 만 띄우면 5겹부터 밑에 깔린다(실측).
+  for (i = 0; i < P.length; i++) {
+    for (var ab2 = 0; ab2 < ACT[i].length; ab2++) {
+      var bb = ACT[i][ab2];
+      if (rectsOverlap(noteBoxes[nb1][0], {x:P[i].cx + bb.depth * BAR_STEP - BAR_W / 2,
+                                           y:bb.y1, w:BAR_W, h:Math.max(20, bb.y2 - bb.y1)})) {
+        collide.push('노트가 ' + P[i].name + ' 의 활성막대를 덮음 (막대 몫만큼 더 비켜야 한다)');
+      }
+    }
   }
   var own = noteBoxes[nb1][2];
   for (i = 0; i < P.length; i++) {
