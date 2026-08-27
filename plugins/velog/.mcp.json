@@ -2,7 +2,7 @@
 	"mcpServers": {
 		"velog": {
 			"command": "npx",
-			"args": ["-y", "@milcho0604/velog-mcp@0.8.4"],
+			"args": ["-y", "@milcho0604/velog-mcp@0.8.5"],
 			"env": {
 				"VELOG_REFRESH_TOKEN": "${user_config.refresh_token}",
 				"VELOG_ALLOW_PUBLIC": "${user_config.allow_public}",
