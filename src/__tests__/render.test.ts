@@ -2353,6 +2353,17 @@ describe('★★ S9 — 번호는 접기에 참여하지 않는다', () => {
 			/body = body \? \(seq \+ '\. ' \+ body\)/,
 			'번호를 라벨에 이어 붙이는 옛 코드가 되살아났다',
 		);
+
+		// ★ 코덱스 지적 — 붙이는 것만 보면 부족하다. 번호를 붙이면 첫 줄이
+		//   WRAP_W 를 넘는데, 폭(m.tw)을 **붙이기 전에** 재면 열이 그만큼 안 넓어진다.
+		//   순서를 바꿔도 위 검사들은 전부 통과했다. 그래서 순서를 따로 못 박는다.
+		const glueAt = src.indexOf("if (num) m.lines = m.lines.length ?");
+		const twAt = src.indexOf('m.tw = widest(m.lines, m.cls);');
+		assert.ok(glueAt > 0 && twAt > 0, '기준점을 소스에서 못 찾았다 — 이 검사가 헛돈다');
+		assert.ok(
+			glueAt < twAt,
+			'폭을 번호 붙이기 전에 재고 있다 — 번호만큼 열이 덜 넓어져 라벨이 제 구간을 넘는다',
+		);
 	});
 });
 
@@ -2419,5 +2430,75 @@ describe('★★ S10 — 한 열짜리 설명은 덜 벌리는 쪽에 붙는다'
 			/' H'\+\(mn\.left \? bx \+ bw : bx\)/,
 			'연결선이 먼 변까지 간다 — 상자 밑을 가로지르는 선이 생긴다',
 		);
+	});
+});
+
+describe('★★ S11 — 열 넓히기가 활성 막대 몫을 뺀다', () => {
+	/**
+	 * 왜 있나. 화살표는 생명선 한가운데가 아니라 **막대 가장자리**에서 끊는다.
+	 * 그래서 막대가 쌓인 구간은 라벨이 쓸 수 있는 가로가 그만큼 줄어드는데,
+	 * 열 넓히기가 그 몫을 안 뺐다. `call` 만 12개 이어 붙이고 긴 라벨을 주면
+	 * **감사에 걸려 업로드가 거부됐다**(실측, v0.7.4 부터 있던 결함).
+	 *
+	 *   label: '12. /v1/resource?token=…' 가 제 구간 밖으로 나감
+	 *
+	 * 짝을 맞춰 막대를 닫으면 통과했고 번호와는 무관했다 — 그래서 막대가 범인이다.
+	 *
+	 * ⚠️ 렌더로 잡지 않는다. 어느 폭에서 넘치는지는 글꼴이 정하므로 다른 기계에서
+	 * 조용히 헛돈다(S7 과 같은 이유). 계산식과 배선만 본다.
+	 */
+	const SRC = new URL('../render/sequence.ts', import.meta.url);
+
+	async function insetWith(depth: number, step = 6, barW = 10): Promise<number> {
+		const src = await readFile(SRC, 'utf8');
+		const fn = /function insetOf\(depth\)\{[^}]*\}/.exec(src)?.[0];
+		assert.ok(fn, 'insetOf 를 소스에서 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것');
+		const ctx = createContext({ BAR_STEP: step, BAR_W: barW, out: 0, d: depth });
+		new Script(`${fn}\nout = insetOf(d);`).runInContext(ctx);
+		return (ctx as { out: number }).out;
+	}
+
+	test('막대가 없으면 0, 있으면 깊이만큼 들어간다', async () => {
+		assert.equal(await insetWith(0), 0, '막대가 없는데 자리를 뺐다');
+		assert.equal(await insetWith(1), 5, '막대 하나면 반폭(5)만 들어간다');
+		assert.equal(await insetWith(2), 11, '두 겹이면 한 계단(6) 더');
+		assert.equal(await insetWith(5), 29, '깊을수록 그만큼 더');
+	});
+
+	test('spans 가 그 몫을 실제로 더한다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		assert.match(
+			src,
+			/need:ms\.tw \+ \(ms\.note \? 34 : 30\) \+ \(ms\.inset \|\| 0\)/,
+			'열 넓히기가 막대 몫을 안 더한다 — 막대가 쌓이면 라벨이 제 구간을 넘는다',
+		);
+		assert.match(
+			src,
+			/mb\.inset = insetOf\(preOpen\[mb\.a\]\) \+ insetOf\(preOpen\[mb\.b\]\)/,
+			'호출 쪽 막대 몫 계산이 사라졌다',
+		);
+	});
+});
+
+describe('★★ S12 — 한 열짜리 넓히기는 spans 뒤에 온다', () => {
+	/**
+	 * 왜 있나. 노트를 어느 쪽에 붙일지는 **그때의 간격**을 보고 정한다.
+	 * 그런데 그 결정을 `spans` 앞에서 하면, 곧 넓어질 쪽을 모르고 골라 반대쪽을
+	 * 쓸데없이 벌린다. 실측으로 859 → 720 (139 줄어듦).
+	 *
+	 * `spans` 는 간격을 **늘리기만** 하므로 뒤에서 더 넓혀도 그 조건은 그대로
+	 * 성립한다. 그래서 순서를 바꾸는 것이 안전하다.
+	 */
+	test('소스에서 spans 루프가 노트·자기호출 넓히기보다 앞에 있다', async () => {
+		const src = await readFile(new URL('../render/sequence.ts', import.meta.url), 'utf8');
+		const spans = src.indexOf('spans.sort(function(x, y)');
+		const single = src.indexOf('if (mm.note && mm.a === mm.b) {');
+		const cx = src.indexOf('var CX = [0];');
+		assert.ok(spans > 0 && single > 0 && cx > 0, '기준점을 소스에서 못 찾았다 — 이 검사가 헛돈다');
+		assert.ok(
+			spans < single,
+			'한 열짜리 넓히기가 spans 보다 앞에 있다 — 노트가 곧 넓어질 쪽을 모르고 방향을 고른다',
+		);
+		assert.ok(single < cx, '한 열짜리 넓히기가 열 좌표를 잡은 뒤로 밀렸다 — 그러면 반영이 안 된다');
 	});
 });

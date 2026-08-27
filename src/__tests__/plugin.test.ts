@@ -1389,23 +1389,41 @@ describe('★ P28 — README 가 말하는 검사 계열이 실제와 맞는다'
 	const FILES = ['safety.test.ts', 'render.test.ts', 'plugin.test.ts'];
 
 	/** 검사 이름 앞머리(A1, R23, S10, P27 …)를 소스에서 긁어 계열별 최댓값을 낸다. */
-	async function seriesMax(): Promise<Record<string, number>> {
-		const out: Record<string, number> = {};
+	async function seriesMax(): Promise<{
+		max: Record<string, number>;
+		seen: Record<string, Set<number>>;
+	}> {
+		const max: Record<string, number> = {};
+		const seen: Record<string, Set<number>> = {};
 		for (const f of FILES) {
 			const src = await readFile(new URL(f, import.meta.url), 'utf8');
 			for (const m of src.matchAll(/(?:describe|test)\(\s*[`'"][★☆ ]*([ARSP])(\d+)\b/g)) {
 				const key = m[1] as string;
 				const n = Number(m[2]);
-				if (!(key in out) || n > (out[key] as number)) out[key] = n;
+				if (!(key in max) || n > (max[key] as number)) max[key] = n;
+				(seen[key] ??= new Set()).add(n);
 			}
 		}
-		return out;
+		return { max, seen };
 	}
 
 	test('두 README 가 계열 범위를 정확히 적는다', async () => {
-		const max = await seriesMax();
+		const { max, seen } = await seriesMax();
 		for (const key of ['A', 'R', 'S', 'P']) {
 			assert.ok(max[key], `${key} 계열을 소스에서 하나도 못 찾았다 — 이 검사가 헛돈다`);
+		}
+
+		// ★ 최댓값만 보면 가운데가 빠져도 통과한다(코덱스 지적). S9 를 지워도 S10 이
+		//   남아 최댓값은 10 이고 README 의 S1~S10 과 맞는다. 범위를 적는다는 건
+		//   **그 사이가 다 있다**는 뜻이므로 빠진 번호를 같이 본다.
+		for (const [key, n] of Object.entries(max)) {
+			const missing: number[] = [];
+			for (let i = 1; i <= n; i++) if (!seen[key]?.has(i)) missing.push(i);
+			assert.equal(
+				missing.length,
+				0,
+				`README 는 ${key}1~${key}${n} 이라 적는데 ${missing.map((i) => `${key}${i}`).join(', ')} 가 없다`,
+			);
 		}
 
 		const ko = await readFile(new URL('../../README.ko.md', import.meta.url), 'utf8');
