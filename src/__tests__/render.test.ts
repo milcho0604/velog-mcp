@@ -19,6 +19,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { platform } from 'node:process';
@@ -1170,43 +1171,33 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 	// ★ 실측이 시켰다. 렌더 1회 = 크롬 9개 · 약 1GB. 동시 2회면 17개 · 1.9GB 로
 	//   선형으로 늘어난다. MCP 클라이언트는 도구를 병렬로 부르므로 그림 다섯 장을
 	//   한 번에 시키면 크롬 45개가 뜬다 — 사용자 기기에서 도는 물건이 그러면 안 된다.
+	//
+	// ⚠️ **크롬 프로세스 개수로 재지 않는다. 두 번 틀렸다.**
+	//   ① 앞 시험이 남긴 크롬이 섞였다(렌더러는 SIGKILL 만 보내고 안 기다린다).
+	//      바닥을 먼저 걷어내는 것으로 고쳤는데도 다시 났다.
+	//   ② 크롬 한 판이 띄우는 헬퍼 프로세스 수가 환경마다 다르다. CI 에서 바닥 0 에
+	//      최고 15 가 찍혔다 — 상한을 14 로 잡아뒀으니 빨간불인데, **직렬화는 멀쩡했다.**
+	//      개수로는 「한 판」과 「여러 판」을 못 가른다.
+	//   → 지금은 **크롬 프로필 디렉터리**를 센다. 렌더 1회가 정확히 2개를 만들고
+	//     finally 에서 지운다(index.ts 의 profileA·profileB). 그러니 살아 있는 개수가
+	//     곧 **동시에 도는 렌더 수 × 2** 다. 헬퍼 프로세스 수와 무관하다.
 	test('동시에 3장을 요청해도 크롬은 한 판만 뜬다', async (t) => {
-		if (platform !== 'darwin' && platform !== 'linux') {
-			t.skip('ps 가 있는 환경에서만 확인한다');
-			return;
-		}
 		if (!(await findChrome().then(() => true, () => false))) {
 			t.skip('크롬이 없어 건너뜀');
 			return;
 		}
 
-		const count = (): number =>
-			Number(
-				execFileSync('bash', [
-					'-c',
-					`ps -axo command= | grep -c "velog[-]mcp-chrome" || true`,
-				])
-					.toString()
-					.trim(),
-			) || 0;
+		const PROFILE = 'velog-mcp-chrome-';
+		const live = (): string[] =>
+			readdirSync(tmpdir()).filter((n) => n.startsWith(PROFILE));
 
-		// ★ 이 검사는 **전역 프로세스 수**를 센다. 그래서 앞 시험이 남긴 크롬이
-		//   그대로 섞인다 — 렌더러는 SIGKILL 만 보내고 종료를 기다리지 않기 때문이다
-		//   (그건 의도된 설계다. 산출물이 나오면 기다릴 이유가 없다).
-		//   실제로 CI 에서 17 이 찍혀 빨간불이 났는데, 9(앞판 잔여) + 8(이번 판)이었다.
-		//   재실행하면 통과했다. 「빨간불이면 재실행」이 습관이 되면 진짜 실패도
-		//   플레이키로 넘기게 되므로, 잔여를 먼저 걷어내고 **늘어난 만큼**으로 잰다.
-		const settle = Date.now() + 8000;
-		while (count() > 0 && Date.now() < settle) {
-			await new Promise((r) => setTimeout(r, 100));
-		}
-		const base = count();
-
+		// 남이 남긴 것은 세지 않는다 — 이 창 안에서 **새로 생긴 것**만 본다.
+		const before = new Set(live());
 		let peak = 0;
 		const timer = setInterval(() => {
-			const n = count();
+			const n = live().filter((d) => !before.has(d)).length;
 			if (n > peak) peak = n;
-		}, 60);
+		}, 40);
 
 		const spec = (title: string): Parameters<typeof renderDiagram>[0] => ({
 			title,
@@ -1229,11 +1220,12 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 			results.every((r) => r.width > 0),
 			'동시 요청 중 실패한 것이 있다',
 		);
-		// 한 판이 9개다. 앞판 정리와 뒷판 기동이 겹칠 수 있어 여유를 둔다.
-		assert.ok(peak > base, '크롬 프로세스를 한 번도 못 봤다 — 이 검사는 의미가 없다');
+		// 직렬이면 한 번에 한 판, 곧 프로필 2개다. 앞판 정리와 뒷판 기동이 겹칠 수 있어
+		// 한 판 몫(2개)만 여유를 준다. 병렬로 풀리면 3판 × 2 = 6 이 되어 바로 걸린다.
+		assert.ok(peak > 0, '프로필을 한 번도 못 봤다 — 이 검사는 의미가 없다');
 		assert.ok(
-			peak - base <= 14,
-			`동시에 크롬이 ${peak - base}개까지 늘었다(바닥 ${base}, 최고 ${peak}) — 직렬화가 풀렸다`,
+			peak <= 4,
+			`동시에 크롬 프로필이 ${peak}개까지 늘었다 — 한 판은 2개다. 직렬화가 풀렸다`,
 		);
 	});
 
