@@ -63,7 +63,7 @@ npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 �
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.8.3
+  -- npx -y @milcho0604/velog-mcp@0.8.4
 ```
 
 이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
@@ -85,7 +85,7 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.8.3"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.8.4"],
       "env": {
         "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
@@ -98,7 +98,7 @@ Claude Code CLI 라면:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.8.3
+  -- npx -y @milcho0604/velog-mcp@0.8.4
 ```
 
 로컬 체크아웃으로 돌리려면 command 를
@@ -393,7 +393,7 @@ npm run build         # tsconfig.build.json (dist 에 테스트 미포함)
 npm run schema:dump   # 현재 벨로그 GraphQL 스키마 덤프
 ```
 
-테스트 420건(0.8.3 기준). `safety.test.ts` 가 보안 불변식(A1~A11)을,
+테스트 423건(0.8.4 기준). `safety.test.ts` 가 보안 불변식(A1~A11)을,
 `render.test.ts` 가 구성도 불변식(R1~R23)과 시퀀스 불변식(S1~S12)을,
 `plugin.test.ts` 가 포장 불변식(P1~P28)을 고정한다.
 깨지면 우회하지 말고 왜 깨졌는지부터 볼 것.

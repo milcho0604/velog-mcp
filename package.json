@@ -1,6 +1,6 @@
 {
   "name": "@milcho0604/velog-mcp",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "mcpName": "io.github.milcho0604/velog",
   "description": "벨로그(velog.io) MCP 서버 — 조회·검색·통계는 인증 없이 동작하고, 쓰기는 초안과 비공개 발행이 기본이다. 공개 발행은 VELOG_ALLOW_PUBLIC=1 로 사용자만 켤 수 있다. 문서 없는 벨로그 GraphQL 동작을 실측해 정리했다. 런타임 의존성 2개, Node 22.18+",
   "type": "module",
