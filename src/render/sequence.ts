@@ -511,6 +511,31 @@ for (var mi = 0; mi < M.length; mi++) {
   m.th = m.lines.length * m.lh;
 }
 
+// ── ②-b 활성 막대가 잡아먹을 폭을 미리 센다 ──
+// ★ 화살표는 생명선 한가운데가 아니라 **막대 가장자리**에서 끊는다(barEdge).
+//   그래서 막대가 쌓인 구간에서는 라벨이 쓸 수 있는 가로가 그만큼 줄어든다.
+//   그런데 열 넓히기는 그 몫을 안 빼고 있었다 — call 만 12개 이어져 막대가
+//   깊게 쌓이면 라벨이 제 구간을 넘어 **감사에 걸려 업로드가 거부됐다**(실측).
+// ★ 막대 깊이는 y 좌표와 무관하게 **메시지 순서만으로** 정해진다(⑥의 stack 길이).
+//   그래서 좌표를 잡기 전인 여기서 미리 셀 수 있다. 여기 계산이 ⑥과 어긋나면
+//   다시 좁아지므로, 둘은 같은 규칙을 따라야 한다.
+var preOpen = [];
+for (i = 0; i < P.length; i++) preOpen.push(0);
+function insetOf(depth){ return depth > 0 ? (depth - 1) * BAR_STEP + BAR_W / 2 : 0; }
+for (mi = 0; mi < M.length; mi++) {
+  var mb = M[mi];
+  mb.inset = 0;
+  if (mb.note || !S.activations) continue;
+  if (mb.self) { mb.inset = insetOf(preOpen[mb.a]); continue; }
+  if (mb.kind === 'return') {
+    if (preOpen[mb.a] > 0) preOpen[mb.a]--;
+    mb.inset = insetOf(preOpen[mb.a] + 1) + insetOf(preOpen[mb.b]);
+  } else {
+    preOpen[mb.b]++;
+    mb.inset = insetOf(preOpen[mb.a]) + insetOf(preOpen[mb.b]);
+  }
+}
+
 // ── ③ 열 간격: 라벨이 들어갈 만큼 넓힌다 ──
 var gaps = [];
 for (i = 0; i < P.length - 1; i++) {
@@ -518,6 +543,23 @@ for (i = 0; i < P.length - 1; i++) {
 }
 function widenOne(i, need){ if (i >= 0 && i < gaps.length && gaps[i] < need) gaps[i] = need; }
 
+// 여러 열에 걸친 것은 짧은 것부터 처리한다. 긴 것은 앞서 벌어진 폭을 물려받는다.
+var spans = [];
+for (mi = 0; mi < M.length; mi++) {
+  var ms = M[mi];
+  if (ms.a === ms.b) continue;
+  spans.push({lo:Math.min(ms.a, ms.b), hi:Math.max(ms.a, ms.b), need:ms.tw + (ms.note ? 34 : 30) + (ms.inset || 0)});
+}
+spans.sort(function(x, y){ return (x.hi - x.lo) - (y.hi - y.lo); });
+for (var si = 0; si < spans.length; si++) {
+  var sp = spans[si];
+  var cur = 0;
+  for (i = sp.lo; i < sp.hi; i++) cur += gaps[i];
+  if (cur < sp.need) {
+    var add = (sp.need - cur) / (sp.hi - sp.lo);
+    for (i = sp.lo; i < sp.hi; i++) gaps[i] += add;
+  }
+}
 for (mi = 0; mi < M.length; mi++) {
   var mm = M[mi];
   if (mm.note && mm.a === mm.b) {
@@ -543,23 +585,7 @@ for (mi = 0; mi < M.length; mi++) {
     }
   }
 }
-// 여러 열에 걸친 것은 짧은 것부터 처리한다. 긴 것은 앞서 벌어진 폭을 물려받는다.
-var spans = [];
-for (mi = 0; mi < M.length; mi++) {
-  var ms = M[mi];
-  if (ms.a === ms.b) continue;
-  spans.push({lo:Math.min(ms.a, ms.b), hi:Math.max(ms.a, ms.b), need:ms.tw + (ms.note ? 34 : 30)});
-}
-spans.sort(function(x, y){ return (x.hi - x.lo) - (y.hi - y.lo); });
-for (var si = 0; si < spans.length; si++) {
-  var sp = spans[si];
-  var cur = 0;
-  for (i = sp.lo; i < sp.hi; i++) cur += gaps[i];
-  if (cur < sp.need) {
-    var add = (sp.need - cur) / (sp.hi - sp.lo);
-    for (i = sp.lo; i < sp.hi; i++) gaps[i] += add;
-  }
-}
+
 var CX = [0];
 for (i = 0; i < gaps.length; i++) CX.push(CX[i] + gaps[i]);
 for (i = 0; i < P.length; i++) {
