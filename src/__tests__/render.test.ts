@@ -2200,3 +2200,90 @@ out = lineHeightOf(lines, 'm-label');`).runInContext(ctx);
 		);
 	});
 });
+
+describe('★★ S8 — 긴 라벨은 글자 단위보다 구분 기호를 먼저 본다', () => {
+	/**
+	 * 왜 있나. 사내 구성도를 그려보니 `…&keyversion=v3&USE_INTT_ID=PSNM_1` 이
+	 * `USE` 와 `_INTT_ID` 로 갈라졌다. 원인은 `wrapText` 가 **공백으로만** 자르고,
+	 * 공백 없는 토큰은 곧장 글자 단위로 내려간 것이었다.
+	 *
+	 * ⚠️ 이건 자가감사가 못 잡는다. 줄이 제 상자 안에 있고 겹치지도 않으므로
+	 * 기하로는 결함이 아니다. 그래서 이 검사가 유일한 자물쇠다.
+	 *
+	 * 렌더로 잡지 않는 이유는 S7 과 같다 — 어느 글자가 몇 px 인지는 기계마다 달라서
+	 * 폰트를 전제한 시험은 한쪽에서 조용히 헛돈다. 계산식만 떼어내 가짜 자로 잰다.
+	 */
+	const SRC = new URL('../render/sequence.ts', import.meta.url);
+
+	/** 페이지 스크립트에서 줄바꿈 계산식만 떼어내 '한 글자 = 폭 1' 자로 돌린다. */
+	async function wrapWith(text: string, maxW: number, breakAfter?: string): Promise<string[]> {
+		const src = await readFile(SRC, 'utf8');
+		const decl = /var BREAK_AFTER = '[^']*';/.exec(src)?.[0];
+		const chunk = /function chunkLong\(word\)\{[\s\S]*?\n\}/.exec(src)?.[0];
+		const wrap = /function wrapText\(s, cls, maxW\)\{[\s\S]*?\n\}/.exec(src)?.[0];
+		assert.ok(decl, 'BREAK_AFTER 를 소스에서 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것');
+		assert.ok(chunk, 'chunkLong 을 소스에서 못 찾았다');
+		assert.ok(wrap, 'wrapText 를 소스에서 못 찾았다');
+		const ctx = createContext({
+			measure: (s: string) => Array.from(s).length,
+			text,
+			maxW,
+			out: [] as string[],
+		});
+		new Script(`${breakAfter === undefined ? decl : `var BREAK_AFTER = ${JSON.stringify(breakAfter)};`}
+${chunk}
+${wrap}
+out = wrapText(text, 'm-label', maxW);`).runInContext(ctx);
+		return (ctx as { out: string[] }).out;
+	}
+
+	const QUERY = '/push?PUSH_DATA=..&keyversion=v3&USE_INTT_ID=PSNM_1';
+
+	test('식별자 한가운데가 갈라지지 않는다', async () => {
+		const lines = await wrapWith(QUERY, 20);
+		assert.ok(lines.length > 1, '이 폭이면 여러 줄이어야 한다 — 시험이 헛돌고 있다');
+		for (const line of lines.slice(0, -1)) {
+			assert.ok(
+				"&?=/,;|".includes(line[line.length - 1] ?? ''),
+				`줄이 구분 기호가 아닌 데서 끊겼다: ${JSON.stringify(line)}\n전체: ${JSON.stringify(lines)}`,
+			);
+		}
+	});
+
+	test('글자를 하나도 잃거나 더하지 않는다', async () => {
+		for (const w of [12, 20, 33, 200]) {
+			assert.equal(
+				(await wrapWith(QUERY, w)).join(''),
+				QUERY,
+				`폭 ${w} 에서 원문이 안 맞는다 — 줄바꿈이 글자를 먹었다`,
+			);
+		}
+	});
+
+	test('어느 줄도 정해준 폭을 넘지 않는다', async () => {
+		for (const w of [12, 20, 33]) {
+			for (const line of await wrapWith(QUERY, w)) {
+				assert.ok(line.length <= w, `폭 ${w} 인데 ${line.length} 짜리 줄이 나왔다: ${line}`);
+			}
+		}
+	});
+
+	test('구분 기호가 없는 한글은 예전대로 글자 단위로 접는다', async () => {
+		const ko = '띄어쓰기가없는아주긴한국어토큰이라낱말단위로는절대안접힌다';
+		const lines = await wrapWith(ko, 10);
+		assert.ok(lines.length > 1, '한글이 안 접혔다 — 조각이 하나뿐인 경로가 깨졌다');
+		assert.equal(lines.join(''), ko, '한글에서 글자를 잃었다');
+		for (const line of lines) assert.ok(line.length <= 10, `${line.length} 짜리 줄: ${line}`);
+	});
+
+	// ★ 변이 — 구분 기호 목록을 비우면 예전 동작(글자 단위)으로 돌아간다.
+	//   이게 실패하면 위 검사들이 규칙이 아니라 우연을 보고 있다는 뜻이다.
+	test('구분 기호를 지우면 식별자가 갈라진다 (검출력)', async () => {
+		const lines = await wrapWith(QUERY, 20, '');
+		const broke = lines.slice(0, -1).some((l) => !"&?=/,;|".includes(l[l.length - 1] ?? ''));
+		assert.ok(
+			broke,
+			'구분 기호를 지웠는데도 결과가 같다 — 이 검사는 구분 기호 규칙을 안 보고 있다',
+		);
+	});
+});

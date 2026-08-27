@@ -357,6 +357,19 @@ function pad(r, m){ return {x:r.x - m, y:r.y - m, w:r.w + m*2, h:r.h + m*2}; }
 // ★ 글자를 눌러 맞추지 않는다. 접고, 그래도 넘치면 자리를 넓힌다.
 //   한국어는 띄어쓰기가 없는 토큰이 흔해서 낱말 단위만으로는 안 접힌다.
 //   그때는 글자 단위로 내려간다. Array.from 을 쓰는 건 이모지를 쪼개지 않기 위해서다.
+// 공백 없는 긴 토큰을 어디서 끊을지. **이 글자 뒤에서** 끊는다.
+// 식별자 안에 흔한 _ . - 는 일부러 뺐다 — 거기서 끊으면 USE_INTT_ID 가
+// USE_ 와 INTT_ID 로 갈라져서 글자 단위로 끊는 것과 별로 다르지 않다.
+var BREAK_AFTER = '&?=/,;|';
+function chunkLong(word){
+  var out = [], cur = '', chars = Array.from(word);
+  for (var i = 0; i < chars.length; i++) {
+    cur += chars[i];
+    if (BREAK_AFTER.indexOf(chars[i]) >= 0) { out.push(cur); cur = ''; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
 function wrapText(s, cls, maxW){
   if (!s) return [];
   var out = [], cur = '';
@@ -366,12 +379,26 @@ function wrapText(s, cls, maxW){
     if (word === '') continue;
     if (measure(word, cls) > maxW) {
       if (cur) { out.push(cur); cur = ''; }
-      var chars = Array.from(word);
+      // ★ 구분 기호 뒤에서 먼저 끊어본다. 글자 단위는 **마지막 수단**이다 —
+      //   먼저 쓰면 식별자 한가운데가 갈라진다(USE / _INTT_ID).
+      //   구분 기호가 없는 한글 문장은 조각이 하나뿐이라 예전 그대로 글자 단위로 간다.
+      var chunks = chunkLong(word);
       var piece = '';
-      for (var ci = 0; ci < chars.length; ci++) {
-        var grow = piece + chars[ci];
-        if (piece && measure(grow, cls) > maxW) { out.push(piece); piece = chars[ci]; }
-        else piece = grow;
+      for (var ci = 0; ci < chunks.length; ci++) {
+        var chunk = chunks[ci];
+        if (measure(chunk, cls) > maxW) {
+          if (piece) { out.push(piece); piece = ''; }
+          var chars = Array.from(chunk);
+          for (var ki = 0; ki < chars.length; ki++) {
+            var grow = piece + chars[ki];
+            if (piece && measure(grow, cls) > maxW) { out.push(piece); piece = chars[ki]; }
+            else piece = grow;
+          }
+          continue;
+        }
+        var joined = piece + chunk;
+        if (piece && measure(joined, cls) > maxW) { out.push(piece); piece = chunk; }
+        else piece = joined;
       }
       cur = piece;
       continue;
