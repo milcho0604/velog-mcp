@@ -496,13 +496,16 @@ for (var mi = 0; mi < M.length; mi++) {
   m.note = (m.kind === 'note');
   m.self = (!m.note && m.a === m.b);
   var body = m.label;
-  if (S.numbers && !m.note) {
-    seq++;
-    body = body ? (seq + '. ' + body) : String(seq);
-  }
+  var num = '';
+  if (S.numbers && !m.note) { seq++; num = seq + '.'; }
   m.cls = m.note ? 'nt-t' : 'm-label';
   m.lines = wrapText(body, m.cls, WRAP_W);
-  m.raw = body;
+  // ★ 번호는 접기에 참여시키지 않고 첫 줄에 붙인다.
+  //   같이 접으면 라벨이 공백 없는 긴 토큰일 때 번호가 혼자 한 줄을 차지한다 —
+  //   "1." / "/push?…&" / "USE_INTT_ID=…" 처럼 세 줄이 되어 행 하나를 통째로 잃는다(실측).
+  //   붙여서 넓어진 만큼은 열 간격이 흡수한다. 세로는 행마다 아래를 전부 민다.
+  if (num) m.lines = m.lines.length ? [num + ' ' + m.lines[0]].concat(m.lines.slice(1)) : [num];
+  m.raw = num ? (body ? num + ' ' + body : num) : body;
   m.tw = widest(m.lines, m.cls);
   m.lh = lineHeightOf(m.lines, m.cls);
   m.th = m.lines.length * m.lh;
@@ -518,12 +521,21 @@ function widenOne(i, need){ if (i >= 0 && i < gaps.length && gaps[i] < need) gap
 for (mi = 0; mi < M.length; mi++) {
   var mm = M[mi];
   if (mm.note && mm.a === mm.b) {
-    // ★ 한 열짜리 노트는 생명선 **오른쪽**에 붙인다. 열 위에 얹으면 그 참가자의
+    // ★ 한 열짜리 노트는 생명선 **옆**에 붙인다. 열 위에 얹으면 그 참가자의
     //   활성 막대를 덮어 막대가 끊겨 보인다(실물 확인). 대신 어디에 붙은
     //   설명인지 모르게 되므로 생명선에서 상자까지 짧은 연결선을 긋는다.
-    if (mm.a < P.length - 1) {
-      widenOne(mm.a, NOTE_OFF + mm.tw + 28 + 16 + P[mm.a+1].w / 2);
-    }
+    // ★ 어느 쪽에 붙일지는 **덜 벌리는 쪽**으로 고른다. 늘 오른쪽에만 붙이면
+    //   왼쪽에 자리가 남아도 안 쓰고 오른쪽 열을 밀어 그림이 옆으로 길어진다.
+    var npad = NOTE_OFF + mm.tw + 28 + 16;
+    var defR = mm.a < P.length - 1
+      ? Math.max(0, npad + P[mm.a+1].w / 2 - gaps[mm.a])
+      : npad;                       // 마지막 열이면 흡수할 간격이 없어 캔버스가 그만큼 늘어난다
+    var defL = mm.a > 0
+      ? Math.max(0, npad + P[mm.a-1].w / 2 - gaps[mm.a-1])
+      : Infinity;                   // 첫 열은 왼쪽에 열이 없다
+    mm.left = defL < defR;          // 같으면 오른쪽 — 읽는 방향과 같다
+    if (mm.left) widenOne(mm.a - 1, npad + P[mm.a-1].w / 2);
+    else if (mm.a < P.length - 1) widenOne(mm.a, npad + P[mm.a+1].w / 2);
   } else if (mm.self) {
     // 자기호출은 고리와 라벨이 오른쪽으로 나간다. 마지막 열이면 캔버스가 늘어난다.
     if (mm.a < P.length - 1) {
@@ -640,9 +652,10 @@ for (mi = 0; mi < M.length; mi++) {
   if (mx.note) {
     var bw0 = mx.tw + 28;
     if (mx.a === mx.b) {
-      mx.box = {x:P[mx.a].cx + NOTE_OFF, y:mx.boxY, w:bw0, h:mx.h};
-      mx.lo = P[mx.a].cx - BAR_W;
-      mx.hi = mx.box.x + bw0;
+      mx.box = {x:(mx.left ? P[mx.a].cx - NOTE_OFF - bw0 : P[mx.a].cx + NOTE_OFF),
+                y:mx.boxY, w:bw0, h:mx.h};
+      mx.lo = mx.left ? mx.box.x : P[mx.a].cx - BAR_W;
+      mx.hi = mx.left ? P[mx.a].cx + BAR_W : mx.box.x + bw0;
     } else {
       // ★ from~to 를 가리킨다고 해놓고 가운데에만 떠 있으면 어디 얘기인지 모른다.
       //   글자가 짧아도 상자는 그 구간을 실제로 덮는다.
@@ -756,7 +769,9 @@ for (mi = 0; mi < M.length; mi++) {
   if (!mn.note) continue;
   var bw = mn.box.w, bx = mn.box.x;
   if (mn.a === mn.b) {
-    el('path', {d:'M'+P[mn.a].cx+','+(mn.boxY + mn.h / 2)+' H'+bx,
+    // 연결선은 상자의 **가까운 변**까지만 긋는다. 먼 변까지 그으면 상자 밑을
+    //   가로지르는 선이 생긴다 — 상자가 나중에 그려져 가려질 뿐 사라진 게 아니다.
+    el('path', {d:'M'+P[mn.a].cx+','+(mn.boxY + mn.h / 2)+' H'+(mn.left ? bx + bw : bx),
                 stroke:'#f59e0b', 'stroke-width':1.2, fill:'none',
                 'stroke-dasharray':'3 3'}, content);
   }
