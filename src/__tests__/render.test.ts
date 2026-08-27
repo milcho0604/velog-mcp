@@ -2084,6 +2084,9 @@ describe('★★ S4 — 자가감사 검출력 (크롬 필요)', () => {
 		['배지', TAG_SAMPLE],
 		['이모지', EMOJI_SAMPLE],
 		['긴 조건', CHIP_SAMPLE],
+		// ★ 코덱스 3차 지적 — 변이 표본을 대조군에 안 넣으면, 원본부터 걸리는 상태가
+		//   되어도 «변이하니 걸렸다» 는 그대로 통과한다. 그럼 아무것도 증명 못 한다.
+		['막대 위 노트', BAR_NOTE_SAMPLE],
 	] as const) {
 		test(`대조군(${name})은 통과한다`, async (t) => {
 			if (!(await hasChrome())) {
@@ -2408,13 +2411,14 @@ describe('★★ S10 — 한 열짜리 설명은 덜 벌리는 쪽에 붙는다'
 		widths: number[],
 		gaps: number[],
 		inset = 0,
+		insetL = 0,
 	): Promise<boolean> {
 		const src = await readFile(SRC, 'utf8');
 		const blk = /var npadR = NOTE_OFF[\s\S]*?mm\.left = defL < defR;/.exec(src)?.[0];
 		assert.ok(blk, '배치 결정식을 소스에서 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것');
 		const ctx = createContext({
 			NOTE_OFF: 26,
-			mm: { a, tw, left: false, inset },
+			mm: { a, tw, left: false, inset, insetL },
 			P: widths.map((w) => ({ w })),
 			gaps,
 		});
@@ -2451,6 +2455,19 @@ describe('★★ S10 — 한 열짜리 설명은 덜 벌리는 쪽에 붙는다'
 			await sideOf(1, 100, W, [300, 300, 300], 80),
 			true,
 			'오른쪽에 막대가 쌓였는데도 오른쪽을 골랐다 — npadR 이 막대 몫을 안 쓴다',
+		);
+	});
+
+	// ★ 코덱스 3차 지적 — insetL 을 한 번도 안 넣어서 왼쪽 이웃 막대 회피가
+	//   동작으로 검증된 적이 없었다. 왼쪽에만 막대 몫이 붙으면 오른쪽이 싸져야 한다.
+	test('왼쪽 이웃에 막대가 쌓이면 오른쪽으로 되돌아온다', async () => {
+		// 왼쪽 간격이 훨씬 넓어 원래는 왼쪽을 고르는 조건.
+		assert.equal(await sideOf(2, 100, W, [600, 600, 100], 0, 0), true, '기준선이 이미 오른쪽이다');
+		// 그 왼쪽 이웃에 막대가 깊게 쌓이면 왼쪽 비용이 올라 오른쪽이 이긴다.
+		assert.equal(
+			await sideOf(2, 100, W, [600, 600, 100], 0, 560),
+			false,
+			'왼쪽 이웃에 막대가 쌓였는데도 왼쪽을 골랐다 — npadL 이 insetL 을 안 쓴다',
 		);
 	});
 
@@ -2536,8 +2553,8 @@ describe('★★ S11 — 열 넓히기가 활성 막대 몫을 뺀다', () => {
 		const src = await readFile(SRC, 'utf8');
 		assert.match(
 			src,
-			/mb\.inset = insetOf\(preOpen\[mb\.a\]\);\s*\n\s*mb\.insetL =/,
-			'노트가 막대 몫 계산에서 통째로 빠졌다',
+			/mb\.inset = lastIdx\[mb\.a\] > mi \? insetOf\(preOpen\[mb\.a\]\) : 0;/,
+			'노트가 막대 몫 계산에서 빠졌거나, 막대 수명을 안 보고 있다',
 		);
 		assert.match(
 			src,
@@ -2558,8 +2575,14 @@ describe('★★ S11 — 열 넓히기가 활성 막대 몫을 뺀다', () => {
 		);
 		assert.match(
 			src,
-			/mb\.insetL = mb\.a > 0 \? insetOf\(preOpen\[mb\.a - 1\]\) : 0;/,
-			'왼쪽 이웃의 막대 깊이를 세는 곳이 사라졌다',
+			/mb\.insetL = \(mb\.a > 0 && lastIdx\[mb\.a - 1\] > mi\) \? insetOf\(preOpen\[mb\.a - 1\]\) : 0;/,
+			'왼쪽 이웃의 막대 깊이를 세는 곳이 사라졌거나, 막대 수명을 안 보고 있다',
+		);
+		// ★ 없는 막대 값을 물면 노트가 반대편으로 뒤집힌다(코덱스 3차). 수명 판정을 못 박는다.
+		assert.match(
+			src,
+			/lastIdx\[ml0\.a\] = mi;/,
+			'참가자별 마지막 등장 지점을 안 세고 있다',
 		);
 	});
 

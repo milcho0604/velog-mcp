@@ -521,6 +521,18 @@ for (var mi = 0; mi < M.length; mi++) {
 //   다시 좁아지므로, 둘은 같은 규칙을 따라야 한다.
 var preOpen = [];
 for (i = 0; i < P.length; i++) preOpen.push(0);
+// ★ 안 닫힌 막대는 그 참가자가 **마지막으로 관여한 지점**까지만 끈다(⑥의 lastY).
+//   그러니 노트 뒤에 그 참가자가 안 나오면 막대는 노트 위에서 끝나 겹칠 일이 없다.
+//   그걸 안 보고 열린 개수만 세면 **없는 막대 값을 물어** 노트를 반대편으로 뒤집거나
+//   간격을 헛되이 벌린다(코덱스 3차 지적).
+var lastIdx = [];
+for (i = 0; i < P.length; i++) lastIdx.push(-1);
+for (mi = 0; mi < M.length; mi++) {
+  var ml0 = M[mi];
+  if (ml0.note) continue;
+  lastIdx[ml0.a] = mi;
+  lastIdx[ml0.b] = mi;
+}
 function insetOf(depth){ return depth > 0 ? (depth - 1) * BAR_STEP + BAR_W / 2 : 0; }
 for (mi = 0; mi < M.length; mi++) {
   var mb = M[mi];
@@ -531,8 +543,9 @@ for (mi = 0; mi < M.length; mi++) {
   // 막대는 오른쪽으로만 자라므로 방향에 따라 걸리는 상대가 다르다(코덱스 2차 지적).
   if (mb.note) {
     if (mb.a === mb.b) {
-      mb.inset = insetOf(preOpen[mb.a]);
-      mb.insetL = mb.a > 0 ? insetOf(preOpen[mb.a - 1]) : 0;
+      // 그 참가자가 이 노트 **뒤에** 다시 나와야 막대가 노트 행까지 이어진다.
+      mb.inset = lastIdx[mb.a] > mi ? insetOf(preOpen[mb.a]) : 0;
+      mb.insetL = (mb.a > 0 && lastIdx[mb.a - 1] > mi) ? insetOf(preOpen[mb.a - 1]) : 0;
     }
     continue;
   }
@@ -987,14 +1000,17 @@ for (var nb1 = 0; nb1 < noteBoxes.length; nb1++) {
   //   (from~to 를 가리킨다고 해놓고 가운데만 떠 있으면 어디 얘기인지 모른다).
   //   그걸 안 가리고 다 보면 걸친 노트 + 열린 막대가 **1겹부터 무조건** 걸려서
   //   멀쩡한 그림이 거부된다(코덱스 2차 지적, 실측으로 재현).
-  if (noteBoxes[nb1][2].lo === noteBoxes[nb1][2].hi) {
-    for (i = 0; i < P.length; i++) {
-      for (var ab2 = 0; ab2 < ACT[i].length; ab2++) {
-        var bb = ACT[i][ab2];
-        if (rectsOverlap(noteBoxes[nb1][0], {x:P[i].cx + bb.depth * BAR_STEP - BAR_W / 2,
-                                             y:bb.y1, w:BAR_W, h:Math.max(20, bb.y2 - bb.y1)})) {
-          collide.push('노트가 ' + P[i].name + ' 의 활성막대를 덮음 (막대 몫만큼 더 비켜야 한다)');
-        }
+  var nOwn = noteBoxes[nb1][2];
+  var spanning = (nOwn.lo !== nOwn.hi);
+  for (i = 0; i < P.length; i++) {
+    // 걸친 노트는 **제 구간 안**을 덮는 것이 설계다. 그 밖은 덮으면 안 된다.
+    // 한 열짜리는 생명선 옆에 매달리는 것이라 제 막대도 덮으면 안 된다.
+    if (spanning && i >= nOwn.lo && i <= nOwn.hi) continue;
+    for (var ab2 = 0; ab2 < ACT[i].length; ab2++) {
+      var bb = ACT[i][ab2];
+      if (rectsOverlap(noteBoxes[nb1][0], {x:P[i].cx + bb.depth * BAR_STEP - BAR_W / 2,
+                                           y:bb.y1, w:BAR_W, h:Math.max(20, bb.y2 - bb.y1)})) {
+        collide.push('노트가 ' + P[i].name + ' 의 활성막대를 덮음 (막대 몫만큼 더 비켜야 한다)');
       }
     }
   }
