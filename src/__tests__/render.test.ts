@@ -1744,20 +1744,35 @@ describe('★ R23 — 상한을 넘는 파일은 읽는 단계에서 거부한�
  */
 describe('★ 실패한 렌더는 뒤를 남기지 않는다 (크롬 필요)', () => {
 	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
-	const countRenderDirs = async (): Promise<number> =>
-		(await readdir(tmpdir())).filter((n) => n.startsWith('velog-mcp-render-')).length;
+
+	/**
+	 * ⚠️ 개수를 세면 안 된다 — 이 검사는 그것 때문에 한 번 깨졌다.
+	 *
+	 * 렌더는 시작할 때마다 24시간 지난 폴더를 치운다(sweepOld). 그래서 임시폴더에
+	 * 그런 잔여가 있으면 **개수가 늘면서 동시에 줄어든다.** 실측(2026-08-27):
+	 * 113개 중 24~48시간짜리가 섞여 있어 '하나 늘어야 한다'가 0 으로 나왔다.
+	 * 소스는 그대로였고 깨끗한 main 에서도 같은 실패가 났다.
+	 *
+	 * 그래서 **이름 집합의 차이**를 본다. 새로 생긴 것만 세면 남이 지우는 것과
+	 * 무관해진다. R16 과 같은 교훈이다 — 전역 자원은 총량이 아니라 내 몫의 증분으로.
+	 */
+	const listRenderDirs = async (): Promise<Set<string>> =>
+		new Set((await readdir(tmpdir())).filter((n) => n.startsWith('velog-mcp-render-')));
+	const addedSince = (before: Set<string>, after: Set<string>): string[] =>
+		[...after].filter((n) => !before.has(n));
 
 	test('성공은 남기고 실패는 지운다', async (t) => {
 		if (!(await hasChrome())) {
 			t.skip('크롬이 없어 건너뜀');
 			return;
 		}
-		const before = await countRenderDirs();
+		const before = await listRenderDirs();
 
 		// 대조군 — 성공한 렌더는 반드시 남아야 한다. 사용자가 PNG·HTML 을 쓴다.
 		await renderDiagram({ title: 'ok', nodes: [{ id: 'a', x: 0, y: 0, title: 'A' }] });
-		const afterOk = await countRenderDirs();
-		assert.equal(afterOk - before, 1, '성공한 렌더의 결과까지 지웠다');
+		const afterOk = await listRenderDirs();
+		const kept = addedSince(before, afterOk);
+		assert.equal(kept.length, 1, `성공한 렌더의 결과까지 지웠다 (새로 생긴 것: ${kept.length}개)`);
 
 		// 실패 — HTML 을 쓴 뒤 감사 해석에서 던지는 경로.
 		await assert.rejects(() =>
@@ -1768,7 +1783,8 @@ describe('★ 실패한 렌더는 뒤를 남기지 않는다 (크롬 필요)', (
 				edges: [{ from: 0 as unknown as string, to: 1 as unknown as string }],
 			}),
 		);
-		assert.equal(await countRenderDirs(), afterOk, '실패한 렌더의 폴더가 남았다');
+		const afterNg = addedSince(afterOk, await listRenderDirs());
+		assert.equal(afterNg.length, 0, `실패한 렌더의 폴더가 남았다: ${afterNg.join(', ')}`);
 	});
 });
 
@@ -2011,8 +2027,8 @@ describe('★★ S4 — 자가감사 검출력 (크롬 필요)', () => {
 			//    폰트가 다른 CI 에서는 빈 자리에 떨어져 아무것도 안 걸렸다.
 			//    마지막 참가자의 생명선 좌표를 직접 겨냥해 환경과 무관하게 만든다.
 			what: '노트를 남의 열 위로 민다',
-			from: 'mx.box = {x:P[mx.a].cx + NOTE_OFF,',
-			to: 'mx.box = {x:P[P.length - 1].cx - 20,',
+			from: 'mx.box = {x:(mx.left ? P[mx.a].cx - NOTE_OFF - bw0 : P[mx.a].cx + NOTE_OFF),',
+			to: 'mx.box = {x:(P[P.length - 1].cx - 20),',
 			field: 'collide',
 		},
 		{
@@ -2284,6 +2300,124 @@ out = wrapText(text, 'm-label', maxW);`).runInContext(ctx);
 		assert.ok(
 			broke,
 			'구분 기호를 지웠는데도 결과가 같다 — 이 검사는 구분 기호 규칙을 안 보고 있다',
+		);
+	});
+});
+
+describe('★★ S9 — 번호는 접기에 참여하지 않는다', () => {
+	/**
+	 * 왜 있나. 라벨이 공백 없는 긴 토큰이면 번호가 **혼자 한 줄**을 차지했다.
+	 *
+	 *   1.
+	 *   /push?PUSH_DATA=..&keyversion=v3&
+	 *   USE_INTT_ID=PSNM_1
+	 *
+	 * 번호를 라벨에 이어 붙인 뒤 통째로 접었기 때문이다. 행 하나를 통째로 잃고,
+	 * 세로는 그 아래 행을 전부 민다. 실측으로 1429×1027 → 1441×993 이었다
+	 * (세로 34 줄고 가로 12 늘어남).
+	 *
+	 * ⚠️ 자가감사는 이것도 통과한다. 줄이 제 상자 안에 있고 겹치지도 않는다.
+	 */
+	const SRC = new URL('../render/sequence.ts', import.meta.url);
+
+	test('번호가 첫 줄에 붙고 줄 수가 안 늘어난다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		const glue = /if \(num\) m\.lines = [^\n]*\n/.exec(src)?.[0];
+		assert.ok(glue, '번호를 첫 줄에 붙이는 줄을 소스에서 못 찾았다');
+		const ctx = createContext({ num: '7.', m: { lines: ['가나다', '라마바'] } });
+		new Script(glue).runInContext(ctx);
+		// vm 안에서 만들어진 배열이라 realm 이 다르다 — 네이티브로 옮겨 비교한다.
+		const got = Array.from((ctx as { m: { lines: string[] } }).m.lines);
+		assert.deepEqual(got, ['7. 가나다', '라마바'], '번호가 첫 줄에 안 붙었다');
+		assert.equal(got.length, 2, '번호 때문에 줄이 늘어났다 — 고아 줄이 되살아났다');
+	});
+
+	test('라벨이 비어도 번호만 남는다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		const glue = /if \(num\) m\.lines = [^\n]*\n/.exec(src)?.[0] as string;
+		const ctx = createContext({ num: '3.', m: { lines: [] as string[] } });
+		new Script(glue).runInContext(ctx);
+		assert.deepEqual(Array.from((ctx as { m: { lines: string[] } }).m.lines), ['3.']);
+	});
+
+	// ★ 계산이 맞아도 **번호를 다시 접기에 넣어버리면** 소용이 없다. 배선을 따로 본다.
+	test('접을 때는 번호 없는 라벨을 넘긴다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		assert.match(
+			src,
+			/m\.lines = wrapText\(body, m\.cls, WRAP_W\);/,
+			'접기에 번호 붙은 문자열을 넘기고 있다 — 고아 줄이 되살아난다',
+		);
+		assert.doesNotMatch(
+			src,
+			/body = body \? \(seq \+ '\. ' \+ body\)/,
+			'번호를 라벨에 이어 붙이는 옛 코드가 되살아났다',
+		);
+	});
+});
+
+describe('★★ S10 — 한 열짜리 설명은 덜 벌리는 쪽에 붙는다', () => {
+	/**
+	 * 왜 있나. 설명 상자를 늘 생명선 **오른쪽**에만 붙였다. 그래서 왼쪽 간격이
+	 * 이미 넓어 자리가 남아도 안 쓰고 오른쪽 열을 밀었다. 같은 그림 실측으로
+	 * 가로 1441 → 1331 (110 줄어듦), 세로는 그대로였다.
+	 *
+	 * ⚠️ 자가감사는 이것도 통과했다. 상자가 제 자리에 있고 겹치지도 않는다 —
+	 * 그냥 넓을 뿐이다. 그래서 이 검사가 유일한 자물쇠다.
+	 */
+	const SRC = new URL('../render/sequence.ts', import.meta.url);
+
+	/** 배치 결정식만 떼어내 가짜 열 폭과 간격으로 돌린다. */
+	async function sideOf(a: number, tw: number, widths: number[], gaps: number[]): Promise<boolean> {
+		const src = await readFile(SRC, 'utf8');
+		const blk = /var npad = NOTE_OFF[\s\S]*?mm\.left = defL < defR;/.exec(src)?.[0];
+		assert.ok(blk, '배치 결정식을 소스에서 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것');
+		const ctx = createContext({
+			NOTE_OFF: 26,
+			mm: { a, tw, left: false },
+			P: widths.map((w) => ({ w })),
+			gaps,
+		});
+		new Script(blk).runInContext(ctx);
+		return (ctx as { mm: { left: boolean } }).mm.left;
+	}
+
+	// 노트가 차지하는 폭 = 26 + tw + 28 + 16. tw=100 이면 170 에 옆 카드 절반이 더해진다.
+	const W = [120, 120, 120, 120];
+
+	test('왼쪽이 이미 넓으면 왼쪽에 붙는다', async () => {
+		assert.equal(await sideOf(2, 100, W, [600, 600, 100]), true, '왼쪽에 자리가 남는데 오른쪽을 밀었다');
+	});
+
+	test('오른쪽이 넓으면 오른쪽에 붙는다', async () => {
+		assert.equal(await sideOf(1, 100, W, [100, 600, 100]), false, '오른쪽에 자리가 남는데 왼쪽을 밀었다');
+	});
+
+	test('양쪽이 같으면 오른쪽 — 읽는 방향과 같다', async () => {
+		assert.equal(await sideOf(1, 100, W, [300, 300, 300]), false, '같은 조건에서 왼쪽으로 갔다');
+	});
+
+	test('첫 열은 왼쪽에 열이 없으므로 오른쪽', async () => {
+		assert.equal(await sideOf(0, 100, W, [10, 10, 10]), false, '왼쪽에 열이 없는데 왼쪽으로 갔다');
+	});
+
+	test('마지막 열은 흡수할 간격이 없어 왼쪽이 유리하다', async () => {
+		// 오른쪽으로 가면 캔버스가 npad 만큼 통째로 늘어난다. 왼쪽 간격이 넉넉하면 왼쪽.
+		assert.equal(await sideOf(3, 100, W, [100, 100, 600]), true, '캔버스를 늘리는 쪽을 골랐다');
+	});
+
+	// ★ 결정이 맞아도 **상자를 그때 안 옮기면** 소용이 없다. 배선을 따로 본다.
+	test('상자 x 와 연결선이 그 결정을 실제로 쓴다', async () => {
+		const src = await readFile(SRC, 'utf8');
+		assert.match(
+			src,
+			/mx\.box = \{x:\(mx\.left \? P\[mx\.a\]\.cx - NOTE_OFF - bw0 : P\[mx\.a\]\.cx \+ NOTE_OFF\)/,
+			'상자 x 가 좌우 결정을 안 쓰고 있다 — 결정만 하고 늘 오른쪽에 그린다',
+		);
+		assert.match(
+			src,
+			/' H'\+\(mn\.left \? bx \+ bw : bx\)/,
+			'연결선이 먼 변까지 간다 — 상자 밑을 가로지르는 선이 생긴다',
 		);
 	});
 });
