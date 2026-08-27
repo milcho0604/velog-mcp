@@ -1372,3 +1372,55 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		}
 	});
 });
+
+describe('★ P28 — README 가 말하는 검사 계열이 실제와 맞는다', () => {
+	/**
+	 * 왜 있나. README 두 판이 «테스트 276건, R1~R23, P1~P26» 이라고 적고 있었는데
+	 * 실제로는 416건이었고 `render.test.ts` 에는 S1~S10 이 통째로 더 있었다.
+	 * 0.7.0 에서 시퀀스 검사를 열 개 넣으면서 README 를 안 고쳤기 때문이다.
+	 *
+	 * 이 저장소는 같은 이유로 한 번 지적받았다(`d59d3dc`, 코덱스 9차 —
+	 * «새 검사를 만들면 그 검사도 변이 대상에 넣어야 한다»). 숫자를 손으로 맞추는 한
+	 * 또 낡는다. 그래서 **계열의 범위만이라도 기계가 지키게** 한다.
+	 *
+	 * 총 건수는 여기서 안 본다 — 변이 루프처럼 실행 중에 만들어지는 검사가 있어
+	 * 소스만 읽어서는 셀 수 없다. 그래서 README 에는 «0.8.1 기준» 이라고 시점을 적었다.
+	 */
+	const FILES = ['safety.test.ts', 'render.test.ts', 'plugin.test.ts'];
+
+	/** 검사 이름 앞머리(A1, R23, S10, P27 …)를 소스에서 긁어 계열별 최댓값을 낸다. */
+	async function seriesMax(): Promise<Record<string, number>> {
+		const out: Record<string, number> = {};
+		for (const f of FILES) {
+			const src = await readFile(new URL(f, import.meta.url), 'utf8');
+			for (const m of src.matchAll(/(?:describe|test)\(\s*[`'"][★☆ ]*([ARSP])(\d+)\b/g)) {
+				const key = m[1] as string;
+				const n = Number(m[2]);
+				if (!(key in out) || n > (out[key] as number)) out[key] = n;
+			}
+		}
+		return out;
+	}
+
+	test('두 README 가 계열 범위를 정확히 적는다', async () => {
+		const max = await seriesMax();
+		for (const key of ['A', 'R', 'S', 'P']) {
+			assert.ok(max[key], `${key} 계열을 소스에서 하나도 못 찾았다 — 이 검사가 헛돈다`);
+		}
+
+		const ko = await readFile(new URL('../../README.ko.md', import.meta.url), 'utf8');
+		const en = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+
+		for (const [key, n] of Object.entries(max)) {
+			// 한글판은 물결(~), 영문판은 en dash(–) 를 쓴다.
+			assert.ok(
+				ko.includes(`${key}1~${key}${n}`),
+				`README.ko.md 가 ${key}1~${key}${n} 을 안 적고 있다 — 검사를 넣고 문서를 안 고쳤다`,
+			);
+			assert.ok(
+				en.includes(`${key}1–${key}${n}`),
+				`README.md 가 ${key}1–${key}${n} 을 안 적고 있다 — 검사를 넣고 문서를 안 고쳤다`,
+			);
+		}
+	});
+});
