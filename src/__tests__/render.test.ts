@@ -2623,3 +2623,95 @@ describe('★★ S12 — 한 열짜리 넓히기는 spans 뒤에 온다', () => 
 		assert.ok(single < cx, '한 열짜리 넓히기가 열 좌표를 잡은 뒤로 밀렸다 — 그러면 반영이 안 된다');
 	});
 });
+
+describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
+	/**
+	 * 왜 있나. 몇 px 어긋난 두 노드 사이를 정확히 가운데서 한 번 꺾어 이었다.
+	 * 곧게 이을 수 있는 선이 찌그러져 보였다. 규칙 셋을 잠근다:
+	 * ① 8px 이하 잔차는 꺾지 않고 잇는다 (꺾임 반경 9 보다 작아 잔물결이 된다)
+	 * ② 세로 구간이 겹치는 두 노드는 한 y 로 모아 완전한 직선으로
+	 * ③ 같은 면의 차선은 배열 순서가 아니라 상대편 위치 순서로
+	 */
+	const SRC = new URL('../render/page.ts', import.meta.url);
+
+	async function pick(re: RegExp, what: string): Promise<string> {
+		const src = await readFile(SRC, 'utf8');
+		const m = re.exec(src)?.[0];
+		assert.ok(m, `${what} 을 소스에서 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것`);
+		return m;
+	}
+
+	test('route: 8px 이하 어긋남은 꺾지 않는다', async () => {
+		const blk = await pick(/function isH\([\s\S]*?function route\([\s\S]*?\n\}/, 'route()');
+		const ctx = createContext({ out: null });
+		new Script(blk + '\nthis.routeFn = route;').runInContext(ctx);
+		const route = (ctx as unknown as { routeFn: (...a: unknown[]) => number[][] }).routeFn;
+		assert.equal(route([0, 100], 'right', [300, 108], 'left', 0).length, 2, '가로 8px 인데 꺾었다');
+		assert.equal(route([0, 100], 'right', [300, 109], 'left', 0).length, 4, '가로 9px 인데 안 꺾었다');
+		assert.equal(route([100, 0], 'bottom', [108, 300], 'top', 0).length, 2, '세로 8px 인데 꺾었다');
+		assert.equal(route([100, 0], 'bottom', [109, 300], 'top', 0).length, 4, '세로 9px 인데 안 꺾었다');
+	});
+
+	function snapCase(aY: number, bY: number, laneA = 1, laneB = 1) {
+		const h = 56;
+		return {
+			it: {
+				a: { n: { x: 0, y: aY, w: 140, h }, s: 'right', k: 'a|right' },
+				b: { n: { x: 400, y: bY, w: 140, h }, s: 'left', k: 'b|left' },
+				pa: [140, aY + h / 2],
+				pb: [400, bY + h / 2],
+				straight: false,
+			},
+			lanes: { 'a|right': laneA, 'b|left': laneB },
+		};
+	}
+
+	test('구간이 겹치는 두 노드는 한 y 로 모인다', async () => {
+		const blk = await pick(/\/\/ 양끝이 가로면이고[\s\S]*?\n\}/, '곧게 펴기 블록');
+		const run = (aY: number, bY: number, laneA = 1, laneB = 1) => {
+			const c = snapCase(aY, bY, laneA, laneB);
+			const ctx = createContext({
+				auto: [c.it],
+				lanes: c.lanes,
+				isH: (s: string) => s === 'left' || s === 'right',
+			});
+			new Script(blk).runInContext(ctx);
+			return c.it;
+		};
+		const snapped = run(100, 130);
+		assert.equal(snapped.pa[1], snapped.pb[1], '30px 어긋남(구간 겹침)인데 안 모였다');
+		const gentle = run(100, 160);
+		assert.notEqual(gentle.pa[1], gentle.pb[1]);
+		assert.equal(gentle.straight, true, '완만한 기울기(60px/260px)인데 대각 직선이 아니다');
+		const steep = run(100, 190);
+		assert.equal(steep.straight, false, '가파른 어긋남(90px)까지 직선으로 이었다');
+		const fanout = run(100, 112, 2, 1);
+		assert.notEqual(fanout.pa[1], fanout.pb[1], '차선이 여럿인 면까지 모았다 — 옆 차선과 겹친다');
+	});
+
+	test('차선은 상대편 위치 순서로 받는다', async () => {
+		const blk = await pick(/var laneBuckets[\s\S]*?\n\}\n(?=for \(var pa2)/, '차선 정렬 블록');
+		const srcN = { x: 0, y: 300, w: 140, h: 56 };
+		const t = (y: number) => ({ x: 400, y, w: 140, h: 56 });
+		const edge = (n: { x: number; y: number; w: number; h: number }) => ({
+			a: { n: srcN, s: 'right', k: 's|right' },
+			b: { n, s: 'left', k: `t${String(n.y)}|left` },
+			ia: -1,
+			ib: -1,
+		});
+		// 배열 순서는 아래(400) → 위(200) → 가운데(300)
+		const e1 = edge(t(400));
+		const e2 = edge(t(200));
+		const e3 = edge(t(300));
+		const ctx = createContext({
+			auto: [e1, e2, e3],
+			isH: (s: string) => s === 'left' || s === 'right',
+			cy: (n: { y: number; h: number }) => n.y + n.h / 2,
+			cx: (n: { x: number; w: number }) => n.x + n.w / 2,
+		});
+		new Script(blk).runInContext(ctx);
+		assert.equal(e2.ia, 0, '가장 위 타깃이 위 차선을 받아야 한다');
+		assert.equal(e3.ia, 1, '가운데 타깃이 가운데 차선을 받아야 한다');
+		assert.equal(e1.ia, 2, '가장 아래 타깃이 아래 차선을 받아야 한다');
+	});
+});

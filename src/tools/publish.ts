@@ -15,7 +15,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { ToolExtra, VelogClient } from '../client.ts';
 import type { Capabilities } from '../capabilities.ts';
-import { textResult } from '../format.ts';
+import { textResult, HUMAN_BODY_STYLE, HUMAN_TITLE_STYLE } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { assertOwned, assertOwnsSeries } from '../ownership.ts';
 import type { PublishRateLimiter } from '../ratelimit.ts';
@@ -338,8 +338,8 @@ export function registerPublishTools(
 				publicNote +
 				' 되돌리려면 velog_unpublish_post 로 초안으로 내릴 수 있다.',
 			inputSchema: {
-				title: z.string().min(1),
-				body: z.string().min(1).describe('본문 (마크다운)'),
+				title: z.string().min(1).describe('글 제목.' + HUMAN_TITLE_STYLE),
+				body: z.string().min(1).describe('본문 (마크다운).' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).default([]),
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
 				thumbnail: THUMBNAIL_FIELD,
@@ -562,8 +562,8 @@ export function registerPublishTools(
 						'비공개 글은 비공개로 그대로 남는다. 범위를 바꾸려면 VELOG_ALLOW_PUBLIC=1 이 필요하다.'),
 			inputSchema: {
 				id: z.string().min(1),
-				title: z.string().min(1).optional(),
-				body: z.string().min(1).optional().describe('생략하면 기존 본문 유지'),
+				title: z.string().min(1).optional().describe('글 제목.' + HUMAN_TITLE_STYLE),
+				body: z.string().min(1).optional().describe('생략하면 기존 본문 유지.' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).optional().describe('생략하면 기존 태그 유지'),
 				url_slug: z.string().optional().describe('생략하면 기존 주소 유지'),
 				thumbnail: THUMBNAIL_FIELD,
