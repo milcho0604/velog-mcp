@@ -495,6 +495,9 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 				'브라우저 실측으로 정해지고, 글자 삐져나옴/선 관통/겹침은 자가감사가 잡는다.\n' +
 				'감사에 걸리면 **올리지 않고** 무엇이 문제인지 알려준다. 이 판단은 끌 수 없고, ' +
 				'감사에 걸린 산출물은 velog_upload_image 로도 받지 않는다. 고쳐서 다시 그릴 것.\n' +
+				'**밋밋하게 나오면 입력이 밋밋한 것이다.** 사람 손 그림처럼 보이게 하는 셋: ' +
+				'노드마다 icon 과 tag(포트·버전·역할), 관련 노드는 groups 로 묶기, ' +
+				'흐름 종류가 둘 이상이면 planes 로 색 가르기. 나란한 노드는 y 를 맞추면 선이 곧게 나간다.\n' +
 				`아이콘: ${ICON_NAMES.join(' ')}\n톤: ${TONE_NAMES.join(' ')}`,
 			inputSchema: {
 				// ★ 글자에도 상한이 필요하다. 좌표만 묶어두면 제목 하나에 10MB 를 넣어
