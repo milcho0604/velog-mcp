@@ -4,6 +4,17 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
+## [0.8.9] — 2026-08-30
+
+### 고침
+
+- **팬아웃 꺾임 자리가 제각각이었다.** 같은 복도를 지나는 선을 무조건 서로
+  벌려서, 위로 가는 선과 아래로 가는 선처럼 겹칠 일이 없는 선까지 다른
+  자리에서 꺾였다. 세로(가로) 구간이 겹치는 선끼리만 다른 차선을 받는다.
+- **차선이 여럿인 면의 정렬된 화살표가 살짝 기울었다.** 한 면에서 선 두 개가
+  나가면 차선 오프셋 때문에 같은 행 화살표도 몇 px 기울었다. 모은 자리가
+  옆 차선과 6px 이상 떨어지면 다차선이어도 수평으로 편다.
+
 ## [0.8.8] — 2026-08-30
 
 ### 고침
@@ -421,6 +432,7 @@
 
 - 첫 npm 공개 발행.
 
+[0.8.9]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.9
 [0.8.8]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.8
 [0.8.7]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.7
 [0.8.6]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.6

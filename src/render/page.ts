@@ -491,10 +491,19 @@ for (var pa2 = 0; pa2 < auto.length; pa2++) {
 // 양끝이 가로면이고 두 노드의 세로 구간이 겹치면 한 y 로 모아 곧게 편다.
 // 몇 px 어긋난 노드 사이를 가운데서 꺾는 것보다 곧은 한 줄이 낫다.
 // 구간이 안 겹쳐도 기울기가 완만하면(1:4 이하) 대각 직선으로 잇는다.
-// 차선이 여럿인 면은 건드리지 않는다 — 모으면 옆 차선과 겹친다.
+// 차선이 여럿인 면도 편다 — 단, 모은 자리가 옆 차선과 6px 이상 떨어질 때만.
+function laneClear(key, self, axis, v){
+  var arr = laneBuckets[key] || [];
+  for (var ci = 0; ci < arr.length; ci++) {
+    if (arr[ci].it === self) continue;
+    var pt = arr[ci].end === 'a' ? arr[ci].it.pa : arr[ci].it.pb;
+    if (Math.abs(pt[axis] - v) < 6) return false;
+  }
+  return true;
+}
 for (var sn = 0; sn < auto.length; sn++) {
   var its = auto[sn];
-  if (lanes[its.a.k] !== 1 || lanes[its.b.k] !== 1) continue;
+  var single = lanes[its.a.k] === 1 && lanes[its.b.k] === 1;
   var hh = isH(its.a.s) && isH(its.b.s);
   var vv = !isH(its.a.s) && !isH(its.b.s);
   var M = 10;
@@ -503,8 +512,10 @@ for (var sn = 0; sn < auto.length; sn++) {
     var hi = Math.min(its.a.n.y + its.a.n.h, its.b.n.y + its.b.n.h) - M;
     if (lo <= hi) {
       var sy = Math.min(hi, Math.max(lo, (its.pa[1] + its.pb[1]) / 2));
-      its.pa[1] = sy; its.pb[1] = sy;
-    } else if (Math.abs(its.pb[1] - its.pa[1]) * 4 <= Math.abs(its.pb[0] - its.pa[0])) {
+      if (laneClear(its.a.k, its, 1, sy) && laneClear(its.b.k, its, 1, sy)) {
+        its.pa[1] = sy; its.pb[1] = sy;
+      }
+    } else if (single && Math.abs(its.pb[1] - its.pa[1]) * 4 <= Math.abs(its.pb[0] - its.pa[0])) {
       its.straight = true;
     }
   } else if (vv) {
@@ -512,8 +523,10 @@ for (var sn = 0; sn < auto.length; sn++) {
     var hi2 = Math.min(its.a.n.x + its.a.n.w, its.b.n.x + its.b.n.w) - M;
     if (lo2 <= hi2) {
       var sx = Math.min(hi2, Math.max(lo2, (its.pa[0] + its.pb[0]) / 2));
-      its.pa[0] = sx; its.pb[0] = sx;
-    } else if (Math.abs(its.pb[0] - its.pa[0]) * 4 <= Math.abs(its.pb[1] - its.pa[1])) {
+      if (laneClear(its.a.k, its, 0, sx) && laneClear(its.b.k, its, 0, sx)) {
+        its.pa[0] = sx; its.pb[0] = sx;
+      }
+    } else if (single && Math.abs(its.pb[0] - its.pa[0]) * 4 <= Math.abs(its.pb[1] - its.pa[1])) {
       its.straight = true;
     }
   }
@@ -539,14 +552,38 @@ for (var m1 = 0; m1 < auto.length; m1++) {
   auto[m1].mk = midKeyOf(auto[m1]);
   if (auto[m1].mk) midCount[auto[m1].mk] = (midCount[auto[m1].mk] || 0) + 1;
 }
-var midSeen = Object.create(null);
+// 같은 복도라도 세로(가로) 구간이 안 겹치는 선은 같은 x(y) 에서 꺾어도 된다.
+// 위로 가는 선과 아래로 가는 선을 괜히 벌리면 꺾이는 자리가 제각각이 된다.
+// 겹치는 선끼리만 서로 다른 차선을 받는다 (그리디 색칠).
+var midGroups = Object.create(null);
+for (var mg = 0; mg < auto.length; mg++) {
+  if (auto[mg].mk) (midGroups[auto[mg].mk] = midGroups[auto[mg].mk] || []).push(auto[mg]);
+}
+for (var gk in midGroups) {
+  var grp = midGroups[gk];
+  var horiz = gk.charAt(0) === 'h';
+  var colors = 1;
+  for (var gi = 0; gi < grp.length; gi++) {
+    var ii = grp[gi];
+    var ax = horiz ? 1 : 0;
+    var lo3 = Math.min(ii.pa[ax], ii.pb[ax]), hi3 = Math.max(ii.pa[ax], ii.pb[ax]);
+    var used = [];
+    for (var gj = 0; gj < gi; gj++) {
+      var jj = grp[gj];
+      var lo4 = Math.min(jj.pa[ax], jj.pb[ax]), hi4 = Math.max(jj.pa[ax], jj.pb[ax]);
+      if (lo3 <= hi4 + 6 && lo4 <= hi3 + 6) used.push(jj.midColor);
+    }
+    var col = 0;
+    while (used.indexOf(col) >= 0) col++;
+    ii.midColor = col;
+    if (col + 1 > colors) colors = col + 1;
+  }
+  for (var gc = 0; gc < grp.length; gc++) grp[gc].colors = colors;
+}
 for (var m2 = 0; m2 < auto.length; m2++) {
   var im = auto[m2];
   var off = 0;
-  if (im.mk) {
-    midSeen[im.mk] = (midSeen[im.mk] === undefined) ? 0 : midSeen[im.mk] + 1;
-    off = laneOffset(midSeen[im.mk], midCount[im.mk], 200);
-  }
+  if (im.mk) off = laneOffset(im.midColor, im.colors, 200);
   im.pts = im.straight ? [im.pa, im.pb] : route(im.pa, im.a.s, im.pb, im.b.s, off);
 }
 
