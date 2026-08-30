@@ -68,7 +68,7 @@ Published on npm, so nothing to clone — your MCP client runs it via `npx`. See
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.8.7
+  -- npx -y @milcho0604/velog-mcp@0.8.8
 ```
 
 The token stays in your client's config file here. The plugin route above puts it in
@@ -91,7 +91,7 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, �
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.8.7"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.8.8"],
       "env": {
         "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
@@ -104,7 +104,7 @@ With the Claude Code CLI:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.8.7
+  -- npx -y @milcho0604/velog-mcp@0.8.8
 ```
 
 To run a local checkout instead, swap the command for
@@ -406,7 +406,7 @@ npm run build         # tsconfig.build.json (tests excluded from dist)
 npm run schema:dump   # dump Velog's current GraphQL schema
 ```
 
-431 tests (as of 0.8.7). `src/__tests__/safety.test.ts` pins the security
+431 tests (as of 0.8.8). `src/__tests__/safety.test.ts` pins the security
 invariants (A1–A12), `render.test.ts` pins the diagram ones (R1–R23, D1) and the
 sequence ones (S1–S12), and `plugin.test.ts` pins the packaging ones (P1–P28) —
 if any fails, find out why instead of working around it.

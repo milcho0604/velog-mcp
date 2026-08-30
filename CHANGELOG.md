@@ -4,6 +4,22 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
+## [0.8.8] — 2026-08-30
+
+### 고침
+
+- **표지가 어디서나 나오는 자동 생성 포스터처럼 보였다.** 대각 그러데이션에 색 막대,
+  알약 태그. 구성도와 같은 시각 언어(흰 카드, 점 격자 배경, 배지 칩, 파스텔 태그 칩)로
+  다시 그렸다. 실제로 반응이 좋았던 글의 썸네일이 표지 카드가 아니라 본문 구성도였던
+  것이 근거다.
+- 케커가 칩이 되면서 케커·서명 충돌 감사도 칩 폭 기준으로 본다.
+
+### 추가
+
+- **구성도 도구 설명에 입력 처방을 실었다.** 밋밋하게 나오면 렌더러가 아니라 입력이
+  밋밋한 것이다: 노드마다 icon 과 tag, 관련 노드는 groups, 흐름이 여럿이면 planes,
+  나란한 노드는 y 맞추기.
+
 ## [0.8.7] — 2026-08-30
 
 ### 고침
@@ -405,6 +421,7 @@
 
 - 첫 npm 공개 발행.
 
+[0.8.8]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.8
 [0.8.7]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.7
 [0.8.6]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.6
 [0.8.5]: https://github.com/milcho0604/velog-mcp/releases/tag/v0.8.5
