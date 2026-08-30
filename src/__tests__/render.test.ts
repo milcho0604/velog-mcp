@@ -2667,12 +2667,22 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 	}
 
 	test('구간이 겹치는 두 노드는 한 y 로 모인다', async () => {
-		const blk = await pick(/\/\/ 양끝이 가로면이고[\s\S]*?\n\}/, '곧게 펴기 블록');
-		const run = (aY: number, bY: number, laneA = 1, laneB = 1) => {
+		// laneClear 함수 선언부터 스냅 루프 끝까지 통째로 뗀다.
+		const blk = await pick(/\/\/ 양끝이 가로면이고[\s\S]*?\n\}\nfor \(var sn[\s\S]*?\n\}/, '곧게 펴기 블록');
+		const run = (aY: number, bY: number, laneA = 1, laneB = 1, siblingY?: number) => {
 			const c = snapCase(aY, bY, laneA, laneB);
+			// 다차선일 때 옆 차선 닻을 흉내 낸다. end:'b' 로 두면 pb 를 읽는다.
+			const buckets: Record<string, unknown[]> = {
+				'a|right': [{ it: c.it, end: 'a' }],
+				'b|left': [{ it: c.it, end: 'b' }],
+			};
+			if (siblingY !== undefined) {
+				buckets['a|right']?.push({ it: { pa: [140, siblingY], pb: [0, 0] }, end: 'a' });
+			}
 			const ctx = createContext({
 				auto: [c.it],
 				lanes: c.lanes,
+				laneBuckets: buckets,
 				isH: (s: string) => s === 'left' || s === 'right',
 			});
 			new Script(blk).runInContext(ctx);
@@ -2685,8 +2695,28 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 		assert.equal(gentle.straight, true, '완만한 기울기(60px/260px)인데 대각 직선이 아니다');
 		const steep = run(100, 190);
 		assert.equal(steep.straight, false, '가파른 어긋남(90px)까지 직선으로 이었다');
-		const fanout = run(100, 112, 2, 1);
-		assert.notEqual(fanout.pa[1], fanout.pb[1], '차선이 여럿인 면까지 모았다 — 옆 차선과 겹친다');
+		// 다차선: 옆 차선이 멀면(>=6px) 편다 — sendEach 가 기울던 원인.
+		const multiFar = run(100, 112, 2, 1, 100 + 28 + 20);
+		assert.equal(multiFar.pa[1], multiFar.pb[1], '옆 차선이 먼데도 안 폈다');
+		// 다차선: 모은 자리가 옆 차선과 6px 미만이면 그대로 둔다.
+		const multiNear = run(100, 112, 2, 1, 100 + 28 + 3);
+		assert.notEqual(multiNear.pa[1], multiNear.pb[1], '옆 차선을 깔고 앉았다');
+	});
+
+	test('복도에서 세로 구간이 안 겹치는 선은 같은 자리에서 꺾인다', async () => {
+		const blk = await pick(/var midGroups[\s\S]*?\n\}\n(?=for \(var m2)/, '복도 색칠 블록');
+		const mk = (aY: number, bY: number) => ({
+			mk: 'h70', pa: [140, aY], pb: [400, bY], midColor: -1, colors: -1,
+		});
+		// 위로 가는 선(300->130)과 아래로 가는 선(311->470): 구간이 안 겹친다.
+		const up = mk(300, 130);
+		const down = mk(311, 470);
+		// 같은 방향으로 겹치는 셋째 선(305->200): up 과 겹친다.
+		const clash = mk(305, 200);
+		const ctx = createContext({ auto: [up, down, clash] });
+		new Script(blk).runInContext(ctx);
+		assert.equal(up.midColor, down.midColor, '안 겹치는 두 선이 다른 자리에서 꺾인다');
+		assert.notEqual(up.midColor, clash.midColor, '겹치는 두 선이 같은 자리에서 꺾인다');
 	});
 
 	test('차선은 상대편 위치 순서로 받는다', async () => {
