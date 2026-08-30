@@ -400,13 +400,15 @@ function isH(side){ return side === 'left' || side === 'right'; }
 function route(a, as, b, bs, off){
   var ax = a[0], ay = a[1], bx = b[0], by = b[1];
   var d = off || 0;
+  // 8px 이하 어긋남은 꺾지 않고 곧게 잇는다. 꺾임 반경(9)보다 작아서
+  // Z 로 꺾으면 직각이 아니라 잔물결이 된다.
   if (isH(as) && isH(bs)) {
-    if (Math.abs(ay - by) < 0.6) return [[ax,ay],[bx,by]];
+    if (Math.abs(ay - by) <= 8) return [[ax,ay],[bx,by]];
     var mx = (ax + bx) / 2 + d;
     return [[ax,ay],[mx,ay],[mx,by],[bx,by]];
   }
   if (!isH(as) && !isH(bs)) {
-    if (Math.abs(ax - bx) < 0.6) return [[ax,ay],[bx,by]];
+    if (Math.abs(ax - bx) <= 8) return [[ax,ay],[bx,by]];
     var my = (ay + by) / 2 + d;
     return [[ax,ay],[ax,my],[bx,my],[bx,by]];
   }
@@ -454,16 +456,67 @@ for (var ei = 0; ei < S.edges.length; ei++) {
   lanes[kb] = (lanes[kb] || 0) + 1;
   plan.push({e:e, pts:null, a:{n:na, s:as, k:ka}, b:{n:nb, s:bs, k:kb}});
 }
-var seen = Object.create(null);
 var auto = [];
 for (var pj = 0; pj < plan.length; pj++) {
   var it = plan[pj];
   if (it.pts || !it.a) continue;
-  seen[it.a.k] = (seen[it.a.k] === undefined) ? 0 : seen[it.a.k] + 1;
-  seen[it.b.k] = (seen[it.b.k] === undefined) ? 0 : seen[it.b.k] + 1;
-  it.pa = anchor(it.a.n, it.a.s, seen[it.a.k], lanes[it.a.k]);
-  it.pb = anchor(it.b.n, it.b.s, seen[it.b.k], lanes[it.b.k]);
   auto.push(it);
+}
+// 같은 면의 차선은 배열 순서가 아니라 **상대편 위치 순서**로 준다.
+// 순서대로 주면 마주 보는 타깃이 가장자리 차선에 걸려 괜히 꺾이고,
+// 출발점 바로 앞에서 선끼리 교차한다.
+var laneBuckets = Object.create(null);
+for (var lb = 0; lb < auto.length; lb++) {
+  var itb = auto[lb];
+  (laneBuckets[itb.a.k] = laneBuckets[itb.a.k] || []).push({it:itb, end:'a'});
+  (laneBuckets[itb.b.k] = laneBuckets[itb.b.k] || []).push({it:itb, end:'b'});
+}
+for (var lk in laneBuckets) {
+  var arr = laneBuckets[lk];
+  var hSide = isH(arr[0].end === 'a' ? arr[0].it.a.s : arr[0].it.b.s);
+  arr.sort(function(x, y){
+    var nx = x.end === 'a' ? x.it.b.n : x.it.a.n;
+    var ny = y.end === 'a' ? y.it.b.n : y.it.a.n;
+    return hSide ? (cy(nx) - cy(ny)) : (cx(nx) - cx(ny));
+  });
+  for (var li = 0; li < arr.length; li++) {
+    if (arr[li].end === 'a') arr[li].it.ia = li; else arr[li].it.ib = li;
+  }
+}
+for (var pa2 = 0; pa2 < auto.length; pa2++) {
+  var ita = auto[pa2];
+  ita.pa = anchor(ita.a.n, ita.a.s, ita.ia, lanes[ita.a.k]);
+  ita.pb = anchor(ita.b.n, ita.b.s, ita.ib, lanes[ita.b.k]);
+}
+// 양끝이 가로면이고 두 노드의 세로 구간이 겹치면 한 y 로 모아 곧게 편다.
+// 몇 px 어긋난 노드 사이를 가운데서 꺾는 것보다 곧은 한 줄이 낫다.
+// 구간이 안 겹쳐도 기울기가 완만하면(1:4 이하) 대각 직선으로 잇는다.
+// 차선이 여럿인 면은 건드리지 않는다 — 모으면 옆 차선과 겹친다.
+for (var sn = 0; sn < auto.length; sn++) {
+  var its = auto[sn];
+  if (lanes[its.a.k] !== 1 || lanes[its.b.k] !== 1) continue;
+  var hh = isH(its.a.s) && isH(its.b.s);
+  var vv = !isH(its.a.s) && !isH(its.b.s);
+  var M = 10;
+  if (hh) {
+    var lo = Math.max(its.a.n.y, its.b.n.y) + M;
+    var hi = Math.min(its.a.n.y + its.a.n.h, its.b.n.y + its.b.n.h) - M;
+    if (lo <= hi) {
+      var sy = Math.min(hi, Math.max(lo, (its.pa[1] + its.pb[1]) / 2));
+      its.pa[1] = sy; its.pb[1] = sy;
+    } else if (Math.abs(its.pb[1] - its.pa[1]) * 4 <= Math.abs(its.pb[0] - its.pa[0])) {
+      its.straight = true;
+    }
+  } else if (vv) {
+    var lo2 = Math.max(its.a.n.x, its.b.n.x) + M;
+    var hi2 = Math.min(its.a.n.x + its.a.n.w, its.b.n.x + its.b.n.w) - M;
+    if (lo2 <= hi2) {
+      var sx = Math.min(hi2, Math.max(lo2, (its.pa[0] + its.pb[0]) / 2));
+      its.pa[0] = sx; its.pb[0] = sx;
+    } else if (Math.abs(its.pb[0] - its.pa[0]) * 4 <= Math.abs(its.pb[1] - its.pa[1])) {
+      its.straight = true;
+    }
+  }
 }
 
 // ★ 같은 두 열 사이를 지나는 선들은 중간 꺾임 좌표가 전부 같아서 한 줄로 겹친다.
@@ -472,11 +525,11 @@ for (var pj = 0; pj < plan.length; pj++) {
 function midKeyOf(it){
   var hA = isH(it.a.s), hB = isH(it.b.s);
   if (hA && hB) {
-    if (Math.abs(it.pa[1] - it.pb[1]) < 0.6) return '';       // 일직선 — 꺾임 없음
+    if (Math.abs(it.pa[1] - it.pb[1]) <= 8) return '';        // 일직선 — 꺾임 없음
     return 'h' + Math.round(((it.pa[0] + it.pb[0]) / 2) / 8);
   }
   if (!hA && !hB) {
-    if (Math.abs(it.pa[0] - it.pb[0]) < 0.6) return '';
+    if (Math.abs(it.pa[0] - it.pb[0]) <= 8) return '';
     return 'v' + Math.round(((it.pa[1] + it.pb[1]) / 2) / 8);
   }
   return '';                                                  // ㄴ자 — 중간선이 없다
@@ -494,7 +547,7 @@ for (var m2 = 0; m2 < auto.length; m2++) {
     midSeen[im.mk] = (midSeen[im.mk] === undefined) ? 0 : midSeen[im.mk] + 1;
     off = laneOffset(midSeen[im.mk], midCount[im.mk], 200);
   }
-  im.pts = route(im.pa, im.a.s, im.pb, im.b.s, off);
+  im.pts = im.straight ? [im.pa, im.pb] : route(im.pa, im.a.s, im.pb, im.b.s, off);
 }
 
 var badRefs = [];

@@ -7,6 +7,21 @@
 
 import type { VelogPostSummary, VelogPostDetail } from './types.ts';
 
+/**
+ * 글 본문 문체 안내. 쓰기 도구 4개의 body 설명에 공통으로 붙는다.
+ *
+ * 근거는 실측이다: 사람이 쓴 통과본과 AI 초안을 나란히 세었을 때 실제로 갈린
+ * 항목만 담았다(볼드 밀도·표·이모지는 차이가 없어서 넣지 않는다).
+ */
+export const HUMAN_BODY_STYLE =
+	' 문체: 사람이 쓴 글처럼 자연스럽게. 긴 줄표(—)와 가운뎃점(·)을 쓰지 말고 쉼표나 마침표로 끊을 것.' +
+	' "**하나.** ... **둘.**" 식 볼드 번호 나열 금지(산문이나 평범한 불릿으로).' +
+	' 문단은 2~3문장으로 짧게, 200자가 넘으면 쪼갠다.' +
+	' "이 글의 한계" 같은 부록 절을 만들지 말고 해당 문단 자리에 한 문장으로 녹일 것.';
+
+/** 제목 규칙. 제목 필드 설명에 붙는다. */
+export const HUMAN_TITLE_STYLE = ' 긴 줄표(—) 금지. 부제는 콜론이나 괄호, 짧은 하이픈으로.';
+
 export function postUrl(post: VelogPostSummary): string {
 	const username = post.user?.username;
 	// url_slug 는 공식 스키마상 nullable 이다.
