@@ -14,7 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { VelogClient } from '../client.ts';
 import { QUERY_POSTS } from '../graphql.ts';
-import { formatPostList, textResult } from '../format.ts';
+import { formatPostList, textResult, HUMAN_BODY_STYLE, HUMAN_TITLE_STYLE } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { resolveMyUsername } from '../me.ts';
 import { assertOwned, assertOwnsSeries } from '../ownership.ts';
@@ -284,8 +284,8 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				'이 도구는 어떤 설정에서도 발행하지 않는다 — 발행하려면 velog_publish_draft 를 따로 부를 것. ' +
 				'body 는 마크다운으로 쓴다.',
 			inputSchema: {
-				title: z.string().min(1).describe('글 제목'),
-				body: z.string().min(1).describe('본문 (마크다운)'),
+				title: z.string().min(1).describe('글 제목.' + HUMAN_TITLE_STYLE),
+				body: z.string().min(1).describe('본문 (마크다운).' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).default([]).describe('태그 목록'),
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
 				thumbnail: THUMBNAIL_FIELD,
@@ -394,8 +394,8 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				'발행된 글의 id 는 거부한다(비공개로 내려가는 사고 방지).',
 			inputSchema: {
 				id: z.string().min(1).describe('초안의 id (velog_list_drafts 로 확인)'),
-				title: z.string().min(1),
-				body: z.string().min(1).describe('본문 전체 (마크다운). 부분 수정이 아니라 교체다'),
+				title: z.string().min(1).describe('글 제목.' + HUMAN_TITLE_STYLE),
+				body: z.string().min(1).describe('본문 전체 (마크다운). 부분 수정이 아니라 교체다.' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).default([]),
 				url_slug: z.string().optional(),
 				thumbnail: THUMBNAIL_FIELD,

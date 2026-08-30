@@ -63,6 +63,37 @@ async function connect(publicPublish = false, editProfile = false): Promise<Clie
 	return client;
 }
 
+describe('A12 — 쓰기 도구는 사람 문체 안내를 싣는다', () => {
+	// 글이 「AI 가 썼다」로 읽히는 실측 항목(긴 줄표, 볼드 번호 나열, 긴 문단)을
+	// 본문 설명에 실어 보낸다. 넷 중 하나라도 빠지면 그 도구로 쓴 글만 문체가 갈린다.
+	test('쓰기 도구 4개의 본문·제목 설명에 문체 안내가 있다', async () => {
+		const client = await connect(true);
+		const { tools } = await client.listTools();
+		for (const name of [
+			'velog_create_draft',
+			'velog_update_draft',
+			'velog_publish_post',
+			'velog_update_post',
+		]) {
+			const tool = tools.find((t) => t.name === name);
+			assert.ok(tool, `${name} 이 없다`);
+			const props = (tool?.inputSchema?.properties ?? {}) as Record<
+				string,
+				{ description?: string }
+			>;
+			assert.ok(
+				props['body']?.description?.includes('긴 줄표'),
+				`${name} 의 body 설명에 문체 안내가 없다`,
+			);
+			assert.ok(
+				props['title']?.description?.includes('긴 줄표'),
+				`${name} 의 title 설명에 제목 규칙이 없다`,
+			);
+		}
+		await client.close();
+	});
+});
+
 describe('★ A1 — 공개 발행 권한은 사용자만 줄 수 있다', () => {
 	test('기본값은 공개 발행 불가다', () => {
 		assert.equal(readCapabilities({}).publicPublish, false);
