@@ -69,15 +69,18 @@ function txt(x, y, s, size, weightCls, fill, anchor){
   return t;
 }
 
+// 구성도와 같은 시각 언어로 그린다: 흰 카드, 점 격자, 배지 칩.
+// 그러데이션 포스터 풍은 어디서나 나오는 자동 생성 표지처럼 읽혀서 버렸다.
 var defs = el('defs', {});
-var grad = el('linearGradient', {id:'bg', x1:'0', y1:'0', x2:'1', y2:'1'}, defs);
-el('stop', {offset:'0%', 'stop-color':'#ffffff'}, grad);
-el('stop', {offset:'100%', 'stop-color':S.fill}, grad);
-el('rect', {x:0, y:0, width:W, height:H, fill:'url(#bg)'});
-el('rect', {x:0, y:0, width:14, height:H, fill:S.solid});
-// 오른쪽 아래 은은한 원 — 빈 공간이 허전하지 않게
-el('circle', {cx:W - 90, cy:H - 60, r:190, fill:S.solid, opacity:'0.055'});
-el('circle', {cx:W - 40, cy:H + 10, r:110, fill:S.solid, opacity:'0.06'});
+var pat = el('pattern', {id:'dots', width:26, height:26, patternUnits:'userSpaceOnUse'}, defs);
+el('circle', {cx:3, cy:3, r:1.6, fill:S.solid, opacity:'0.35'}, pat);
+el('rect', {x:0, y:0, width:W, height:H, fill:'#ffffff'});
+el('rect', {x:0, y:0, width:W, height:H, fill:S.fill, opacity:'0.45'});
+el('rect', {x:0, y:0, width:W, height:H, fill:'url(#dots)'});
+var CARD = 40;
+el('rect', {x:CARD, y:CARD, width:W - CARD*2, height:H - CARD*2, rx:18, fill:'#ffffff',
+            stroke:'#e5e7eb', 'stroke-width':1.4,
+            filter:'drop-shadow(0 2px 6px rgba(15,23,42,.08))'});
 
 var scratch = el('g', {visibility:'hidden'});
 function widthOf(s, size, cls){
@@ -117,7 +120,11 @@ function wrap(s, size, cls, maxW, maxLines){
 var truncated = [];
 var bare = function(v){ return v.replace(/\\s/g, ''); };
 
-if (S.kicker) txt(M, M + 8, S.kicker, 20, 'kicker', S.solid);
+if (S.kicker) {
+  var kcw = widthOf(S.kicker, 19, 'kicker') + 28;
+  el('rect', {x:M, y:M - 20, width:kcw, height:40, rx:9, fill:S.solid});
+  txt(M + kcw/2, M + 7, S.kicker, 19, 'kicker', '#ffffff', 'middle');
+}
 
 // 제목: 3줄에 안 들어가면 글자 크기를 줄여 다시 시도한다
 var size = 62, lines = [];
@@ -160,8 +167,8 @@ if (S.tags && S.tags.length) {
     var label = '#' + S.tags[ti];
     var tw = widthOf(label, 19, 'tag') + 30;
     if (tx + tw > W - M) { truncated.push('태그 ' + label); continue; }
-    el('rect', {x:tx, y:ty - 25, width:tw, height:38, rx:19, fill:'#ffffff',
-                stroke:S.stroke, 'stroke-width':1.4});
+    el('rect', {x:tx, y:ty - 25, width:tw, height:38, rx:10, fill:S.fill,
+                stroke:S.stroke, 'stroke-width':1.2});
     var tt = txt(tx + tw/2, ty, label, 19, 'tag', S.solid, 'middle');
     tx += tw + 12;
   }
@@ -172,7 +179,7 @@ if (S.footer) txt(W - M, M + 8, S.footer, 19, 'foot', '#94a3b8', 'end');
 // ★ 상단 라벨(왼쪽)과 서명(오른쪽)은 같은 높이에 고정 배치된다. 둘 다 길면 가운데서
 //   부딪히는데 여기엔 줄바꿈도 축소도 없다 — 감사만이라도 해야 조용히 안 나간다.
 if (S.kicker || S.footer) {
-  var kw = S.kicker ? widthOf(S.kicker, 20, 'kicker') : 0;
+  var kw = S.kicker ? widthOf(S.kicker, 19, 'kicker') + 28 : 0;
   var fw = S.footer ? widthOf(S.footer, 19, 'foot') : 0;
   if (M + kw > W - M - fw - 20) truncated.push('상단 라벨과 서명이 겹침');
 }
