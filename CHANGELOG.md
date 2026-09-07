@@ -4,7 +4,7 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
-## [미발행]
+## [0.8.10] — 2026-09-07
 
 ### 고침
 
