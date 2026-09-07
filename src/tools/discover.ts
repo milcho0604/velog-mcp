@@ -81,11 +81,30 @@ export function registerDiscoverTools(server: McpServer, client: VelogClient): v
 		'velog_trending_posts',
 		{
 			title: '벨로그 트렌딩',
-			description: '벨로그 인기 글. 기간을 골라 본다.',
+			description:
+				'벨로그 전체에서 지금 많이 읽히는 글. 기간(day/week/month/year)을 골라 본다. ' +
+				'내 글이 아니라 벨로그 전체 순위다. 무엇이 반응을 얻는지, 어떤 주제가 도는지 볼 때 쓴다. ' +
+				'특정 사용자의 글은 velog_list_posts, 검색은 velog_search_posts 를 쓴다. ' +
+				'year 기간은 벨로그가 limit>20 이면 빈 결과를 주므로 20 으로 낮추고, offset 도 1000 까지만 받는다. ' +
+				'조정하면 응답 notes 에 적어 준다. 인증 불필요.',
 			inputSchema: {
-				timeframe: z.enum(TIMEFRAMES).default('week'),
-				limit: z.number().int().min(1).max(50).default(20),
-				offset: z.number().int().min(0).default(0),
+				timeframe: z
+					.enum(TIMEFRAMES)
+					.default('week')
+					.describe('집계 기간. day=오늘, week=이번 주(기본), month=이번 달, year=올해'),
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(50)
+					.default(20)
+					.describe('가져올 글 수 (1~50, 기본 20). year 기간은 20 을 넘기면 벨로그가 빈 결과를 주어 20 으로 낮춘다'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.default(0)
+					.describe('건너뛸 글 수. 다음 페이지를 볼 때 이전 limit 만큼 더한다. year 기간은 1000 까지'),
 			},
 			annotations: READ_ONLY,
 		},
