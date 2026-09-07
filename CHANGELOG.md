@@ -4,6 +4,24 @@
 **무엇이 깨져 있었는지**를 먼저 적는다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/),
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
+## [미발행]
+
+### 고침
+
+- **`velog_trending_posts` 가 무엇을 하는지 설명이 없었다.** 설명 한 줄에 필드 설명은
+  0개였다. Glama 도구 품질 평가에서 22개 중 유일하게 C 등급(2.7/5.0)이었고, 모델이
+  이 도구를 언제 써야 하는지 알 길이 없었다. 벨로그 전체 순위라는 것, 내 글은
+  `velog_list_posts` 라는 것, year 기간은 limit 20 과 offset 1000 을 넘기면 벨로그가 빈
+  결과를 준다는 것을 설명과 필드에 적었다. 그 함정은 코드에 이미 있었는데 설명에는
+  없었다.
+
+### 추가
+
+- **Dockerfile.** awesome-mcp-servers 등록 조건이 Glama 에서 서버가 기동해 introspection
+  에 응답하는 것이라 붙였다. node:22-alpine 2단계 빌드, 런타임 의존성 2개만 담아 274MB.
+  stdio 로 initialize 와 tools/list 22개 응답을 컨테이너에서 확인했다. 그림 도구는
+  컨테이너에 크롬이 없어 경고만 내고 나머지는 동작한다.
+
 ## [0.8.9] — 2026-08-30
 
 ### 고침
