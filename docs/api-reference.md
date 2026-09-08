@@ -102,7 +102,7 @@ if (type === 'post' && !!ref_id) {
 }
 ```
 
-`editPost` 에는 없는 소유권 검사가 여기엔 있다. 쓸 수 있으면 쓰는 게 낫다.
+이 경로는 서버가 글 소유자를 확인한다. 쓸 수 있으면 쓰는 게 낫다.
 
 **이미지 삭제 API 는 없다.** 올린 건 못 지운다.
 
@@ -238,34 +238,14 @@ take: limit
 또한 서버가 `limit > 100` 을 `BadRequestError` 로 막는다. 우리 도구는 50 을
 상한으로 두므로 걸리지 않는다.
 
-### ★ 소유권 검사가 없는 두 곳
+### 소유권 관련 항목은 잠시 내렸습니다
 
-**① `editPost` 는 글 소유자를 확인하지 않는다.**
+이 자리에 있던 내용은 벨로그에 **비공개로 보고**했고 아직 처리 중입니다.
+고쳐지거나 공개 시점이 정해지면 다시 싣겠습니다.
 
-```ts
-// initializePostProcess
-if (type === 'write') { ... fk_user_id: signedUserId ... }   // 생성은 내 것으로
-if (type === 'edit')  { post = findUnique({ where: { id } }) } // ← 소유자 비교 없음
-```
-
-공개 글은 누구나 id 로 조회할 수 있으므로 **남의 글을 수정·비공개화할 수 있다.**
-
-**② 시리즈도 '처음 붙일 때'는 확인하지 않는다.**
-
-```ts
-if (!prevSeriesPost && series_id) {
-  await this.seriesService.appendToSeries(series_id, post.id)   // ← 검사 없음
-}
-if (prevSeriesPost && prevSeriesPost.fk_series_id !== series_id) {
-  if (series_id) {
-    await this.checkSeriesOwnership(series_id, userId)          // ← 여기만 검사
-```
-
-`velog_list_series` 로 남의 공개 시리즈 id 를 얻을 수 있으므로, **내 글을 남의
-시리즈에 붙일 수 있다.** 글 소유권 검사로는 못 막는다 — 글은 내 것이기 때문이다.
-
-→ 우리 쪽 대응: `src/ownership.ts` 의 `assertOwned` / `assertOwnsSeries`.
-   `safety.test.ts` 의 A8·A11 이 모든 호출 경로에 적용됐는지 소스를 읽어 강제한다.
+우리 쪽 대응 코드는 그대로 있습니다. `src/ownership.ts` 의 `assertOwned` /
+`assertOwnsSeries` 이고, `safety.test.ts` 의 A8 과 A11 이 모든 호출 경로에
+적용됐는지 소스를 읽어 강제합니다.
 
 ### 발행 제한 검사는 공개 여부보다 먼저 돈다
 

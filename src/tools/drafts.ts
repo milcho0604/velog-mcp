@@ -422,7 +422,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				client.requireAuth('velog_update_draft');
 
 				// ★ 두 가지를 확인한 뒤에야 수정한다.
-				//   ① 내 글인가 — 벨로그 서버가 edit 에서 소유권을 안 본다(ownership.ts)
+				//   ① 내 글인가 (ownership.ts)
 				//   ② 정말 초안인가 — editPost 는 is_temp 를 덮어쓰므로 발행글 id 가
 				//      들어오면 그 글이 조용히 비공개로 내려간다
 				const before = await client.request<{
