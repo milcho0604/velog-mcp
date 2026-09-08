@@ -324,11 +324,8 @@ describe('velog_unpublish_post — 초안으로 되돌린다', () => {
 });
 
 describe('★★ 소유권 — 남의 글은 건드릴 수 없다 (코덱스 2차 [높음])', () => {
-	// 벨로그 서버는 edit 경로에서 소유권을 확인하지 않는다:
-	//   if (type === 'write') { ... fk_user_id: signedUserId ... }
-	//   if (type === 'edit')  { post = findUnique({ where: { id } }) }  ← 비교 없음
-	// 공개 글은 누구나 id 로 조회할 수 있으므로, 남의 글 id 를 넘기면 그 글을
-	// 수정하거나 비공개로 내릴 수 있다. 상대 서버 결함이지만 우리가 열어둘 이유는 없다.
+	// 모델이 검색으로 얻은 남의 글 id 를 실수로 넘기는 경로를 우리가 먼저 막는다.
+	// 서버 쪽 사정은 벨로그에 비공개로 보고했고 처리 중이라 여기 적지 않는다.
 	const OTHERS = { ...EXISTING, user: { username: 'someone_else' } };
 
 	for (const tool of ['velog_update_post', 'velog_unpublish_post', 'velog_publish_draft']) {
