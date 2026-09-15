@@ -63,7 +63,7 @@ npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 �
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.8.10
+  -- npx -y @milcho0604/velog-mcp@0.9.0
 ```
 
 이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
@@ -85,7 +85,7 @@ MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.8.10"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.9.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
@@ -98,7 +98,7 @@ Claude Code CLI 라면:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
-  -- npx -y @milcho0604/velog-mcp@0.8.10
+  -- npx -y @milcho0604/velog-mcp@0.9.0
 ```
 
 로컬 체크아웃으로 돌리려면 command 를
@@ -138,7 +138,7 @@ claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
 
 | 환경변수 | 되는 것 |
 | --- | --- |
-| *(설정 없음)* | 전체 읽기 · 초안 작성 · **비공개 발행** · 그림 생성·업로드 — 도구 22개 |
+| *(설정 없음)* | 전체 읽기 · 초안 작성 · **비공개 발행** · 그림 생성·업로드 · 스키마 점검 — 도구 23개 |
 | `VELOG_ALLOW_PUBLIC=1` | …**공개 발행** 추가 (`is_private` 파라미터가 생김) |
 | `VELOG_ALLOW_PROFILE=1` | …**프로필 수정** 추가 (도구 5개) |
 
@@ -187,7 +187,7 @@ if (count >= 10) {
 
 ## 도구
 
-22개. 벨로그 상태를 바꾸는 건 그중 10개뿐이다.
+23개. 벨로그 상태를 바꾸는 건 그중 10개뿐이다.
 
 ### 읽기 — 인증 불필요
 
@@ -215,6 +215,7 @@ if (count >= 10) {
 | --- | --- |
 | `velog_blog_stats` | 조회수·좋아요·댓글 집계, 상위 글, 연도별·태그별 분포 |
 | `velog_export_posts` | 글을 YAML 프론트매터 붙은 마크다운으로 저장 |
+| `velog_diagnose` | 지금 벨로그 스키마가 이 서버의 기준선과 같은지 대조 |
 
 ### 쓰기
 
@@ -391,9 +392,11 @@ npm run typecheck     # 테스트 포함 — 종전엔 제외돼 실제 오류�
 npm run lint          # typescript-eslint (타입 기반)
 npm run build         # tsconfig.build.json (dist 에 테스트 미포함)
 npm run schema:dump   # 현재 벨로그 GraphQL 스키마 덤프
+npm run schema:baseline  # schema/baseline.json 을 실측으로 다시 만든다 (velog_diagnose 의 기준선)
+npm run schema:baseline -- --check   # 쓰지 않고 «지금 기준선이 맞는지» 만 본다
 ```
 
-테스트 432건(0.8.10 기준). `safety.test.ts` 가 보안 불변식(A1~A12)을,
+테스트 569건(0.9.0 기준). `safety.test.ts` 가 보안 불변식(A1~A12)을,
 `render.test.ts` 가 구성도 불변식(R1~R23, D1)과 시퀀스 불변식(S1~S12)을,
 `plugin.test.ts` 가 포장 불변식(P1~P28)을 고정한다.
 깨지면 우회하지 말고 왜 깨졌는지부터 볼 것.

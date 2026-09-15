@@ -59,8 +59,66 @@ describe('D1 — 만료 안내가 HTTP 401 경로에도 붙는다', () => {
 	});
 
 	test('무관한 4xx 에는 안 붙는다 — 잘못된 원인을 짚어주면 더 나쁘다', async () => {
+		// ⚠️ 예전에는 `expired(400)` 을 썼는데, 그 픽스처의 본문이 'Not logged in' 이라
+		//   «무관한 4xx» 가 아니었다. 상태 코드로만 판정하던 시절에는 통과했지만,
+		//   2026-09-14 에 비정상 HTTP 응답도 GraphQL 오류 본문을 읽게 바꾸면서
+		//   본문이 근거가 됐다. 본문이 로그인 얘기를 하면 안내를 붙이는 쪽이 맞다.
+		//   그래서 픽스처를 **진짜 무관한** 오류로 바꾼다. 가드의 의도는 그대로다.
+		const unrelated = new VelogClient({
+			auth: { kind: 'anonymous' },
+			sleepImpl: async () => {},
+			fetchImpl: jsonFetch(() => ({
+				status: 400,
+				body: { errors: [{ message: 'Max limit is 100' }] },
+			})),
+		});
+		await assert.rejects(
+			() => unrelated.request('{ x }'),
+			(e: Error) => !/1시간/.test(e.message),
+		);
+	});
+
+	test('★ 본문이 로그인 얘기를 하면 상태가 4xx 여도 안내가 붙는다', async () => {
+		// 상태 코드보다 본문이 정확하다. 벨로그는 같은 원인에 다른 상태를 준다.
 		await assert.rejects(
 			() => expired(400).request('{ x }'),
+			(e: Error) => /1시간/.test(e.message),
+		);
+	});
+
+	/**
+	 * ★★ 여기가 «상태 기반» 안내의 가드다.
+	 *
+	 * 위 세 테스트는 본문이 로그인 얘기를 하는 픽스처라, 상태 기반 판정을 통째로
+	 * 지워도 본문 판정이 받아내 전부 통과한다. 실제로 그 변이를 넣어 보니
+	 * hardening 31/31 이 그대로 초록이었다(코덱스 지적, 2026-09-14 변이로 확인).
+	 * 검출력은 «본문이 도와주지 않는» 픽스처로만 생긴다.
+	 */
+	const opaque = (status: number) =>
+		new VelogClient({
+			auth: { kind: 'anonymous' },
+			sleepImpl: async () => {},
+			fetchImpl: jsonFetch(() => ({
+				status,
+				body: { errors: [{ message: 'Invalid token' }] },
+			})),
+		});
+
+	test('★★ 401·403 은 본문이 안 도와줘도 상태만으로 안내가 붙는다', async () => {
+		for (const status of [401, 403]) {
+			await assert.rejects(
+				() => opaque(status).request('{ x }'),
+				(e: Error) => {
+					assert.match(e.message, /1시간/, `HTTP ${status} 에서 안내가 빠졌다`);
+					return true;
+				},
+			);
+		}
+	});
+
+	test('★ 429 는 상태만으로 붙이지 않는다 — 원인이 다르다', async () => {
+		await assert.rejects(
+			() => opaque(429).request('{ x }'),
 			(e: Error) => !/1시간/.test(e.message),
 		);
 	});
@@ -509,5 +567,349 @@ describe('D9 — nullable 필드에 null 이 와도 죽지 않는다 (코덱스 
 		assert.match(md, /title: "\(제목 없음\)"/);
 		assert.match(md, /slug: "zz"/, 'slug 가 id 로 대체되지 않았다');
 		assert.ok(!md.includes('null'), `프론트매터에 null 이 남았다:\n${md.slice(0, 200)}`);
+	});
+});
+
+describe('★★ 9차 — 클라이언트에서 코덱스가 짚은 결함들', () => {
+	const noSleep = async (): Promise<void> => {};
+
+	test('★★ 부분 성공의 id 도 마스킹을 거친다 — 조각별로 가리면 새 조각이 샌다', async () => {
+		// 서버가 돌려준 id 에 토큰이 들어 있으면 그대로 나갔다. 조립이 끝난 전체를 가려야 한다.
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 500,
+				body: {
+					data: { writePost: { id: 'tok12345678' } },
+					errors: [{ message: '하위 필드가 깨졌습니다' }],
+				},
+			})),
+		});
+		await assert.rejects(
+			() => client.request('mutation { writePost { id } }'),
+			(error: Error) => {
+				assert.ok(!error.message.includes('tok12345678'), `토큰이 그대로 나왔다: ${error.message}`);
+				assert.match(error.message, /이미 반영/);
+				return true;
+			},
+		);
+	});
+
+	test('★★ 주석으로 시작하는 mutation 을 «읽기라 안전» 이라 하지 않는다', async () => {
+		// GraphQL 은 `#` 주석을 공백처럼 다룬다. /^\s*mutation/ 만 보면 쓰기를 읽기로 읽는다.
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { writePost: { id: 'created-9' } }, errors: [{ message: '깨졌습니다' }] },
+			})),
+		});
+		await assert.rejects(
+			() => client.request('# 이 질의는 글을 만든다\nmutation { writePost { id } }'),
+			(error: Error) => {
+				assert.match(error.message, /두 번 적용/, '쓰기를 읽기로 읽었다');
+				assert.doesNotMatch(error.message, /읽기라 바뀐 것은 없지만/);
+				return true;
+			},
+		);
+	});
+
+	test('★★ 800자 뒤에 있는 일시 장애 문구도 재시도된다 — 표시용 절단이 판정을 바꾸면 안 된다', async () => {
+		let calls = 0;
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 2,
+			fetchImpl: jsonFetch(() => {
+				calls += 1;
+				if (calls === 1) {
+					return {
+						status: 200,
+						body: {
+							data: null,
+							errors: [{ message: `${'x'.repeat(900)} connection pool timeout` }],
+						},
+					};
+				}
+				return { status: 200, body: { data: { posts: [] } } };
+			}),
+		});
+		const data = await client.request<{ posts: unknown[] }>('{ posts { id } }');
+		assert.deepEqual(data.posts, []);
+		assert.equal(calls, 2, `재시도하지 않았다 (호출 ${calls}회)`);
+	});
+});
+
+describe('★★ 10차 — 9차 수정이 만든 결함들', () => {
+	const noSleep = async (): Promise<void> => {};
+
+	test('★★ 800자 경계에 걸친 토큰도 온전히 가려진다 — 자른 뒤 가리면 앞부분이 남는다', async () => {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: null, errors: [{ message: `${'x'.repeat(790)}tok12345678 뒤쪽` }] },
+			})),
+		});
+		await assert.rejects(
+			() => client.request('{ posts { id } }'),
+			(error: Error) => {
+				assert.ok(!error.message.includes('tok123456'), `토큰 조각이 남았다: ${error.message.slice(770, 830)}`);
+				return true;
+			},
+		);
+	});
+
+	test('★★ 주석이 101줄이어도 mutation 은 쓰기다', async () => {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { writePost: { id: 'created-10' } }, errors: [{ message: '깨졌습니다' }] },
+			})),
+		});
+		await assert.rejects(
+			() => client.request('# c\n'.repeat(101) + 'mutation { writePost { id } }'),
+			(error: Error) => {
+				assert.match(error.message, /두 번 적용/, '주석이 많으면 읽기로 읽었다');
+				return true;
+			},
+		);
+	});
+
+	test('★★ CR 로 끝나는 주석 뒤의 mutation 도 쓰기다 — GraphQL 줄바꿈은 셋이다', async () => {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { writePost: { id: 'created-11' } }, errors: [{ message: '깨졌습니다' }] },
+			})),
+		});
+		await assert.rejects(
+			() => client.request('# c\rmutation { writePost { id } }'),
+			(error: Error) => {
+				assert.match(error.message, /두 번 적용/, 'CR 주석을 못 걷어냈다');
+				return true;
+			},
+		);
+	});
+});
+
+describe('★★ 11차 — 10차 수정이 만든 결함들', () => {
+	const noSleep = async (): Promise<void> => {};
+	const partialWrite = () =>
+		new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { writePost: { id: 'created-12' } }, errors: [{ message: '깨졌습니다' }] },
+			})),
+		});
+
+	test('★★ fragment 가 앞에 오는 mutation 도 쓰기다 — 문서 맨 앞만 보면 안 된다', async () => {
+		await assert.rejects(
+			() => partialWrite().request('fragment F on Post { id }\nmutation M { writePost { ...F } }'),
+			(error: Error) => {
+				assert.match(error.message, /두 번 적용/, 'fragment 가 앞서면 읽기로 읽었다');
+				return true;
+			},
+		);
+	});
+
+	test('★ 문자열 리터럴 안의 mutation 은 쓰기가 아니다 — 본문에 그 낱말을 쓴 글이 있다', async () => {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { posts: [{ id: 'p1' }] }, errors: [{ message: '하위가 깨졌습니다' }] },
+			})),
+		});
+		await assert.rejects(
+			() => client.request('query Q { posts(where: "mutation") { id } }'),
+			(error: Error) => {
+				assert.doesNotMatch(error.message, /두 번 적용/, '문자열 안의 낱말을 쓰기로 읽었다');
+				return true;
+			},
+		);
+	});
+
+	test('★★ 800자 뒤에 있는 만료 문구에도 토큰 갱신 안내가 붙는다', async () => {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: null, errors: [{ message: `${'x'.repeat(900)} Not logged in` }] },
+			})),
+		});
+		await assert.rejects(
+			() => client.request('{ posts { id } }'),
+			(error: Error) => {
+				assert.match(error.message, /토큰|VELOG_REFRESH_TOKEN/, `만료 안내가 없다: ${error.message.slice(-160)}`);
+				return true;
+			},
+		);
+	});
+});
+
+describe('★★ 12차 — 11차 수정이 만든 결함들', () => {
+	const noSleep = async (): Promise<void> => {};
+	const partialWrite = () =>
+		new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { writePost: { id: 'created-13' } }, errors: [{ message: '깨졌습니다' }] },
+			})),
+		});
+	const partialRead = () =>
+		new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { posts: [{ id: 'p1' }] }, errors: [{ message: '하위가 깨졌습니다' }] },
+			})),
+		});
+
+	test('★★ 블록 문자열 안의 이스케이프된 종료자를 «끝» 으로 읽지 않는다', async () => {
+		// `\"""` 는 문자열의 끝이 아니다. 끝으로 읽으면 뒤의 mutation 까지 문자열로 삼킨다.
+		const query = 'fragment F on Post { title(format: """\\""" """) }\nmutation M { writePost { ...F } }';
+		await assert.rejects(
+			() => partialWrite().request(query),
+			(error: Error) => {
+				assert.match(error.message, /두 번 적용/, '이스케이프된 종료자에 속아 쓰기를 놓쳤다');
+				return true;
+			},
+		);
+	});
+
+	test('★★ 연산 이름이 mutation 인 읽기를 쓰기로 읽지 않는다', async () => {
+		// `query mutation { … }` 는 이름이 mutation 인 **읽기**다. 정의의 첫 낱말만 키워드다.
+		await assert.rejects(
+			() => partialRead().request('query mutation { posts { id } }'),
+			(error: Error) => {
+				assert.doesNotMatch(error.message, /두 번 적용/, '연산 이름을 키워드로 읽었다');
+				return true;
+			},
+		);
+	});
+
+	test('★ fragment 이름이 mutation 이어도 읽기다', async () => {
+		await assert.rejects(
+			() => partialRead().request('fragment mutation on Post { id }\nquery Q { posts { ...mutation } }'),
+			(error: Error) => {
+				assert.doesNotMatch(error.message, /두 번 적용/, 'fragment 이름을 키워드로 읽었다');
+				return true;
+			},
+		);
+	});
+
+	test('★★ 문자열 안의 중괄호를 세면 안 된다 — 깊이가 어긋나 뒤가 통째로 오판된다', async () => {
+		// ⚠️ 이 입력이 핵심이다. 문자열을 건너뛰지 않으면 `"{"` 때문에 깊이가 안 닫혀
+		//   뒤의 mutation 이 깊이 0 이 아니게 되고, 쓰기를 놓친다. 문자열 처리를 빼면 깨진다.
+		const query = 'query Q { posts(where: "a{b") { id } }\nmutation M { writePost { id } }';
+		await assert.rejects(
+			() => partialWrite().request(query),
+			(error: Error) => {
+				assert.match(error.message, /두 번 적용/, '문자열 안 중괄호를 세서 깊이가 어긋났다');
+				return true;
+			},
+		);
+	});
+});
+
+describe('★★ 13차 — 12차 수정이 만든 결함들', () => {
+	const noSleep = async (): Promise<void> => {};
+
+	test('★★ 500 + 부분 읽기 값 + 일시 장애는 다시 친다 — 읽기는 아무것도 안 바꾼다', async () => {
+		// 기준 커밋 9267bf7 A/B: 기준은 2회째 성공, 이 코드는 1회 실패였다.
+		// 비정상 HTTP 응답을 GraphQL 경로로 보내면서 «부분 성공» 표식이 읽기까지 막았다.
+		let calls = 0;
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 2,
+			fetchImpl: jsonFetch(() => {
+				calls += 1;
+				if (calls === 1) {
+					return {
+						status: 500,
+						body: {
+							data: { post: { id: 'p1', title: 't', body: null } },
+							errors: [{ message: 'Timed out fetching a new connection from the connection pool' }],
+						},
+					};
+				}
+				return { status: 200, body: { data: { post: { id: 'p1', title: 't', body: 'ok' } } } };
+			}),
+		});
+		const data = await client.request<{ post: { body: string } }>('{ post(id: "p1") { id title body } }');
+		assert.equal(data.post.body, 'ok');
+		assert.equal(calls, 2, `읽기를 다시 치지 않았다 (호출 ${calls}회)`);
+	});
+
+	test('★★ 쓰기의 부분 성공은 여전히 다시 치지 않는다 — 두 번 만들면 안 된다', async () => {
+		let calls = 0;
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 2,
+			fetchImpl: jsonFetch(() => {
+				calls += 1;
+				return {
+					status: 500,
+					body: {
+						data: { writePost: { id: 'created-14' } },
+						errors: [{ message: 'Timed out fetching a new connection from the connection pool' }],
+					},
+				};
+			}),
+		});
+		await assert.rejects(
+			() => client.request('mutation { writePost { id } }'),
+			(error: Error) => {
+				assert.match(error.message, /두 번 적용/);
+				return true;
+			},
+		);
+		assert.equal(calls, 1, `쓰기를 ${calls}회 쳤다 — 글이 여러 개 생긴다`);
+	});
+
+	test('★★ 변수 정의의 ) 를 «정의 끝» 으로 읽지 않는다 — 뒤의 지시어 이름이 키워드가 된다', async () => {
+		const client = new VelogClient({
+			auth: authed,
+			sleepImpl: noSleep,
+			maxRetries: 0,
+			fetchImpl: jsonFetch(() => ({
+				status: 200,
+				body: { data: { posts: [{ id: 'p1' }] }, errors: [{ message: '하위가 깨졌습니다' }] },
+			})),
+		});
+		await assert.rejects(
+			() => client.request('query Q($x: Int = 1) @mutation { posts(limit: $x) { id } }'),
+			(error: Error) => {
+				assert.doesNotMatch(error.message, /두 번 적용/, '지시어 이름을 키워드로 읽었다');
+				return true;
+			},
+		);
 	});
 });

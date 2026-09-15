@@ -68,7 +68,7 @@ Published on npm, so nothing to clone — your MCP client runs it via `npx`. See
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.8.10
+  -- npx -y @milcho0604/velog-mcp@0.9.0
 ```
 
 The token stays in your client's config file here. The plugin route above puts it in
@@ -91,7 +91,7 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, �
   "mcpServers": {
     "velog": {
       "command": "npx",
-      "args": ["-y", "@milcho0604/velog-mcp@0.8.10"],
+      "args": ["-y", "@milcho0604/velog-mcp@0.9.0"],
       "env": {
         "VELOG_REFRESH_TOKEN": "your_refresh_token"
       }
@@ -104,7 +104,7 @@ With the Claude Code CLI:
 
 ```bash
 claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
-  -- npx -y @milcho0604/velog-mcp@0.8.10
+  -- npx -y @milcho0604/velog-mcp@0.9.0
 ```
 
 To run a local checkout instead, swap the command for
@@ -148,7 +148,7 @@ and blog stats all work unauthenticated.
 
 | Environment | What you get |
 | --- | --- |
-| *(nothing set)* | Read everything · create drafts · **publish privately** · draw and upload images — 22 tools |
+| *(nothing set)* | Read everything · create drafts · **publish privately** · draw and upload images · check the schema — 23 tools |
 | `VELOG_ALLOW_PUBLIC=1` | …plus **public publishing** (adds an `is_private` parameter) |
 | `VELOG_ALLOW_PROFILE=1` | …plus **profile editing** (adds 5 tools) |
 
@@ -199,7 +199,7 @@ Full reasoning: [docs/security.md](docs/security.md)
 
 ## Tools
 
-22 tools. Only 10 of them change anything on Velog.
+23 tools. Only 10 of them change anything on Velog.
 
 ### Reading — no auth required
 
@@ -226,6 +226,7 @@ Full reasoning: [docs/security.md](docs/security.md)
 | Tool | Purpose |
 | --- | --- |
 | `velog_blog_stats` | Aggregate views/likes/comments, top posts, per-year and per-tag breakdown |
+| `velog_diagnose` | Compare Velog's current schema against this server's baseline |
 | `velog_export_posts` | Save posts as Markdown files with YAML front matter |
 
 ### Writing
@@ -320,7 +321,7 @@ from primitive shapes. Nothing is fetched — the renderer runs with DNS disable
 **Requires Chrome** (or any Chromium-based browser: Edge, Brave, Chromium). It is found
 automatically on macOS/Linux/Windows; set `VELOG_CHROME_PATH` if yours lives elsewhere.
 Only `velog_render_diagram`, `velog_render_sequence` and `velog_render_cover` need it — `velog_upload_image`
-just reads a local file, so it and the other 18 tools work without a browser.
+just reads a local file, so it and the other 19 tools work without a browser.
 
 **Cost, measured:** one diagram is ~1 GB peak across 9–11 Chrome processes for 3–4
 seconds, then back to zero. That's Chrome's floor, not our content. Coordinates, text
@@ -404,9 +405,11 @@ npm run typecheck     # includes tests — they used to be excluded, which hid r
 npm run lint          # typescript-eslint, type-aware
 npm run build         # tsconfig.build.json (tests excluded from dist)
 npm run schema:dump   # dump Velog's current GraphQL schema
+npm run schema:baseline        # rebuild schema/baseline.json from the live schema
+npm run schema:baseline -- --check   # compare only; don't write
 ```
 
-432 tests (as of 0.8.10). `src/__tests__/safety.test.ts` pins the security
+569 tests (as of 0.9.0). `src/__tests__/safety.test.ts` pins the security
 invariants (A1–A12), `render.test.ts` pins the diagram ones (R1–R23, D1) and the
 sequence ones (S1–S12), and `plugin.test.ts` pins the packaging ones (P1–P28) —
 if any fails, find out why instead of working around it.

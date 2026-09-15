@@ -28,15 +28,23 @@ import { registerProfileTools } from './tools/profile.ts';
 import { registerPublishTools } from './tools/publish.ts';
 import { registerProfileEditTools } from './tools/profile-edit.ts';
 import { registerImageTools } from './tools/images.ts';
+import { registerDiagnoseTools } from './tools/diagnose.ts';
+import { BASELINE_STATUS, type Baseline, type BaselineLoad } from './drift.ts';
 
 export const SERVER_NAME = 'velog-mcp';
-// ⚠️ 이 값은 네 곳이 함께 움직인다 — package.json / plugin.json / .mcp.json 의
-// npx 핀 / 여기. 어긋나면 P8 테스트가 잡는다. 손으로 맞추지 말고 테스트를 믿을 것.
-export const SERVER_VERSION = '0.8.10';
+// ⚠️ 이 값은 여러 곳이 함께 움직인다 — package.json / server.json(2곳) /
+// npm-shrinkwrap.json(2곳) / plugins/velog/.mcp.json 의 npx 핀 / README 의 설치 예시 /
+// 여기. 어긋나면 P8 테스트가 잡는다. 손으로 맞추지 말고 테스트를 믿을 것.
+// (2026-09-14: 주석이 «네 곳» 이라 했는데 실제로는 여덟 파일이었다. plugin.json 은
+//  plugins/velog/.claude-plugin/ 아래에 있다 — 루트에서 찾다 «없다» 고 적을 뻔했다.
+//  숫자를 적으면 낡는다 — 파일 이름을 적는다.)
+export const SERVER_VERSION = '0.9.0';
 
 export function createServer(
 	client: VelogClient,
 	capabilities: Capabilities = { publicPublish: false, editProfile: false },
+	/** 진단 기준선. 테스트가 실제 도구 출력을 시험하려면 주입할 수 있어야 한다. */
+	baseline?: { baseline: Baseline; status: BaselineLoad },
 ): McpServer {
 	const server = new McpServer(
 		{ name: SERVER_NAME, version: SERVER_VERSION },
@@ -62,6 +70,8 @@ export function createServer(
 	registerPublishTools(server, client, capabilities, limiter);
 	registerProfileEditTools(server, client, capabilities);
 	registerImageTools(server, client);
+	if (baseline) registerDiagnoseTools(server, client, baseline.baseline, baseline.status);
+	else registerDiagnoseTools(server, client);
 
 	return server;
 }
@@ -88,6 +98,13 @@ async function main(): Promise<void> {
 	);
 
 	process.stderr.write(await describeRenderReadiness());
+	// 진단 기준선이 깨졌으면 기동 때 말한다. 도구를 처음 부르는 순간에야 알면 늦다.
+	if (!BASELINE_STATUS.ok) {
+		process.stderr.write(
+			`[${SERVER_NAME}] ⚠️ 스키마 자가진단이 꺼졌습니다 — ${BASELINE_STATUS.reason}\n` +
+				'   나머지 도구는 전부 정상 동작합니다. 다시 설치하면 복구됩니다.\n',
+		);
+	}
 
 	await server.connect(new StdioServerTransport());
 }

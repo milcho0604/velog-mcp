@@ -223,6 +223,8 @@ describe('A4 — 도구 목록 스냅샷', () => {
 	const EXPECTED = [
 		'velog_blog_stats',
 		'velog_create_draft',
+		// 읽기 전용, 인자 없음. 벨로그 introspection 만 친다 (src/tools/diagnose.ts).
+		'velog_diagnose',
 		'velog_export_posts',
 		'velog_get_post',
 		'velog_get_user',
