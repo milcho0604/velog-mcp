@@ -1,0 +1,1809 @@
+{
+	"capturedAt": "2026-09-15",
+	"endpoint": "https://v3.velog.io/graphql",
+	"query": [
+		"ads",
+		"checkEmailExists",
+		"currentUser",
+		"feedPosts",
+		"followers",
+		"followings",
+		"isLogged",
+		"notNoticeNotificationCount",
+		"notifications",
+		"post",
+		"posts",
+		"readingList",
+		"recentPosts",
+		"restoreToken",
+		"searchPosts",
+		"series",
+		"seriesList",
+		"tag",
+		"trendingPosts",
+		"trendingWriters",
+		"unregisterToken",
+		"user",
+		"userTags",
+		"velogConfig"
+	],
+	"mutation": [
+		"acceptIntegration",
+		"confirmChangeEmail",
+		"createNotification",
+		"editPost",
+		"follow",
+		"initiateChangeEmail",
+		"likePost",
+		"logout",
+		"readAllNotifications",
+		"readNotification",
+		"removeAllNotifications",
+		"sendMail",
+		"unfollow",
+		"unlikePost",
+		"unregister",
+		"updateAbout",
+		"updateEmailRules",
+		"updateNotNoticeNotification",
+		"updateProfile",
+		"updateSocialInfo",
+		"updateThumbnail",
+		"updateVelogTitle",
+		"writePost"
+	],
+	"queryArgs": {
+		"ads": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "AdsInput",
+				"list": false,
+				"shape": "AdsInput!"
+			}
+		],
+		"checkEmailExists": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "CheckEmailExistsInput",
+				"list": false,
+				"shape": "CheckEmailExistsInput!"
+			}
+		],
+		"currentUser": [],
+		"feedPosts": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "FeedPostsInput",
+				"list": false,
+				"shape": "FeedPostsInput!"
+			}
+		],
+		"followers": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetFollowInput",
+				"list": false,
+				"shape": "GetFollowInput!"
+			}
+		],
+		"followings": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetFollowInput",
+				"list": false,
+				"shape": "GetFollowInput!"
+			}
+		],
+		"isLogged": [],
+		"notNoticeNotificationCount": [],
+		"notifications": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "NotificationsInput",
+				"list": false,
+				"shape": "NotificationsInput!"
+			}
+		],
+		"post": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "ReadPostInput",
+				"list": false,
+				"shape": "ReadPostInput!"
+			}
+		],
+		"posts": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetPostsInput",
+				"list": false,
+				"shape": "GetPostsInput!"
+			}
+		],
+		"readingList": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "ReadingListInput",
+				"list": false,
+				"shape": "ReadingListInput!"
+			}
+		],
+		"recentPosts": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "RecentPostsInput",
+				"list": false,
+				"shape": "RecentPostsInput!"
+			}
+		],
+		"restoreToken": [],
+		"searchPosts": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetSearchPostsInput",
+				"list": false,
+				"shape": "GetSearchPostsInput!"
+			}
+		],
+		"series": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetSeriesInput",
+				"list": false,
+				"shape": "GetSeriesInput!"
+			}
+		],
+		"seriesList": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetSeriesListInput",
+				"list": false,
+				"shape": "GetSeriesListInput!"
+			}
+		],
+		"tag": [
+			{
+				"name": "name",
+				"required": true,
+				"hasDefault": false,
+				"type": "String",
+				"list": false,
+				"shape": "String!"
+			}
+		],
+		"trendingPosts": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "TrendingPostsInput",
+				"list": false,
+				"shape": "TrendingPostsInput!"
+			}
+		],
+		"trendingWriters": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "TrendingWritersInput",
+				"list": false,
+				"shape": "TrendingWritersInput!"
+			}
+		],
+		"unregisterToken": [],
+		"user": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetUserInput",
+				"list": false,
+				"shape": "GetUserInput!"
+			}
+		],
+		"userTags": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UserTagsInput",
+				"list": false,
+				"shape": "UserTagsInput!"
+			}
+		],
+		"velogConfig": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "GetVelogConfigInput",
+				"list": false,
+				"shape": "GetVelogConfigInput!"
+			}
+		]
+	},
+	"mutationArgs": {
+		"acceptIntegration": [],
+		"confirmChangeEmail": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "ConfirmChangeEmailInput",
+				"list": false,
+				"shape": "ConfirmChangeEmailInput!"
+			}
+		],
+		"createNotification": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "CreateNotificationInput",
+				"list": false,
+				"shape": "CreateNotificationInput!"
+			}
+		],
+		"editPost": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "EditPostInput",
+				"list": false,
+				"shape": "EditPostInput!"
+			}
+		],
+		"follow": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "FollowInput",
+				"list": false,
+				"shape": "FollowInput!"
+			}
+		],
+		"initiateChangeEmail": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "InitiateChangeEmailInput",
+				"list": false,
+				"shape": "InitiateChangeEmailInput!"
+			}
+		],
+		"likePost": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "LikePostInput",
+				"list": false,
+				"shape": "LikePostInput!"
+			}
+		],
+		"logout": [],
+		"readAllNotifications": [],
+		"readNotification": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "ReadNotificationInput",
+				"list": false,
+				"shape": "ReadNotificationInput!"
+			}
+		],
+		"removeAllNotifications": [],
+		"sendMail": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "SendMailInput",
+				"list": false,
+				"shape": "SendMailInput!"
+			}
+		],
+		"unfollow": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UnfollowInput",
+				"list": false,
+				"shape": "UnfollowInput!"
+			}
+		],
+		"unlikePost": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UnlikePostInput",
+				"list": false,
+				"shape": "UnlikePostInput!"
+			}
+		],
+		"unregister": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UnregisterInput",
+				"list": false,
+				"shape": "UnregisterInput!"
+			}
+		],
+		"updateAbout": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UpdateAboutInput",
+				"list": false,
+				"shape": "UpdateAboutInput!"
+			}
+		],
+		"updateEmailRules": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UpdateEmailRulesInput",
+				"list": false,
+				"shape": "UpdateEmailRulesInput!"
+			}
+		],
+		"updateNotNoticeNotification": [],
+		"updateProfile": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UpdateProfileInput",
+				"list": false,
+				"shape": "UpdateProfileInput!"
+			}
+		],
+		"updateSocialInfo": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UpdateSocialInfoInput",
+				"list": false,
+				"shape": "UpdateSocialInfoInput!"
+			}
+		],
+		"updateThumbnail": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UpdateThumbnailInput",
+				"list": false,
+				"shape": "UpdateThumbnailInput!"
+			}
+		],
+		"updateVelogTitle": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "UpdateVelogTitleInput",
+				"list": false,
+				"shape": "UpdateVelogTitleInput!"
+			}
+		],
+		"writePost": [
+			{
+				"name": "input",
+				"required": true,
+				"hasDefault": false,
+				"type": "WritePostInput",
+				"list": false,
+				"shape": "WritePostInput!"
+			}
+		]
+	},
+	"types": {
+		"Ad": {
+			"body": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"end_date": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"image": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"is_disabled": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"start_date": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"title": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"type": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"url": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			}
+		},
+		"Comment": {
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": false,
+				"list": false,
+				"shape": "DateTimeISO",
+				"deprecated": false
+			},
+			"deleted": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"has_replies": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"level": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"likes": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"replies": {
+				"type": "Comment",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Comment!]!",
+				"deprecated": false
+			},
+			"replies_count": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"text": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"user": {
+				"type": "User",
+				"nonNull": false,
+				"list": false,
+				"shape": "User",
+				"deprecated": false
+			}
+		},
+		"FollowResult": {
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"is_followed": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"profile": {
+				"type": "UserProfile",
+				"nonNull": true,
+				"list": false,
+				"shape": "UserProfile!",
+				"deprecated": false
+			},
+			"userId": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"username": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			}
+		},
+		"LinkedPosts": {
+			"next": {
+				"type": "Post",
+				"nonNull": false,
+				"list": false,
+				"shape": "Post",
+				"deprecated": false
+			},
+			"previous": {
+				"type": "Post",
+				"nonNull": false,
+				"list": false,
+				"shape": "Post",
+				"deprecated": false
+			}
+		},
+		"Mutation": {
+			"acceptIntegration": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"confirmChangeEmail": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"createNotification": {
+				"type": "Notification",
+				"nonNull": true,
+				"list": false,
+				"shape": "Notification!",
+				"deprecated": false
+			},
+			"editPost": {
+				"type": "Post",
+				"nonNull": true,
+				"list": false,
+				"shape": "Post!",
+				"deprecated": false
+			},
+			"follow": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"initiateChangeEmail": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"likePost": {
+				"type": "Post",
+				"nonNull": true,
+				"list": false,
+				"shape": "Post!",
+				"deprecated": false
+			},
+			"logout": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"readAllNotifications": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"readNotification": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"removeAllNotifications": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"sendMail": {
+				"type": "SendMailResponse",
+				"nonNull": false,
+				"list": false,
+				"shape": "SendMailResponse",
+				"deprecated": false
+			},
+			"unfollow": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"unlikePost": {
+				"type": "Post",
+				"nonNull": true,
+				"list": false,
+				"shape": "Post!",
+				"deprecated": false
+			},
+			"unregister": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"updateAbout": {
+				"type": "UserProfile",
+				"nonNull": false,
+				"list": false,
+				"shape": "UserProfile",
+				"deprecated": false
+			},
+			"updateEmailRules": {
+				"type": "UserMeta",
+				"nonNull": false,
+				"list": false,
+				"shape": "UserMeta",
+				"deprecated": false
+			},
+			"updateNotNoticeNotification": {
+				"type": "Void",
+				"nonNull": false,
+				"list": false,
+				"shape": "Void",
+				"deprecated": false
+			},
+			"updateProfile": {
+				"type": "UserProfile",
+				"nonNull": false,
+				"list": false,
+				"shape": "UserProfile",
+				"deprecated": false
+			},
+			"updateSocialInfo": {
+				"type": "UserProfile",
+				"nonNull": false,
+				"list": false,
+				"shape": "UserProfile",
+				"deprecated": false
+			},
+			"updateThumbnail": {
+				"type": "UserProfile",
+				"nonNull": false,
+				"list": false,
+				"shape": "UserProfile",
+				"deprecated": false
+			},
+			"updateVelogTitle": {
+				"type": "VelogConfig",
+				"nonNull": false,
+				"list": false,
+				"shape": "VelogConfig",
+				"deprecated": false
+			},
+			"writePost": {
+				"type": "Post",
+				"nonNull": true,
+				"list": false,
+				"shape": "Post!",
+				"deprecated": false
+			}
+		},
+		"Notification": {
+			"action": {
+				"type": "JSON",
+				"nonNull": true,
+				"list": false,
+				"shape": "JSON!",
+				"deprecated": false
+			},
+			"action_id": {
+				"type": "ID",
+				"nonNull": false,
+				"list": false,
+				"shape": "ID",
+				"deprecated": false
+			},
+			"actor_id": {
+				"type": "ID",
+				"nonNull": false,
+				"list": false,
+				"shape": "ID",
+				"deprecated": false
+			},
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"fk_user_id": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"is_deleted": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"is_read": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"type": {
+				"type": "NotificationType",
+				"nonNull": true,
+				"list": false,
+				"shape": "NotificationType!",
+				"deprecated": false
+			}
+		},
+		"Post": {
+			"body": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"comments": {
+				"type": "Comment",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Comment!]!",
+				"deprecated": false
+			},
+			"comments_count": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"fk_user_id": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"is_followed": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"is_liked": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"is_markdown": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"is_private": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"is_temp": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"last_read_at": {
+				"type": "DateTimeISO",
+				"nonNull": false,
+				"list": false,
+				"shape": "DateTimeISO",
+				"deprecated": false
+			},
+			"likes": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"linked_posts": {
+				"type": "LinkedPosts",
+				"nonNull": false,
+				"list": false,
+				"shape": "LinkedPosts",
+				"deprecated": false
+			},
+			"meta": {
+				"type": "JSON",
+				"nonNull": false,
+				"list": false,
+				"shape": "JSON",
+				"deprecated": false
+			},
+			"original_post_id": {
+				"type": "ID",
+				"nonNull": false,
+				"list": false,
+				"shape": "ID",
+				"deprecated": false
+			},
+			"recommended_posts": {
+				"type": "Post",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Post!]!",
+				"deprecated": false
+			},
+			"released_at": {
+				"type": "DateTimeISO",
+				"nonNull": false,
+				"list": false,
+				"shape": "DateTimeISO",
+				"deprecated": false
+			},
+			"series": {
+				"type": "Series",
+				"nonNull": false,
+				"list": false,
+				"shape": "Series",
+				"deprecated": false
+			},
+			"short_description": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"tags": {
+				"type": "String",
+				"nonNull": true,
+				"list": true,
+				"shape": "[String!]!",
+				"deprecated": false
+			},
+			"thumbnail": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"title": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"updated_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"url_slug": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"user": {
+				"type": "User",
+				"nonNull": false,
+				"list": false,
+				"shape": "User",
+				"deprecated": false
+			},
+			"views": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			}
+		},
+		"PostHistory": {
+			"body": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": false,
+				"list": false,
+				"shape": "DateTimeISO",
+				"deprecated": false
+			},
+			"fk_post_id": {
+				"type": "ID",
+				"nonNull": false,
+				"list": false,
+				"shape": "ID",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": false,
+				"list": false,
+				"shape": "ID",
+				"deprecated": false
+			},
+			"is_markdown": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"title": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			}
+		},
+		"Query": {
+			"ads": {
+				"type": "Ad",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Ad!]!",
+				"deprecated": false
+			},
+			"checkEmailExists": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"currentUser": {
+				"type": "User",
+				"nonNull": false,
+				"list": false,
+				"shape": "User",
+				"deprecated": false
+			},
+			"feedPosts": {
+				"type": "Post",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Post!]!",
+				"deprecated": false
+			},
+			"followers": {
+				"type": "FollowResult",
+				"nonNull": true,
+				"list": true,
+				"shape": "[FollowResult!]!",
+				"deprecated": false
+			},
+			"followings": {
+				"type": "FollowResult",
+				"nonNull": true,
+				"list": true,
+				"shape": "[FollowResult!]!",
+				"deprecated": false
+			},
+			"isLogged": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"notNoticeNotificationCount": {
+				"type": "Int",
+				"nonNull": true,
+				"list": false,
+				"shape": "Int!",
+				"deprecated": false
+			},
+			"notifications": {
+				"type": "Notification",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Notification!]!",
+				"deprecated": false
+			},
+			"post": {
+				"type": "Post",
+				"nonNull": false,
+				"list": false,
+				"shape": "Post",
+				"deprecated": false
+			},
+			"posts": {
+				"type": "Post",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Post!]!",
+				"deprecated": false
+			},
+			"readingList": {
+				"type": "Post",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Post!]!",
+				"deprecated": false
+			},
+			"recentPosts": {
+				"type": "Post",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Post!]!",
+				"deprecated": false
+			},
+			"restoreToken": {
+				"type": "UserToken",
+				"nonNull": true,
+				"list": false,
+				"shape": "UserToken!",
+				"deprecated": false
+			},
+			"searchPosts": {
+				"type": "SearchResult",
+				"nonNull": true,
+				"list": false,
+				"shape": "SearchResult!",
+				"deprecated": false
+			},
+			"series": {
+				"type": "Series",
+				"nonNull": false,
+				"list": false,
+				"shape": "Series",
+				"deprecated": false
+			},
+			"seriesList": {
+				"type": "Series",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Series!]!",
+				"deprecated": false
+			},
+			"tag": {
+				"type": "Tag",
+				"nonNull": false,
+				"list": false,
+				"shape": "Tag",
+				"deprecated": false
+			},
+			"trendingPosts": {
+				"type": "Post",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Post!]!",
+				"deprecated": false
+			},
+			"trendingWriters": {
+				"type": "TrendingWriter",
+				"nonNull": true,
+				"list": true,
+				"shape": "[TrendingWriter!]!",
+				"deprecated": false
+			},
+			"unregisterToken": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"user": {
+				"type": "User",
+				"nonNull": false,
+				"list": false,
+				"shape": "User",
+				"deprecated": false
+			},
+			"userTags": {
+				"type": "UserTags",
+				"nonNull": false,
+				"list": false,
+				"shape": "UserTags",
+				"deprecated": false
+			},
+			"velogConfig": {
+				"type": "VelogConfig",
+				"nonNull": true,
+				"list": false,
+				"shape": "VelogConfig!",
+				"deprecated": false
+			}
+		},
+		"ReadCountByDay": {
+			"count": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"day": {
+				"type": "DateTimeISO",
+				"nonNull": false,
+				"list": false,
+				"shape": "DateTimeISO",
+				"deprecated": false
+			}
+		},
+		"SearchResult": {
+			"count": {
+				"type": "Int",
+				"nonNull": true,
+				"list": false,
+				"shape": "Int!",
+				"deprecated": false
+			},
+			"posts": {
+				"type": "Post",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Post!]!",
+				"deprecated": false
+			}
+		},
+		"SendMailResponse": {
+			"registered": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			}
+		},
+		"Series": {
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"description": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"fk_user_id": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"name": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"posts_count": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"series_posts": {
+				"type": "SeriesPost",
+				"nonNull": false,
+				"list": true,
+				"shape": "[SeriesPost!]",
+				"deprecated": false
+			},
+			"thumbnail": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"updated_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"url_slug": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"user": {
+				"type": "User",
+				"nonNull": false,
+				"list": false,
+				"shape": "User",
+				"deprecated": false
+			}
+		},
+		"SeriesPost": {
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"index": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"post": {
+				"type": "Post",
+				"nonNull": false,
+				"list": false,
+				"shape": "Post",
+				"deprecated": false
+			}
+		},
+		"Stats": {
+			"count_by_day": {
+				"type": "ReadCountByDay",
+				"nonNull": false,
+				"list": true,
+				"shape": "[ReadCountByDay]",
+				"deprecated": false
+			},
+			"total": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			}
+		},
+		"Tag": {
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": false,
+				"list": false,
+				"shape": "DateTimeISO",
+				"deprecated": false
+			},
+			"description": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"name": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"posts_count": {
+				"type": "Int",
+				"nonNull": false,
+				"list": false,
+				"shape": "Int",
+				"deprecated": false
+			},
+			"thumbnail": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			}
+		},
+		"TrendingWriter": {
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"index": {
+				"type": "Int",
+				"nonNull": true,
+				"list": false,
+				"shape": "Int!",
+				"deprecated": false
+			},
+			"posts": {
+				"type": "TrendingWriterPosts",
+				"nonNull": true,
+				"list": true,
+				"shape": "[TrendingWriterPosts!]!",
+				"deprecated": false
+			},
+			"user": {
+				"type": "TrendingWriterUser",
+				"nonNull": true,
+				"list": false,
+				"shape": "TrendingWriterUser!",
+				"deprecated": false
+			}
+		},
+		"TrendingWriterPosts": {
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"thumbnail": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"title": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"url_slug": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			}
+		},
+		"TrendingWriterProfile": {
+			"display_name": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"short_bio": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"thumbnail": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			}
+		},
+		"TrendingWriterUser": {
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"profile": {
+				"type": "TrendingWriterProfile",
+				"nonNull": true,
+				"list": false,
+				"shape": "TrendingWriterProfile!",
+				"deprecated": false
+			},
+			"username": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			}
+		},
+		"User": {
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"email": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"followers_count": {
+				"type": "Int",
+				"nonNull": true,
+				"list": false,
+				"shape": "Int!",
+				"deprecated": false
+			},
+			"followings_count": {
+				"type": "Int",
+				"nonNull": true,
+				"list": false,
+				"shape": "Int!",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"is_certified": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"is_followed": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"is_trusted": {
+				"type": "Boolean",
+				"nonNull": true,
+				"list": false,
+				"shape": "Boolean!",
+				"deprecated": false
+			},
+			"profile": {
+				"type": "UserProfile",
+				"nonNull": true,
+				"list": false,
+				"shape": "UserProfile!",
+				"deprecated": false
+			},
+			"series_list": {
+				"type": "Series",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Series!]!",
+				"deprecated": false
+			},
+			"updated_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"user_meta": {
+				"type": "UserMeta",
+				"nonNull": false,
+				"list": false,
+				"shape": "UserMeta",
+				"deprecated": false
+			},
+			"username": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"velog_config": {
+				"type": "VelogConfig",
+				"nonNull": false,
+				"list": false,
+				"shape": "VelogConfig",
+				"deprecated": false
+			}
+		},
+		"UserMeta": {
+			"email_notification": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"email_promotion": {
+				"type": "Boolean",
+				"nonNull": false,
+				"list": false,
+				"shape": "Boolean",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			}
+		},
+		"UserProfile": {
+			"about": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"created_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			},
+			"display_name": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"profile_links": {
+				"type": "JSON",
+				"nonNull": true,
+				"list": false,
+				"shape": "JSON!",
+				"deprecated": false
+			},
+			"short_bio": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"thumbnail": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"updated_at": {
+				"type": "DateTimeISO",
+				"nonNull": true,
+				"list": false,
+				"shape": "DateTimeISO!",
+				"deprecated": false
+			}
+		},
+		"UserTags": {
+			"posts_count": {
+				"type": "Int",
+				"nonNull": true,
+				"list": false,
+				"shape": "Int!",
+				"deprecated": false
+			},
+			"tags": {
+				"type": "Tag",
+				"nonNull": true,
+				"list": true,
+				"shape": "[Tag!]!",
+				"deprecated": false
+			}
+		},
+		"UserToken": {
+			"accessToken": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			},
+			"refreshToken": {
+				"type": "String",
+				"nonNull": true,
+				"list": false,
+				"shape": "String!",
+				"deprecated": false
+			}
+		},
+		"VelogConfig": {
+			"id": {
+				"type": "ID",
+				"nonNull": true,
+				"list": false,
+				"shape": "ID!",
+				"deprecated": false
+			},
+			"logo_image": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			},
+			"title": {
+				"type": "String",
+				"nonNull": false,
+				"list": false,
+				"shape": "String",
+				"deprecated": false
+			}
+		}
+	}
+}

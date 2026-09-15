@@ -20,11 +20,11 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, readdir, mkdtemp, symlink, stat } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, symlink, stat, chmod } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { scanFiles } from './shipping-checks.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -205,6 +205,38 @@ function describeIssues(issues: ReadonlyArray<{ path: PropertyKey[]; message: st
 	return head.join(' / ') + (rest > 0 ? ` (외 ${rest}건)` : '');
 }
 
+/** 자식 프로세스를 끝까지 돌리고 결과를 모은다. 발행물 기동 검사에서만 쓴다. */
+async function run(
+	command: string,
+	args: readonly string[],
+	cwd: string,
+	timeoutMs = 120_000,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+	return new Promise((resolve) => {
+		const child = spawn(command, [...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+		let stdout = '';
+		let stderr = '';
+		child.stdout.on('data', (chunk: Buffer) => {
+			stdout += chunk.toString();
+		});
+		child.stderr.on('data', (chunk: Buffer) => {
+			stderr += chunk.toString();
+		});
+		// ★ 서버는 stdio 를 잡고 계속 산다. 기동만 보면 되므로 시간을 정해 끊는다.
+		//   끊어서 죽인 것과 스스로 죽은 것을 가르려고 killed 를 따로 본다.
+		const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+		child.on('close', (code, signal) => {
+			clearTimeout(timer);
+			// SIGTERM 으로 우리가 끊었으면 '살아 있었다' 는 뜻이라 성공으로 본다.
+			resolve({ code: signal === 'SIGTERM' ? 0 : (code ?? 1), stdout, stderr });
+		});
+		child.on('error', (error) => {
+			clearTimeout(timer);
+			resolve({ code: 1, stdout, stderr: stderr + String(error) });
+		});
+	});
+}
+
 function fail(message: string): never {
 	process.stderr.write(`\n❌ 발행 중단 — ${message}\n`);
 	// ⚠️ exit 1 은 node 크래시(구문 오류·미처리 예외)와 구분이 안 된다 — 관문 변이
@@ -321,23 +353,29 @@ async function walk(dir: URL, prefix = ''): Promise<string[]> {
 	return out;
 }
 
-const shipped: Array<[string, URL]> = [];
-for (const [label, base] of [
-	['dist', new URL('dist/', ROOT)],
-	['docs', new URL('docs/', ROOT)],
-] as const) {
-	for (const relative of await walk(base)) {
-		shipped.push([`${label}/${relative}`, new URL(relative, base)]);
-	}
-}
 // ★★ 손으로 나열하면 `files` 에 새 파일을 추가할 때마다 여기가 조용히 뒤처진다.
 //   실제로 CHANGELOG.md 를 넣었을 때 npm 은 107개를 싣는데 이 검사는 106개만 봤다.
 //   검사에서 빠진 파일은 **개인정보 검사를 안 받고 나간다.** 그래서 package.json 의
 //   `files` 에서 읽고, npm 이 항상 싣는 것들을 더한다.
+//
+//   ⚠️ 그래놓고 디렉터리는 `dist`·`docs` 로 **하드코딩돼 있었다.** 2026-09-14 에
+//   `schema` 를 더했을 때 이 자리가 그대로 뒤처졌다. 같은 실수라 아예 없앤다 —
+//   `files` 의 각 항목이 디렉터리면 훑고, 파일이면 그대로 담는다.
 const ALWAYS_SHIPPED = ['package.json', 'README.md', 'README.ko.md', 'LICENSE'];
-const listed = (pkg.files ?? []).filter((f) => !f.includes('/') && !['dist', 'docs'].includes(f));
-for (const name of new Set([...ALWAYS_SHIPPED, ...listed])) {
-	shipped.push([name, new URL(name, ROOT)]);
+const shipped: Array<[string, URL]> = [];
+for (const entry of new Set([...ALWAYS_SHIPPED, ...(pkg.files ?? [])])) {
+	if (entry.includes('/')) continue; // 글롭·중첩 경로는 지금 쓰지 않는다
+	const asDir = new URL(`${entry}/`, ROOT);
+	const isDir = await stat(fileURLToPath(asDir))
+		.then((s) => s.isDirectory())
+		.catch(() => false);
+	if (isDir) {
+		for (const relative of await walk(asDir)) {
+			shipped.push([`${entry}/${relative}`, new URL(relative, asDir)]);
+		}
+	} else {
+		shipped.push([entry, new URL(entry, ROOT)]);
+	}
 }
 
 const loaded: Array<[string, Uint8Array]> = [];
@@ -375,6 +413,22 @@ if (orphans.length > 0) {
 	fail(
 		`dist 에 소스가 없는 산출물이 남아 있습니다(${orphans.length}개): ${orphans.join(', ')}\n` +
 			'   `npm run build` 는 dist 를 비우고 시작합니다 — 수동으로 지우고 다시 도세요.',
+	);
+}
+
+// ★★ `files` 가 `schema` 를 **통째로** 싣는다. 그 안에 기준선 말고 다른 것이 들어가면
+//    그대로 발행된다. 생성기가 만드는 검사용 임시 파일이 실제로 여기에 있었다
+//    (코덱스 13차: 예외·동시 실행 때 남고, `npm-packlist` 가 집어 갔다).
+//    그래서 «무엇이 실렸나» 를 이름으로 못 박는다 — 새 파일을 넣으려면 여기도 고쳐야 한다.
+const SCHEMA_ALLOWED = new Set(['schema/baseline.json']);
+const strays = shipped
+	.map(([label]) => label)
+	.filter((label) => label === 'schema' || label.startsWith('schema/'))
+	.filter((label) => !SCHEMA_ALLOWED.has(label));
+if (strays.length > 0) {
+	fail(
+		`발행물의 schema/ 에 실리면 안 되는 것이 있습니다(${strays.length}개): ${strays.join(', ')}\n` +
+			'   임시 파일이 남았거나, 새 파일을 추가하고 verify-dist 의 SCHEMA_ALLOWED 를 안 고쳤습니다.',
 	);
 }
 
@@ -502,6 +556,196 @@ for (const [mode, extraEnv] of MODES) {
 	}
 }
 cleanupLink();
+
+// ★★ 여기까지는 전부 **저장소 안에서** 돈다. 그래서 `files` 에 빠진 파일이 있어도
+//   로컬에 그 파일이 있으면 통과한다 — 거짓 초록이다.
+//
+//   2026-09-14 실측: `dist/drift.js` 가 `../schema/baseline.json` 을 import 하는데
+//   `files` 에 `schema` 가 없었다. 위 검사는 전부 통과했고 발행했으면 설치본이
+//   `ERR_MODULE_NOT_FOUND` 로 죽었다. 대조군(저장소에서 실행)은 멀쩡했다.
+//
+//   그래서 **npm 이 실제로 싣는 것만** 풀어서 띄워 본다. 의존성은 설치하지 않고
+//   링크만 걸어 준다 — 우리가 보려는 건 우리 파일이 다 실렸는지이지 npm install 이 아니다.
+{
+	const packDir = await mkdtemp(join(tmpdir(), 'velog-mcp-pack-'));
+	try {
+		const packed = await run('npm', ['pack', '--pack-destination', packDir], fileURLToPath(ROOT));
+		if (packed.code !== 0) fail(`npm pack 실패:\n${packed.stderr}`);
+		const [tgz] = (await readdir(packDir)).filter((f) => f.endsWith('.tgz'));
+		if (!tgz) fail('npm pack 이 tarball 을 만들지 않았습니다.');
+		const untar = await run('tar', ['xzf', join(packDir, tgz), '-C', packDir], packDir);
+		if (untar.code !== 0) fail(`tarball 을 풀지 못했습니다:\n${untar.stderr}`);
+
+		const pkgRoot = join(packDir, 'package');
+		await symlink(fileURLToPath(new URL('node_modules', ROOT)), join(pkgRoot, 'node_modules'));
+
+		// ★★ «죽지 않았다» 로는 부족하다. 조용히 exit(0) 하는 패키지도 통과한다
+		//   (코덱스가 변이로 증명: guardExit=0 인데 실제 MCP 는 Connection closed).
+		//   그래서 **핸드셰이크를 실제로 주고받는다.** 위의 handshake() 와 같은 규율이다.
+		const packedEntry = join(pkgRoot, 'dist', 'index.js');
+		await chmod(packedEntry, 0o755);
+		const packedLink = join(packDir, 'velog-mcp');
+		await symlink(packedEntry, packedLink);
+		const packedOutcome = await handshake(packedLink);
+		if (packedOutcome.died !== null) {
+			fail(
+				`발행물만 풀어서 띄우니 스스로 끝났습니다 (${packedOutcome.died}).\n` +
+					'   `files` 에 빠진 파일이 있는지 보세요.\n' +
+					`   ${packedOutcome.stderr.split('\n').slice(0, 6).join('\n   ')}`,
+			);
+		}
+		// ★★ 발행물에도 저장소와 **같은 잣대**를 댄다. 한때 여기서는 «죽었나 · 도구가
+		//   몇 개인가» 만 봤는데, 그러면 설치본만 stdout 을 더럽히거나 initialize 를
+		//   오류로 돌려줘도 통과한다(코덱스 9차가 응답을 주입해 증명). 설치본에서만
+		//   깨지는 것을 잡는 게 이 블록의 존재 이유인데 그물이 저장소 쪽보다 성겼다.
+		if (packedOutcome.junk.length > 0) {
+			fail(
+				`발행물이 stdout 에 프로토콜 아닌 줄을 냈습니다(${packedOutcome.junk.length}줄).\n` +
+					`   첫 줄: ${packedOutcome.junk[0] ?? ''}`,
+			);
+		}
+		const packedInit = packedOutcome.responses.find((r) => r['id'] === 1);
+		const initResult = packedInit?.['result'] as
+			| { protocolVersion?: unknown; serverInfo?: { name?: unknown; version?: unknown } }
+			| undefined;
+		if (!packedInit || packedInit['error'] !== undefined || !initResult) {
+			fail(
+				'발행물이 initialize 에 정상 응답하지 않습니다 — 설치본은 연결 자체가 안 됩니다.\n' +
+					`   ${JSON.stringify(packedInit ?? null).slice(0, 300)}`,
+			);
+		}
+		if (typeof initResult?.protocolVersion !== 'string' || typeof initResult?.serverInfo?.name !== 'string') {
+			fail(
+				'발행물의 initialize 응답에 protocolVersion·serverInfo 가 없습니다.\n' +
+					`   ${JSON.stringify(initResult ?? null).slice(0, 300)}`,
+			);
+		}
+		// ★ «문자열이냐» 로는 부족하다. 이름·버전이 딴것이어도 연결은 되고 도구도 같다
+		//   (코덱스 10차가 serverInfo 를 바꿔 증명). 저장소 쪽에 있는 잣대를 여기도 댄다.
+		if (initResult?.serverInfo?.name !== SERVER_NAME) {
+			fail(
+				`발행물이 자기를 '${initResult?.serverInfo?.name ?? '(없음)'}' 라고 합니다 — '${SERVER_NAME}' 이어야 합니다.`,
+			);
+		}
+		if (initResult?.serverInfo?.version !== pkg.version) {
+			fail(
+				`발행물의 서버 버전이 ${String(initResult?.serverInfo?.version)} 입니다 — package.json 은 ${pkg.version} 입니다.`,
+			);
+		}
+		const packedTools = packedOutcome.responses.find(
+			(r) => r['id'] === 2 && typeof r['result'] === 'object',
+		);
+		if (!packedTools) {
+			fail(
+				'발행물이 MCP 핸드셰이크에 응답하지 않습니다 — 설치본은 도구가 하나도 없습니다.\n' +
+					`   ${packedOutcome.stderr.split('\n').slice(0, 6).join('\n   ')}`,
+			);
+		}
+		const packedNames = (
+			(packedTools['result'] as { tools?: Array<{ name: string }> }).tools ?? []
+		).map((tool) => tool.name);
+		if (packedNames.length < MIN_TOOLS) {
+			fail(
+				`발행물의 도구가 ${packedNames.length}개뿐입니다 (최소 ${MIN_TOOLS}개).\n` +
+					'   저장소에서는 되는데 발행물에서 안 되는 것이 있습니다.',
+			);
+		}
+
+		// ★★ raw 핸드셰이크는 «줄을 주고받았다» 까지다. 실제 SDK 클라이언트로 붙어
+		//   도구 목록과 스키마가 소스와 **같은지**까지 본다 — 저장소 쪽에 이미 있는
+		//   잣대이고, 설치본에만 없을 이유가 없다.
+		const packedViaSdk = await toolsVia('발행물', packedLink, [], {});
+		const sourceViaSdk = await toolsVia('소스(발행물 대조)', process.execPath, [sourceEntry], {});
+		const packedSdkNames = packedViaSdk.map((t) => t.name).sort();
+		const sourceSdkNames = sourceViaSdk.map((t) => t.name).sort();
+		if (JSON.stringify(packedSdkNames) !== JSON.stringify(sourceSdkNames)) {
+			const onlyPacked = packedSdkNames.filter((n) => !sourceSdkNames.includes(n));
+			const onlySource = sourceSdkNames.filter((n) => !packedSdkNames.includes(n));
+			fail(
+				'발행물의 도구 목록이 소스와 다릅니다.\n' +
+					`   발행물에만: ${onlyPacked.join(', ') || '(없음)'}\n` +
+					`   소스에만: ${onlySource.join(', ') || '(없음)'}`,
+			);
+		}
+		// 이름이 같아도 스키마·설명이 다르면 설치본만 다르게 동작한다.
+		const sourceSnapshots = new Map(sourceViaSdk.map((t) => [t.name, t.snapshot]));
+		const snapshotDrift = packedViaSdk.filter((t) => sourceSnapshots.get(t.name) !== t.snapshot);
+		if (snapshotDrift.length > 0) {
+			fail(
+				`발행물 도구의 스키마·설명이 소스와 다릅니다(${snapshotDrift.length}개): ` +
+					snapshotDrift.map((t) => t.name).join(', '),
+			);
+		}
+
+		// ★★ 플래그 조합도 발행물에서 본다. 저장소에서는 네 조합을 다 보는데 설치본은
+		//   기본 모드만 봤다 — `VELOG_ALLOW_PROFILE=1` 에서만 깨지는 것을 놓친다
+		//   (코덱스 11차가 분기 하네스로 증명). 조합마다 순도·생존·도구 목록을 본다.
+		for (const [mode, extraEnv] of OPTION_MODES) {
+			const optOutcome = await handshake(packedLink, extraEnv);
+			if (optOutcome.died !== null) {
+				fail(`[발행물·${mode}] 설치본이 스스로 끝났습니다 (${optOutcome.died}).\n   ${optOutcome.stderr.split('\n').slice(0, 4).join('\n   ')}`);
+			}
+			if (optOutcome.junk.length > 0) {
+				fail(`[발행물·${mode}] stdout 에 프로토콜 아닌 줄을 냈습니다(${optOutcome.junk.length}줄).\n   첫 줄: ${optOutcome.junk[0] ?? ''}`);
+			}
+			const optPacked = await toolsVia(`발행물(${mode})`, packedLink, [], extraEnv);
+			const optSource = await toolsVia(`소스(${mode}·발행물 대조)`, process.execPath, [sourceEntry], extraEnv);
+			const packedSorted = optPacked.map((t) => t.name).sort();
+			const sourceSorted = optSource.map((t) => t.name).sort();
+			if (JSON.stringify(packedSorted) !== JSON.stringify(sourceSorted)) {
+				fail(
+					`[발행물·${mode}] 도구 목록이 소스와 다릅니다.\n` +
+						`   발행물에만: ${packedSorted.filter((n) => !sourceSorted.includes(n)).join(', ') || '(없음)'}\n` +
+						`   소스에만: ${sourceSorted.filter((n) => !packedSorted.includes(n)).join(', ') || '(없음)'}`,
+				);
+			}
+			const optSnapshots = new Map(optSource.map((t) => [t.name, t.snapshot]));
+			const optDrift = optPacked.filter((t) => optSnapshots.get(t.name) !== t.snapshot);
+			if (optDrift.length > 0) {
+				fail(`[발행물·${mode}] 도구 스키마가 소스와 다릅니다: ${optDrift.map((t) => t.name).join(', ')}`);
+			}
+		}
+
+		// ★★ 기동만 보면 부족하다. 2026-09-14 에 «기준선이 깨져도 서버는 산다» 로 바꾸면서
+		//   이 관문이 **무력해졌다** — `files` 에서 schema 를 빼도 도구 23개가 그대로 떠서
+		//   조용히 통과했다(코덱스 5차가 변이로 증명). 안 죽는 쪽으로 고치면 «안 죽는지»
+		//   보는 검사도 같이 약해진다. 그래서 **기능이 실제로 동작하는지**를 본다.
+		//
+		//   ⚠️ 한때 stderr 문구(`스키마 자가진단이 꺼졌습니다`)로 검사했는데, 그건 문구가
+		//   바뀌면 조용히 무력해진다. 대신 **소스가 실제로 읽는 경로**를 확인한다.
+		//   경로가 바뀌면 여기가 못 찾아 실패하므로 결합이 드러난다.
+		const baselineRelative = (await readFile(new URL('src/drift.ts', ROOT), 'utf8')).match(
+			/new URL\('([^']+\.json)', import\.meta\.url\)/,
+		)?.[1];
+		if (!baselineRelative) {
+			fail(
+				'src/drift.ts 에서 기준선 경로를 찾지 못했습니다.\n' +
+					'   기준선을 읽는 방식이 바뀌었다면 이 검사도 함께 고치세요.',
+			);
+		}
+		// dist/drift.js 기준의 상대 경로다. 발행물에서 같은 자리를 본다.
+		const packedBaseline = new URL(baselineRelative, pathToFileURL(join(pkgRoot, 'dist', 'drift.js')));
+		const baselineOk = await stat(fileURLToPath(packedBaseline))
+			.then((s) => s.isFile() && s.size > 0)
+			.catch(() => false);
+		if (!baselineOk) {
+			fail(
+				`발행물에 기준선 파일이 없습니다 — ${baselineRelative}\n` +
+					'   `velog_diagnose` 와 오류 진단이 통째로 꺼진 채 발행됩니다.\n' +
+					'   `package.json` 의 `files` 에 `schema` 가 있는지 보세요.',
+			);
+		}
+		// 그리고 실제로 꺼지지 않았는지도 본다 (파일은 있는데 모양이 틀린 경우).
+		if (packedOutcome.stderr.includes('스키마 자가진단이 꺼졌습니다')) {
+			fail(
+				'발행물에서 스키마 자가진단이 꺼져 있습니다.\n' +
+					`   ${packedOutcome.stderr.split('\n').find((l) => l.includes('자가진단')) ?? ''}`,
+			);
+		}
+	} finally {
+		rmSync(packDir, { recursive: true, force: true });
+	}
+}
 
 process.stdout.write(
 	`✅ dist 검증 통과 — ${pkg.name}@${pkg.version} · 도구 ${tools.length}개 · ` +

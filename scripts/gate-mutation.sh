@@ -25,15 +25,64 @@ BAK=$(mktemp -d)/gate
 mkdir -p "$(dirname "$BAK")"
 
 cp "$GATE" "$BAK.ts"
+cp package.json "$BAK.pkg.json"
 
 # ⚠️ trap 을 첫 build **뒤에** 걸었더니, 그 build 중 끊기면 관문 파일이 변이된 채 남을
 #    수 있었다. 백업을 먼저 뜨고 trap 을 먼저 건다. orphan 파일도 함께 치운다.
 restore() {
   cp "$BAK.ts" "$GATE"
   [ -f "$BAK.js" ] && cp "$BAK.js" dist/index.js
+  # 발행물 구성(files)을 건드리는 변이가 생겨 package.json 도 되돌린다.
+  [ -f "$BAK.pkg.json" ] && cp "$BAK.pkg.json" package.json
   rm -f dist/stale-orphan.js
+  rm -f schema/.gate-stray.json
 }
-trap 'restore; rm -rf "$(dirname "$BAK")"' EXIT
+# ⚠️ EXIT 만 걸면 Ctrl-C 때 npm 자식이 살아남아 package.json 이 변이된 채 남는다
+#    (코덱스 7차: 4초 뒤에도 schema 가 빠져 있었다). 신호도 함께 받는다.
+# ⚠️ `kill -- -$$` 를 **정상 종료 경로에서도** 부르면 자기 프로세스 그룹을 통째로 죽여
+#    호출한 쪽까지 끊긴다(실측: 파이프라인이 Terminated). 자식 정리는 «신호로 끊겼을 때» 만.
+kill_children() {
+  # ⚠️ `pkill -P $$` 는 **직계 자식만** 본다. npm 은 손자를 만들고, `timeout` 은 자식을
+  #    **별도 프로세스 그룹**에 둬서 `pgrep -g $$` 로도 안 잡힌다(코덱스 7·8차:
+  #    Ctrl-C 4초·10초 뒤에도 살아 있었다).
+  # ⚠️ 그렇다고 `pkill -f 'scripts/verify-dist.ts'` 로 이름을 훑으면 **다른 체크아웃에서
+  #    도는 남의 검증까지** 죽인다(코덱스 9차). 이름은 이 실행의 것인지 알려주지 않는다.
+  #
+  # 그래서 «이 프로세스의 자손인가» 로만 고른다. 부모 사슬은 프로세스 그룹과 달리
+  # timeout 이 바꾸지 않는다. 이름도 경로도 보지 않으므로 남의 것을 건드릴 수 없다.
+  local kids
+  kids=$(ps -A -o pid=,ppid= 2>/dev/null | awk -v root=$$ '
+    { ppid[$1] = $2; pids[NR] = $1 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        p = pids[i]; hops = 0
+        while (p != 1 && p != "" && hops < 50) {
+          p = ppid[p]; hops++
+          if (p == root) { print pids[i]; break }
+        }
+      }
+    }' || true)
+  [ -n "$kids" ] && kill $kids >/dev/null 2>&1 || true
+  sleep 0.5
+}
+
+cleanup() {
+  trap - EXIT INT TERM HUP
+  restore
+  rm -rf "$(dirname "$BAK")"
+}
+
+on_signal() {
+  trap - EXIT INT TERM HUP
+  kill_children
+  restore
+  rm -rf "$(dirname "$BAK")"
+  exit "$1"
+}
+
+trap cleanup EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM HUP
 
 npm run build >/dev/null 2>&1 || { echo "  빌드 실패 — 중단"; exit 1; }
 cp dist/index.js "$BAK.js"
@@ -44,6 +93,18 @@ break_dist() {
   python3 - <<PY
 import pathlib
 p = pathlib.Path('dist/index.js'); s = p.read_text()
+$1
+p.write_text(s)
+PY
+}
+
+# 발행물 «구성» 을 망가뜨린다. dist 가 아니라 package.json 의 files 를 고친다.
+# 기준선 파일처럼 dist 밖에 있는 것이 안 실리는 경우를 재현한다.
+break_pkg() {
+  cp "$BAK.pkg.json" package.json
+  python3 - <<PY
+import pathlib
+p = pathlib.Path('package.json'); s = p.read_text()
 $1
 p.write_text(s)
 PY
@@ -70,10 +131,84 @@ PY
 GATE_FAIL=2
 run_gate() { timeout 120 npm run verify:dist >/dev/null 2>&1; echo $?; }
 
-EXPECTED=12
+EXPECTED=15
 ran=0
 fail=0
 overlap=0
+
+# 구성(package.json) 변이용. check 와 같은 ①②③ 을 돌린다.
+check_pkg() {
+  local label="$1" pkg_break="$2" gate_find="$3" gate_repl="$4"
+
+  cp "$BAK.ts" "$GATE"
+  break_pkg "$pkg_break"
+  local caught; caught=$(run_gate)
+
+  break_gate "$gate_find" "$gate_repl" || { echo "  ??  $label — 관문 변이 패턴 불일치"; fail=$((fail+1)); return; }
+  cp "$BAK.pkg.json" package.json
+  local sane; sane=$(run_gate)
+
+  break_pkg "$pkg_break"
+  local slipped; slipped=$(run_gate)
+
+  restore
+
+  ran=$((ran+1))
+  if [ "$caught" -eq 0 ]; then
+    echo "  X   $label — 온전한 관문이 불량을 통과시킨다"; fail=$((fail+1)); return
+  fi
+  if [ "$caught" -ne 2 ]; then
+    echo "  X   $label — 관문이 fail() 이 아닌 rc=$caught 로 끝났다"; fail=$((fail+1)); return
+  fi
+  if [ "$sane" -ne 0 ]; then
+    echo "  X   $label — 검사를 없앤 관문이 «정상» 구성도 막는다"; fail=$((fail+1)); return
+  fi
+  # ⚠️ `slipped != 0` 을 전부 «겹침» 으로 세면 크래시·타임아웃도 성공으로 둔갑한다.
+  #    관문의 fail() 은 exit 2 다. 1·124·127 은 관문이 «깨진» 것이지 잡은 게 아니다
+  #    (코덱스 7차가 종료코드를 주입해 증명했다 — 13/13 exit 0 이었다).
+  if [ "$slipped" -eq 2 ]; then
+    echo "  ~   $label — 다른 검사가 겹쳐 잡는다"; overlap=$((overlap+1)); return
+  fi
+  if [ "$slipped" -ne 0 ]; then
+    echo "  X   $label — 검사를 없앤 관문이 rc=$slipped 로 비정상 종료했다 (크래시·타임아웃)"
+    fail=$((fail+1)); return
+  fi
+  echo "  O   $label"
+}
+
+# 발행물에 «있으면 안 되는 파일» 을 만드는 변이. dist 도 package.json 도 아니다.
+check_stray() {
+  local label="$1" stray="$2" gate_find="$3" gate_repl="$4"
+
+  cp "$BAK.ts" "$GATE"
+  : > "$stray"
+  local caught; caught=$(run_gate)
+
+  break_gate "$gate_find" "$gate_repl" || { echo "  ??  $label — 관문 변이 패턴 불일치"; fail=$((fail+1)); rm -f "$stray"; return; }
+  rm -f "$stray"
+  local sane; sane=$(run_gate)
+
+  : > "$stray"
+  local slipped; slipped=$(run_gate)
+
+  rm -f "$stray"
+  restore
+
+  ran=$((ran+1))
+  if [ "$caught" -ne "$GATE_FAIL" ]; then
+    echo "  X   $label — 온전한 관문이 rc=$caught 로 끝났다 (fail() 이 아니다)"; fail=$((fail+1)); return
+  fi
+  if [ "$sane" -ne 0 ]; then
+    echo "  X   $label — 검사를 없앤 관문이 «정상» 발행물도 막는다"; fail=$((fail+1)); return
+  fi
+  if [ "$slipped" -eq "$GATE_FAIL" ]; then
+    echo "  ~   $label — 다른 검사가 겹쳐 잡는다"; overlap=$((overlap+1)); return
+  fi
+  if [ "$slipped" -ne 0 ]; then
+    echo "  X   $label — 검사를 없앤 관문이 rc=$slipped 로 비정상 종료했다"; fail=$((fail+1)); return
+  fi
+  echo "  O   $label"
+}
 
 check() {
   local label="$1" dist_break="$2" gate_find="$3" gate_repl="$4"
@@ -213,6 +348,36 @@ s = s.replace('await server.connect(new StdioServerTransport());', inject)" \
 
 # ── 관문이 **검증 대상을 바꾸지 않는지** ────────────────────────────────
 # 한때 관문이 npm 을 흉내내려 `chmod` 를 해서 tarball 모드가 달라졌다.
+# ── 11차: 발행물 «구성» 변이 ─────────────────────────────────────────────
+# ⚠️ 기준선 파일이 dist 밖(schema/)에 있어서 `files` 에서 빠지면 조용히 안 실린다.
+#    한때 «서버가 죽는지» 로 잡았는데, 서버가 안 죽게 고치자 그 그물이 사라졌다.
+#    그래서 «소스가 읽는 경로가 발행물에 실제로 있는지» 로 본다.
+check_pkg "발행물 구성: 기준선 누락" \
+  "s = s.replace('\"dist\",' + chr(10) + '    \"schema\",', '\"dist\",', 1)" \
+  "		if (!baselineOk) {" \
+  "		if (false) {"
+
+# ⚠️ 설치본이 **아예 안 뜨는** 경우. `files` 에서 dist 가 빠지면 tarball 에 실행 파일이
+#    없다. 저장소 검사는 전부 통과한다 — 로컬에는 dist 가 있기 때문이다.
+check_pkg "발행물 구성: dist 누락" \
+  "s = s.replace('\"dist\",' + chr(10), '', 1)" \
+  "		if (packedOutcome.died !== null) {" \
+  "		if (false) {"
+
+# ── 12차: 발행물에 섞인 임시 파일 ────────────────────────────────────────
+# ⚠️ `files` 가 `schema` 를 통째로 싣는다. 기준선 생성기가 만드는 검사용 파일이 남으면
+#    그대로 발행된다. 로컬에서는 아무 증상이 없어 눈으로는 못 본다.
+check_stray "발행물 찌꺼기: schema/ 의 임시 파일" \
+  "schema/.gate-stray.json" \
+  "if (strays.length > 0) {" \
+  "if (false) {"
+
+# ℹ️ 발행물의 `serverInfo.name`·`version` 대조는 여기서 변이로 재지 않는다. 저장소 검사
+#    (verify-dist.ts 의 `info.name`·`info.version`)가 **같은 dist 를** 이미 보므로,
+#    그 둘만 겨누는 불량을 만들 수 없다 — 만들면 두 검사가 함께 잡아 «겹침» 이 된다.
+#    그래도 검사는 남긴다. tarball 구성이 바뀌어 둘이 갈라지는 날의 방어선이다.
+
+
 # ⚠️ 여기서도 rc 를 본다 — 관문이 아예 안 돌았으면(127 등) 모드가 같은 건 당연하다.
 cp "$BAK.ts" "$GATE"
 cp "$BAK.js" dist/index.js

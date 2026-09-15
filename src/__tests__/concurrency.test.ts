@@ -437,8 +437,10 @@ describe('★ 부분 성공 판정 — 아무것도 안 된 실패까지 막으�
 				errors: [{ message: 'Timed out fetching a new connection from the connection pool' }],
 			},
 		]);
+		// ⚠️ 응답이 writePost 인데 질의가 `{ x }`(읽기 모양)였다. 2026-09-14 부터 클라이언트가
+		//   질의문의 mutation 키워드로 쓰기를 가리므로, 모의하는 상황에 맞게 쓰기 질의를 준다.
 		await assert.rejects(
-			() => c.request('{ x }'),
+			() => c.request('mutation { x }'),
 			(e: Error) => /이미 반영/.test(e.message) && /created-1/.test(e.message),
 		);
 		assert.equal(calls(), 1, '이미 반영됐을 수 있는데 다시 쳤다');

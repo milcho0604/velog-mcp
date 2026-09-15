@@ -12,6 +12,13 @@ import {
 	buildCookieHeader,
 	parseSetCookie,
 } from './auth.ts';
+import {
+	suspectDriftIn,
+	explainDrift,
+	isValidationDrift,
+	BASELINE_STATUS,
+	type DriftSuspicion,
+} from './drift.ts';
 
 export const VELOG_ENDPOINT = 'https://v3.velog.io/graphql';
 
@@ -51,6 +58,14 @@ export interface VelogApiErrorDetail {
 	 *   있는데 다시 치면 두 번 반영된다 — mutate() 무재시도와 같은 이유다.
 	 */
 	readonly partial?: boolean;
+	/** 스키마 표류로 «보이는» 판정. 이 표식이 있으면 오류에 처방이 덧붙는다. */
+	/**
+	 * 절단 전 원문이 «일시 장애 문구» 였는가. 표시용 message 는 잘리기 때문에
+	 * 판정을 그때 해서 실어 보낸다.
+	 */
+	readonly transientText?: boolean;
+	readonly drift?: DriftSuspicion;
+	readonly driftContext?: { isMutation: boolean; unknownOutcome: boolean };
 }
 
 /** cause 체인을 훑어 code·name 을 모은다. 토큰이 섞일 수 있는 message 는 담지 않는다. */
@@ -125,11 +140,113 @@ const TRANSIENT_CODES = new Set([
 	'INVALID_JSON', 'EMPTY_RESPONSE',
 ]);
 
+/**
+ * 재시도할 만한 «문구». status 도 networkCodes 도 없을 때 마지막으로 보는 그물이다.
+ * ⚠️ 표시용으로 자른 문자열에 이걸 대면 안 된다 — 뒤쪽에 있던 단서가 잘려 나간다.
+ */
+export const TRANSIENT_MESSAGE_RE =
+	/connection pool|timed out|timeout|ETIMEDOUT|ECONNRESET|socket hang up/i;
+
+/**
+ * 이 질의가 «쓰기» 인가.
+ *
+ * ★★ 한 곳에서만 만든다. 예전에 같은 식을 두 군데에 복제해 뒀는데, 한쪽만 고치면
+ *   경고와 진단이 서로 다른 말을 하게 된다(같은 실수를 세 번 했다).
+ *
+ * ⚠️ `/^\s*mutation/` 만으로는 부족하다. GraphQL 은 `#` 주석과 쉼표를 공백처럼
+ *   취급하고, 파일 앞에 BOM 이 붙기도 한다. `# 설명\nmutation { writePost }` 을
+ *   읽기로 보면 **제일 위험한 안내**(「읽기라 다시 불러도 안전합니다」)가 나간다
+ *   (코덱스 9차 재현). 그래서 앞의 무의미한 것들을 걷어낸 뒤 본다.
+ */
+export function looksLikeWrite(query: string, isMutation?: boolean): boolean {
+	if (isMutation === true) return true;
+	// ⚠️ 문서 «맨 앞» 만 봐서는 안 된다. `fragment F on Post { … } mutation M { … }` 는
+	//   유효한 문서인데 앞이 fragment 라 읽기로 읽혔다(코덱스 11차).
+	// ⚠️ 주석과 문자열 리터럴 안의 글자도 세면 안 된다. 본문에 `mutation` 이라고 쓴 글을
+	//   올리는 순간 모든 읽기가 쓰기로 둔갑한다.
+	// ⚠️ 그리고 **정의의 첫 낱말만** 키워드다. `query mutation { … }` 는 이름이 mutation 인
+	//   읽기이고, `fragment mutation on Post { … }` 도 읽기다(코덱스 12차).
+	let i = 0;
+	let depth = 0;
+	// 지금 읽는 낱말이 «정의를 여는 키워드» 자리인가. 문서 시작과 정의가 닫힌 직후가 그렇다.
+	let atDefinitionStart = true;
+	while (i < query.length) {
+		const c = query[i] ?? '';
+		// 주석: 줄 끝까지. GraphQL 의 줄바꿈은 LF·CR·CRLF 셋 다다.
+		if (c === '#') {
+			i += 1;
+			while (i < query.length && query[i] !== '\n' && query[i] !== '\r') i += 1;
+			continue;
+		}
+		// 블록 문자열 """…""". 보통 문자열보다 먼저 본다.
+		// ⚠️ 안에서 `\"""` 는 «끝» 이 아니라 이스케이프된 따옴표 셋이다(코덱스 12차).
+		if (query.startsWith('"""', i)) {
+			i += 3;
+			while (i < query.length) {
+				if (query[i] === '\\' && query.startsWith('"""', i + 1)) {
+					i += 4;
+					continue;
+				}
+				if (query.startsWith('"""', i)) break;
+				i += 1;
+			}
+			i += 3;
+			continue;
+		}
+		if (c === '"') {
+			i += 1;
+			while (i < query.length && query[i] !== '"') {
+				if (query[i] === '\\') i += 1;
+				i += 1;
+			}
+			i += 1;
+			continue;
+		}
+		if (c === '{' || c === '(' || c === '[') {
+			// 깊이 0 에서 여는 중괄호는 «이름 없는 질의» 이거나 정의의 본문이다.
+			if (depth === 0) atDefinitionStart = false;
+			depth += 1;
+			i += 1;
+			continue;
+		}
+		if (c === '}' || c === ')' || c === ']') {
+			depth -= 1;
+			if (depth < 0) depth = 0;
+			// ★ **중괄호가 닫힐 때만** 정의가 끝난 것이다.
+			//   ⚠️ 변수 정의의 `)` 까지 «정의 끝» 으로 보면, 그 뒤의 지시어 이름을 키워드로
+			//   읽는다 — `query Q($x: Int = 1) @mutation { … }` 가 쓰기가 됐다(코덱스 13차).
+			if (c === '}' && depth === 0) atDefinitionStart = true;
+			i += 1;
+			continue;
+		}
+		if (depth === 0 && /[_A-Za-z]/.test(c)) {
+			let j = i;
+			while (j < query.length && /[_0-9A-Za-z]/.test(query[j] ?? '')) j += 1;
+			// ★ 키워드 자리에서만 판정한다. 그 뒤의 낱말은 연산·fragment 의 «이름» 이다.
+			if (atDefinitionStart) {
+				if (query.slice(i, j).toLowerCase() === 'mutation') return true;
+				atDefinitionStart = false;
+			}
+			i = j;
+			continue;
+		}
+		i += 1;
+	}
+	return false;
+}
+
 export function isTransient(error: unknown): boolean {
 	if (!(error instanceof VelogApiError)) return false;
 
 	// ★ 부분 성공은 무슨 일이 있어도 다시 치지 않는다. 이미 반영됐을 수 있다.
 	if (error.detail?.partial) return false;
+
+	// ★★ «검증» 표류는 다시 쳐도 같은 답이다. 5xx 로 온다고 재시도하면 예산만 태운다.
+	//   ⚠️ 한때 이걸 'status 를 안 싣는' 방식으로 했는데, 그러면 4xx 의 의미까지
+	//   사라져 401 이 재시도되는 회귀가 났다. 표식을 따로 두는 편이 안전하다.
+	//   ⚠️ 그리고 «실행» 표류(null-on-non-null)는 막지 않는다. 일시적일 수 있어서
+	//   막으면 회복 가능한 읽기를 포기한다(코덱스 4차). 그건 아래 status 판정에 맡긴다.
+	if (error.detail?.drift && isValidationDrift(error.detail.drift.kind)) return false;
 
 	const status = error.detail?.status;
 	if (status !== undefined && status >= 500) return true;
@@ -140,9 +257,10 @@ export function isTransient(error: unknown): boolean {
 	for (const code of error.detail?.networkCodes ?? []) {
 		if (TRANSIENT_CODES.has(code)) return true;
 	}
-	return /connection pool|timed out|timeout|ETIMEDOUT|ECONNRESET|socket hang up/i.test(
-		error.message,
-	);
+	// ★ 절단 전 원문에서 이미 판정해 실어 보낸 것이 있으면 그것을 믿는다.
+	//   message 는 표시용으로 잘려 있어서 뒤쪽 단서가 사라졌을 수 있다.
+	if (error.detail?.transientText === true) return true;
+	return TRANSIENT_MESSAGE_RE.test(error.message);
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -207,6 +325,7 @@ export class VelogClient {
 	readonly #now: () => number;
 	readonly #allowInsecureEndpoint: boolean;
 
+
 	constructor(options: ClientOptions) {
 		this.#tokens = new TokenStore(options.auth);
 		this.#endpoint = options.endpoint ?? VELOG_ENDPOINT;
@@ -218,6 +337,20 @@ export class VelogClient {
 		this.#sleep = options.sleepImpl ?? defaultSleep;
 		this.#now = options.nowImpl ?? Date.now;
 		this.#allowInsecureEndpoint = options.allowInsecureEndpoint ?? false;
+	}
+
+	/** 이 클라이언트가 실제로 치는 GraphQL 주소. 진단 도구가 같은 곳을 보게 한다. */
+	get endpoint(): string {
+		return this.#endpoint;
+	}
+
+	/**
+	 * 이 클라이언트가 쓰는 fetch. 진단 도구가 **같은 통로**로 나가게 한다.
+	 * ⚠️ endpoint 만 맞추고 fetch 는 전역을 쓰면, 테스트에서 주입한 서버를 무시하고
+	 *   실제 벨로그를 친다. 코덱스 4차 지적을 반만 고친 상태가 그랬다.
+	 */
+	get fetchImpl(): typeof fetch {
+		return this.#fetch;
 	}
 
 	get isAuthenticated(): boolean {
@@ -260,7 +393,9 @@ export class VelogClient {
 			} catch (error) {
 				lastError = error;
 				failed = true;
-				if (!isTransient(error) || attempt === this.#maxRetries) throw error;
+				if (!isTransient(error) || attempt === this.#maxRetries) {
+					throw this.#withDiagnosis(error);
+				}
 				// 남은 예산보다 오래 자면 자고 일어나 아무것도 못 한다.
 				const backoff = 500 * 2 ** attempt; // 500ms → 1s
 				if (deadline - this.#now() <= backoff) break;
@@ -272,7 +407,29 @@ export class VelogClient {
 				`벨로그가 ${this.#retryBudgetMs / 1000}초 안에 응답하지 않아 중단했습니다.`,
 			);
 		}
-		throw lastError;
+		throw this.#withDiagnosis(lastError);
+	}
+
+	/**
+	 * 표류 판정이 붙은 오류에 **판정과 처방만** 덧붙인다. 네트워크는 쓰지 않는다.
+	 *
+	 * ★★ 한때 여기서 그 타입을 다시 introspection 해 «지금 있는 필드» 목록을 붙였다.
+	 *   그 경로에서 예산 초과·재시도마다 중복·취소 미전파·마스킹 우회·endpoint 불일치가
+	 *   줄줄이 났고(검증 4회 42건 중 11건), 정작 **모델은 그 목록으로 할 수 있는 게
+	 *   없었다** — 질의문이 고정이라서다. 코덱스 4차 결론: 오류에는 짧고 정확한 안내만.
+	 *   실제 조회는 velog_diagnose 를 부를 때만 한다. 그건 사용자·모델이 원해서 부르는 것이다.
+	 *
+	 * ★ 결과를 **마스킹해서** 붙인다. 판정에 실린 이름은 상대가 준 값이다.
+	 */
+	#withDiagnosis(error: unknown): unknown {
+		if (!(error instanceof VelogApiError)) return error;
+		// 기준선이 없으면 진단할 근거가 없다. 원래 오류를 그대로 준다.
+		if (!BASELINE_STATUS.ok) return error;
+		const suspicion = error.detail?.drift;
+		const context = error.detail?.driftContext;
+		if (!suspicion || !context) return error;
+		const note = this.#mask(explainDrift(suspicion, context));
+		return new VelogApiError(`${error.message}${note}`, error.detail);
 	}
 
 	/**
@@ -301,10 +458,16 @@ export class VelogClient {
 		options: RequestOptions = {},
 	): Promise<T> {
 		options.signal?.throwIfAborted();
-		return this.#requestOnce<T>(query, variables, {
-			signal: options.signal,
-			isMutation: true,
-		});
+		try {
+			return await this.#requestOnce<T>(query, variables, {
+				signal: options.signal,
+				isMutation: true,
+			});
+		} catch (error) {
+			// ★★ 쓰기야말로 진단이 필요한 자리다. 여기가 빠지면 "이미 반영됐을 수
+			//   있으니 확인하세요" 라는 처방이 영영 안 나간다.
+			throw this.#withDiagnosis(error);
+		}
 	}
 
 	/**
@@ -484,43 +647,114 @@ export class VelogClient {
 		//   실패 응답에도 실려 올 수 있으므로 상태 확인보다 먼저 처리한다.
 		this.#tokens.update(parseSetCookie(response.headers.get('set-cookie')));
 
-		if (!response.ok) {
-			const body = this.#mask(await response.text().catch(() => ''));
-			// ★ 벨로그는 만료 토큰에 HTTP 401 을 준다 (실측). GraphQL errors 경로가
-			//   아니라 여기로 떨어지므로, 만료 안내를 이쪽에도 붙여야 한다.
-			//   실사용에서 제일 흔한 오류인데 안내가 없으면 원인을 못 찾는다.
+		// ★★ 본문은 한 번만 읽는다. 아래에서 상태 코드와 GraphQL errors 를 함께 봐야 한다.
+		//   ⚠️ 여기서 `.catch(() => '')` 로 뭉개면 «본문 수신 중 연결 끊김» 의 원인 코드가
+		//   사라져 재시도 판정이 죽는다(코덱스: UND_ERR_SOCKET·TimeoutError 유실).
+		let rawBody: string;
+		try {
+			rawBody = await response.text();
+		} catch (cause) {
+			const reason = cause instanceof Error ? cause.message : String(cause);
+			// ★★ 본문을 못 받아도 **상태 코드는 이미 알고 있다.** 그걸 버리면 401 이
+			//   «영구 실패» 가 아니라 «원인 불명» 이 되어 세 번 다시 치고, 만료 안내도
+			//   사라진다(코덱스 5차 A/B: 기준 1회·status 401·안내 O → 3회·유실·없음).
 			const hint =
 				response.status === 401 || response.status === 403 ? AUTH_HINT : '';
+			// ⚠️ 2xx 에는 status 를 싣지 않는다. isTransient 는 «status 가 있으면 그것으로
+			//   판정» 하는데, 200 은 «5xx 아님» 이라 재시도가 막힌다. 그런데 200 인데
+			//   본문이 끊긴 건 전형적인 일시 장애라 다시 쳐야 한다(코덱스 6차 A/B:
+			//   기준 커밋은 2회째 성공, 내 수정본은 1회 실패). 상태로 가르는 것은
+			//   4xx·5xx 에서만 의미가 있다.
+			const carriesStatus = response.status >= 400;
 			throw new VelogApiError(
-				`벨로그 HTTP ${response.status}: ${truncate(body, 400)}${hint}`,
-				{ status: response.status },
+				`벨로그 HTTP ${response.status} 응답 본문을 받지 못했습니다: ${this.#mask(reason)}${hint}`,
+				{
+					...(carriesStatus ? { status: response.status } : {}),
+					networkCodes: [...collectCauseCodes(cause), 'INVALID_JSON'],
+				},
 			);
+		}
+		let parsed: GraphQLResponse<T> | null = null;
+		let parseError: unknown = null;
+		try {
+			parsed = rawBody ? (JSON.parse(rawBody) as GraphQLResponse<T>) : null;
+		} catch (cause) {
+			parseError = cause;
+		}
+		// ⚠️ `errors: [null]` 이 실제로 올 수 있다. 예전에는 500 이 먼저 던져져 닿지
+		//   않았는데, 이제 이 경로로 흘러 `e.message` 에서 TypeError 로 죽었다
+		//   (코덱스 A/B 대조에서 잡았다). 쓸 수 있는 원소가 하나라도 있어야 인정한다.
+		const graphQLErrors = (Array.isArray(parsed?.errors) ? parsed.errors : []).filter(
+			(e): e is { message?: string; extensions?: { code?: string } } =>
+				e !== null && typeof e === 'object',
+		);
+		const carriesGraphQLErrors = graphQLErrors.length > 0;
+
+		if (!response.ok) {
+			// ★★ 벨로그는 **GraphQL 오류도 HTTP 500 으로** 준다.
+			//   실측(2026-09-14): searchPosts 에 `updated_at` 을 넣으면
+			//   `Cannot return null for non-nullable field Post.updated_at.` 이
+			//   HTTP 500 으로 온다. 예전에는 여기서 바로 던져서 아래 진단 경로에
+			//   **영영 닿지 못했다** — 우리가 아는 유일한 실사례에서 기능이 안 돌았다
+			//   (코덱스 검증에서 diagnosisAttached:false 로 확인).
+			//   그래서 errors 가 실려 있으면 GraphQL 오류로 다뤄 아래로 흘려보낸다.
+			if (!carriesGraphQLErrors) {
+				const body = this.#mask(rawBody);
+				// ★ 벨로그는 만료 토큰에 HTTP 401 을 준다 (실측). GraphQL errors 경로가
+				//   아니라 여기로 떨어지므로, 만료 안내를 이쪽에도 붙여야 한다.
+				//   실사용에서 제일 흔한 오류인데 안내가 없으면 원인을 못 찾는다.
+				const hint =
+					response.status === 401 || response.status === 403 ? AUTH_HINT : '';
+				throw new VelogApiError(
+					`벨로그 HTTP ${response.status}: ${truncate(body, 400)}${hint}`,
+					{ status: response.status },
+				);
+			}
 		}
 
 		// ★ JSON 파싱 실패가 그냥 SyntaxError 로 빠지면 마스킹도 재시도 판정도 우회한다.
 		//   벨로그가 502 HTML 을 200 으로 주는 경우가 실제로 있다.
-		let payload: GraphQLResponse<T>;
-		try {
-			payload = (await response.json()) as GraphQLResponse<T>;
-		} catch (cause) {
-			const reason = cause instanceof Error ? cause.message : String(cause);
+		if (parsed === null) {
+			const reason =
+				parseError instanceof Error ? parseError.message : '본문이 비어 있습니다';
 			// ★ INVALID_JSON 표식을 붙여 재시도 대상으로 만든다. 이 자리에 오는 건
 			//   대부분 우리 질의 문제가 아니라 상대가 200 으로 흘린 502 HTML 이다.
 			throw new VelogApiError(
 				`벨로그 응답을 JSON 으로 읽지 못했습니다: ${this.#mask(reason)}`,
-				{ networkCodes: [...collectCauseCodes(cause), 'INVALID_JSON'] },
+				{ networkCodes: [...collectCauseCodes(parseError), 'INVALID_JSON'] },
 			);
 		}
+		const payload = parsed;
+		/** 이 응답의 HTTP 상태. 5xx 라도 errors 가 실렸으면 아래 판정이 재시도를 정한다. */
+		const httpStatus = response.ok ? undefined : response.status;
 
-		if (payload.errors?.length) {
-			const messages = payload.errors
-				.map((e) => e.message ?? '(메시지 없음)')
-				.join(' / ');
-			const codes = payload.errors.map((e) => e.extensions?.code).filter(Boolean);
+		if (graphQLErrors.length > 0) {
+			// ⚠️ 예전에는 비정상 HTTP 본문을 truncate(400) 했다. 이 경로로 옮기면서
+			//   제한이 사라져 1MiB 짜리 오류 메시지가 그대로 나갔다(코덱스 실측).
+			// ⚠️ 절단본으로 재시도를 판정하면 안 된다. isTransient 는 status 도
+			//   networkCodes 도 없을 때 **message 문구**로 판정하는데, 'connection pool
+			//   timeout' 이 800자 뒤에 있으면 잘려서 «영구 오류» 가 된다(코덱스 9차 실측:
+			//   기준 커밋은 2회째 성공, 잘린 쪽은 1회 실패). 그래서 판정은 원문으로
+			//   미리 하고(transientText), 사람이 볼 것만 자른다.
+			const fullMessages = graphQLErrors.map((e) => e.message ?? '(메시지 없음)').join(' / ');
+			const transientText = TRANSIENT_MESSAGE_RE.test(fullMessages);
+			// ★★ **가린 뒤에 자른다.** 순서를 뒤집으면 800자 경계에 토큰이 걸렸을 때
+			//   앞 조각만 남아 마스킹 패턴에 안 걸린다 — 토큰 앞 20자가 그대로 나갔다
+			//   (코덱스 10차 실측). 마스킹은 «온전한 토큰» 을 찾기 때문이다.
+			const messages = truncate(this.#mask(fullMessages), 800);
+			const codes = graphQLErrors.map((e) => e.extensions?.code).filter(Boolean);
 
 			// 만료를 뭉뚱그리면 사용자가 원인을 못 찾는다. 별도로 짚어준다.
+			// ⚠️ 본문 문구로만 판정하면 401/403 인데 메시지가 'Invalid token' 인 경우를
+			//   놓친다. 예전에는 상태 코드로 붙였는데 이 경로로 옮기면서 잃었다
+			//   (코덱스 A/B 대조: authHint true → false). 상태와 본문 둘 다 본다.
 			const looksUnauthenticated =
-				codes.includes('UNAUTHENTICATED') || /not logged|unauthor/i.test(messages);
+				httpStatus === 401 ||
+				httpStatus === 403 ||
+				codes.includes('UNAUTHENTICATED') ||
+				// ⚠️ 절단본으로 판정하면 안 된다. 만료 문구가 800자 뒤에 있으면 잘려서
+				//   토큰 갱신 안내가 사라진다(코덱스 11차). 재시도 판정과 같은 이유다.
+				/not logged|unauthor/i.test(fullMessages);
 			const hint = looksUnauthenticated ? AUTH_HINT : '';
 
 			// ★★ `data` 가 같이 왔으면 **부분 성공**이다 — 실패가 아니다.
@@ -547,27 +781,81 @@ export class VelogClient {
 			//   (코덱스 교차검증에서 잡았다: 재시도 가능하던 읽기가 1회로 죽었다.)
 			//   그래서 **값이 하나라도 실제로 들어있을 때만** 부분 성공으로 본다.
 			const partial = hasAnyValue(payload.data);
-			const unknownOutcome = partial || (options.isMutation === true && executed);
+			// 쓰기는 «실행이 시작된» 것만으로도 결과 불명이다. 읽기는 값이 왔을 때만.
+			const isWriteQuery = looksLikeWrite(query, options.isMutation);
+			const unknownOutcome = partial || (isWriteQuery && executed);
+			// ★★ 「두 번 적용될 수 있다」를 어디에 붙일지는 `isMutation` 옵션만으로 못 정한다.
+			//
+			//   ⚠️ `request()` 로 `mutation { writePost }` 를 부르는 호출이 실제로 있다.
+			//   옵션은 읽기인데 서버에서는 글을 만든다. 거기에 「읽기라 안전」이라고
+			//   하면 제일 위험한 안내가 된다. 그래서 **질의문의 mutation 키워드도 본다.**
+			//
+			//   ⚠️ 한때 `isWrite = isMutation || partial` 로 했는데, unknownOutcome 이 참이면
+			//   isWrite 도 항상 참이라 아래 «읽기 부분 결과» 분기가 도달 불가였다.
+			//   그리고 읽기의 부분 결과에 「두 번 적용」이 붙어 진단의 「읽기라 부작용
+			//   없음」과 한 메시지에서 충돌했다(코덱스 4차).
 			const partialWarning = unknownOutcome
-				? '\n⚠️ 요청이 **이미 반영됐을 수** 있습니다' +
-					(partial
-						? ' (서버가 결과 데이터를 함께 돌려줬습니다).'
-						: ' (서버가 실행을 시작한 뒤 응답을 만들지 못했습니다).') +
-					' 다시 시도하면 두 번 적용될 수 있으니 벨로그에서 확인한 뒤 결정하세요.' +
-					(created ? ` (id=${created})` : '')
+				? isWriteQuery
+					? '\n⚠️ 요청이 **이미 반영됐을 수** 있습니다' +
+						(partial
+							? ' (서버가 결과 데이터를 함께 돌려줬습니다).'
+							: ' (서버가 실행을 시작한 뒤 응답을 만들지 못했습니다).') +
+						' 다시 시도하면 두 번 적용될 수 있으니 벨로그에서 확인한 뒤 결정하세요.' +
+						(created ? ` (id=${created})` : '')
+					: '\n⚠️ 결과가 **일부만** 왔습니다 (서버가 값과 오류를 함께 돌려줬습니다).' +
+						' 읽기라 바뀐 것은 없지만, 받은 값이 온전하지 않을 수 있습니다.'
 				: '';
+
+			// ★★ 스키마가 바뀐 것으로 보이는지 **여기서 판정만** 한다.
+			//   ⚠️ 진단 조회(추가 네트워크 왕복)를 이 자리에서 돌리면 재시도마다
+			//   또 돈다. 코덱스 실측: 총예산 100ms 인데 5,029ms, 혼합 시 16,506ms.
+			//   그래서 판정 결과만 detail 에 실어 보내고, **최종 실패에서 한 번만**
+			//   requestWithRetry 가 진단을 붙인다.
+			//   ⚠️ 오류를 ' / ' 로 합쳐 넘기면 엉뚱한 오류가 뽑힌다 — 한 건씩 준다.
+			const suspicion = suspectDriftIn(graphQLErrors.map((e) => e.message ?? ''));
 
 			// ★ 원본 payload.errors 를 그대로 담으면 토큰이 Error 객체에 남는다.
 			//   지금은 MCP SDK 가 message 만 내보내지만, 나중에 console.error(error)
 			//   나 오류 수집기를 붙이는 순간 샌다. 코드만 보관한다.
+			// ★★ 조립이 끝난 **전체**를 마스킹한다. 조각별로 가리면 새 조각을 붙일 때
+			//   마스킹 밖에 놓인다 — 실제로 partialWarning 의 `id=` 가 그랬다. 서버가
+			//   돌려준 id 에 토큰이 들어 있으면 그대로 나갔다(코덱스 9차 재현).
 			throw new VelogApiError(
-				`벨로그 GraphQL 오류: ${this.#mask(messages)}${hint}${partialWarning}`,
+				this.#mask(`벨로그 GraphQL 오류: ${messages}${hint}${partialWarning}`),
 				{
 					graphqlErrorCodes: codes.filter((c): c is string => typeof c === 'string'),
-					// partial 은 '값이 실제로 왔다' 는 뜻이고, 이게 붙으면 재시도가 막힌다.
-					// 쓰기의 결과 불명은 어차피 mutate 가 재시도하지 않으므로 표식을
-					// 넓히지 않는다 — 읽기의 정당한 재시도까지 막을 이유가 없다.
-					...(partial ? { partial: true } : {}),
+					...(transientText ? { transientText: true } : {}),
+					// ★★ `partial` 은 **재시도를 막는 표식**이다. 막아야 하는 이유는 하나뿐이다 —
+					//   «이미 반영됐을 수 있는데 다시 치면 두 번 적용된다». 그건 **쓰기** 얘기다.
+					//
+					//   ⚠️ 읽기에 붙이면 회복 가능한 조회를 1회로 죽인다. 실측 A/B(기준 커밋
+					//   9267bf7 대조): HTTP 500 + 부분 읽기 값 + 「connection pool timeout」을
+					//   한 번 준 뒤 정상 응답을 주는 서버에서, 기준은 **2회째 성공**인데
+					//   여기는 **1회 실패**였다(코덱스 13차). 비정상 HTTP 응답도 이 경로로
+					//   오게 바꾸면서 생긴 회귀다 — 예전에는 500 이 여기까지 오지 않았다.
+					//
+					//   읽기는 서버 상태를 안 바꾼다. 값이 일부 왔다고 해서 다시 물어보면
+					//   안 될 이유가 없다. 그래서 **쓰기일 때만** 막는다.
+					...(partial && isWriteQuery ? { partial: true } : {}),
+					// ★ status 는 «항상» 싣는다. 예전에 표류일 때 빼봤더니 4xx 의 의미까지
+					//   같이 사라져 401 이 재시도되는 회귀가 났다(코덱스 A/B 대조).
+					//   표류를 다시 안 치는 것은 아래 drift 표식이 따로 맡는다.
+					...(httpStatus !== undefined ? { status: httpStatus } : {}),
+					// ★★ detail 에도 마스킹을 건다. 상대가 비밀값을 필드 이름에 되비추면
+					//   message 만 가려지고 detail 로 새어 나간다(코덱스가 재현).
+					...(suspicion
+						? {
+								drift: {
+									kind: suspicion.kind,
+									typeName: suspicion.typeName ? this.#mask(suspicion.typeName) : null,
+									fieldName: suspicion.fieldName ? this.#mask(suspicion.fieldName) : null,
+								},
+								driftContext: {
+									isMutation: isWriteQuery,
+									unknownOutcome,
+								},
+							}
+						: {}),
 				},
 			);
 		}
