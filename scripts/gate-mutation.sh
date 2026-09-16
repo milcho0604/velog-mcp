@@ -103,10 +103,16 @@ PY
 # 기준선 파일처럼 dist 밖에 있는 것이 안 실리는 경우를 재현한다.
 break_pkg() {
   cp "$BAK.pkg.json" package.json
+  # ⚠️ 치환이 «안 맞으면» 조용히 no-op 이 된다. 그러면 발행물이 멀쩡한데도
+  #    「관문이 불량을 통과시킨다」로 읽혀 엉뚱한 곳을 고치게 된다. 실제로
+  #    package.json 의 `files` 에 한 줄이 끼자 이 함수가 아무것도 안 바꿨고
+  #    기준선 검사가 거짓 빨강이 됐다. **바뀌었는지 반드시 단언한다.**
   python3 - <<PY
-import pathlib
-p = pathlib.Path('package.json'); s = p.read_text()
+import pathlib, sys
+p = pathlib.Path('package.json'); s = p.read_text(); _before = s
 $1
+if s == _before:
+    print('PKG_NOOP'); sys.exit(9)
 p.write_text(s)
 PY
 }
@@ -142,7 +148,10 @@ check_pkg() {
   local label="$1" pkg_break="$2" gate_find="$3" gate_repl="$4"
 
   cp "$BAK.ts" "$GATE"
-  break_pkg "$pkg_break"
+  break_pkg "$pkg_break" || {
+    echo "  ??  $label — 발행물 변이가 아무것도 안 바꿨다 (치환 패턴이 낡았다)"
+    cp "$BAK.pkg.json" package.json; fail=$((fail+1)); return
+  }
   local caught; caught=$(run_gate)
 
   break_gate "$gate_find" "$gate_repl" || { echo "  ??  $label — 관문 변이 패턴 불일치"; fail=$((fail+1)); return; }
@@ -354,7 +363,7 @@ s = s.replace('await server.connect(new StdioServerTransport());', inject)" \
 #    한때 «서버가 죽는지» 로 잡았는데, 서버가 안 죽게 고치자 그 그물이 사라졌다.
 #    그래서 «소스가 읽는 경로가 발행물에 실제로 있는지» 로 본다.
 check_pkg "발행물 구성: 기준선 누락" \
-  "s = s.replace('\"dist\",' + chr(10) + '    \"schema\",', '\"dist\",', 1)" \
+  "s = s.replace(chr(10) + '    \"schema\",', '', 1)" \
   "		if (!baselineOk) {" \
   "		if (false) {"
 
