@@ -2,7 +2,7 @@
 	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
 	"name": "io.github.milcho0604/velog",
 	"title": "Velog",
-	"description": "Read and write Velog (velog.io), Korean dev blog. Diagrams, sequences. Public publishing is opt-in.",
+	"description": "Claude 나 Codex 에서 벨로그(velog.io) 글을 읽고 쓰고 백업한다. 다이어그램과 시퀀스도 그린다. 공개 발행은 사람이 켤 때만 열린다.",
 	"version": "0.9.0",
 	"websiteUrl": "https://github.com/milcho0604/velog-mcp#readme",
 	"repository": {
@@ -20,35 +20,35 @@
 			"environmentVariables": [
 				{
 					"name": "VELOG_ACCESS_TOKEN",
-					"description": "Velog access token. Either token enables writing; this one expires sooner.",
+					"description": "벨로그 access token. 둘 중 아무거나 있으면 쓰기가 열린다. 이쪽이 먼저 만료된다.",
 					"format": "string",
 					"isRequired": false,
 					"isSecret": true
 				},
 				{
 					"name": "VELOG_REFRESH_TOKEN",
-					"description": "Velog refresh token. Either token enables writing; this one lasts 30 days.",
+					"description": "벨로그 refresh token. 둘 중 아무거나 있으면 쓰기가 열린다. 이쪽은 30일 간다.",
 					"format": "string",
 					"isRequired": false,
 					"isSecret": true
 				},
 				{
 					"name": "VELOG_ALLOW_PUBLIC",
-					"description": "Set to 1 to allow public publishing. Off by default; the model cannot set this.",
+					"description": "1 이면 공개 발행이 열린다. 기본은 꺼짐이고, 모델은 이 값을 못 바꾼다.",
 					"format": "string",
 					"isRequired": false,
 					"isSecret": false
 				},
 				{
 					"name": "VELOG_ALLOW_PROFILE",
-					"description": "Set to 1 to allow editing profile fields. Reading the profile always works.",
+					"description": "1 이면 프로필 수정이 열린다. 프로필 읽기는 언제나 된다.",
 					"format": "string",
 					"isRequired": false,
 					"isSecret": false
 				},
 				{
 					"name": "VELOG_CHROME_PATH",
-					"description": "Path to a local Chrome binary, used for diagram, sequence, and cover rendering.",
+					"description": "로컬 크롬 실행 파일 경로. 다이어그램, 시퀀스, 표지 렌더링에 쓴다.",
 					"format": "string",
 					"isRequired": false,
 					"isSecret": false

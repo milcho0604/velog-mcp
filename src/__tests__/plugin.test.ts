@@ -820,7 +820,7 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 		//
 		// ⚠️ 문서에 '틀린 이름'을 일부러 예시로 적으면 여기서 걸린다. 그때는 그
 		//    예시를 코드 폰트 밖으로 빼거나 이 목록에서 제외할 것.
-		const docs = ['README.md', 'README.ko.md'];
+		const docs = ['README.md', 'README.en.md'];
 		const texts = await Promise.all(
 			docs.map(async (f) => readFile(new URL(`../../${f}`, import.meta.url), 'utf8')),
 		);
@@ -1426,18 +1426,18 @@ describe('★ P28 — README 가 말하는 검사 계열이 실제와 맞는다'
 			);
 		}
 
-		const ko = await readFile(new URL('../../README.ko.md', import.meta.url), 'utf8');
-		const en = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+		const ko = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+		const en = await readFile(new URL('../../README.en.md', import.meta.url), 'utf8');
 
 		for (const [key, n] of Object.entries(max)) {
 			// 한글판은 물결(~), 영문판은 en dash(–) 를 쓴다.
 			assert.ok(
 				ko.includes(`${key}1~${key}${n}`),
-				`README.ko.md 가 ${key}1~${key}${n} 을 안 적고 있다 — 검사를 넣고 문서를 안 고쳤다`,
+				`README.md 가 ${key}1~${key}${n} 을 안 적고 있다 — 검사를 넣고 문서를 안 고쳤다`,
 			);
 			assert.ok(
 				en.includes(`${key}1–${key}${n}`),
-				`README.md 가 ${key}1–${key}${n} 을 안 적고 있다 — 검사를 넣고 문서를 안 고쳤다`,
+				`README.en.md 가 ${key}1–${key}${n} 을 안 적고 있다 — 검사를 넣고 문서를 안 고쳤다`,
 			);
 		}
 	});

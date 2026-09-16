@@ -5,76 +5,70 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-2-lightgrey)](package.json)
 
-An MCP server for [Velog](https://velog.io), the Korean developer blogging platform.
-Read your blog, draft posts, publish them, and back everything up — from Claude or any
-MCP client.
+[벨로그](https://velog.io)를 Claude 같은 MCP 클라이언트에서 다루는 서버.
+글을 읽고, 초안을 쓰고, 발행하고, 통째로 백업한다.
 
-**[한국어 문서 →](README.ko.md)**
-
----
-
-## Why another one?
-
-Two Velog MCP servers already exist. This one differs in three ways.
-
-**1. Publishing is a permission, not a default.**
-Out of the box the server can create drafts and publish **privately**. Public
-publishing requires you to set an environment variable. The model cannot flip that
-switch — only you can, in your MCP config.
-
-**2. Every quirk is measured, not assumed.**
-Velog's GraphQL API is undocumented. This repo records what it *actually* does,
-verified against [velog-io/velog](https://github.com/velog-io/velog) source and live
-calls. Six server-side quirks are written up in
-[docs/api-reference.md](docs/api-reference.md) — including one that silently returns an
-empty list, and one that can turn your published posts private.
-
-**3. Two runtime dependencies.** `@modelcontextprotocol/sdk` and `zod`. HTTP, test
-runner, and TypeScript execution all come from Node itself.
+**[English →](README.en.md)**
 
 ---
 
-## Install
+## 왜 또 만들었나
 
-Requires **Node.js 22.18 or newer**. What runs is the compiled `dist/index.js`, but development and verification execute `.ts` directly, and 22.18 is the first release where that works without a flag. CI covers 22.18, 24 and 26.
+벨로그 MCP 서버가 이미 둘 있다. 이 구현은 세 가지가 다르다.
 
-### As a Claude Code plugin (recommended)
+**1. 발행은 기본값이 아니라 권한이다.**
+설치 직후에는 초안 작성과 **비공개 발행**까지 된다. 공개 발행은 환경변수를 넣어야
+열린다. 그 스위치는 모델이 못 건드린다 — MCP 설정 파일을 여는 사람만 바꿀 수 있다.
+
+**2. 벨로그 동작을 추측하지 않고 실측했다.**
+벨로그 GraphQL 은 비공식이라 문서가 없다. 이 레포는 **실제로 어떻게 동작하는지**를
+[velog-io/velog](https://github.com/velog-io/velog) 소스와 실호출로 확인해
+기록한다. 서버 쪽 함정 6가지가 [docs/api-reference.md](docs/api-reference.md) 에
+있다 — 오류 없이 빈 결과를 주는 경우, 발행글을 비공개로 만드는 경우 포함.
+
+**3. 런타임 의존성 2개.** `@modelcontextprotocol/sdk` 와 `zod` 뿐이다.
+HTTP 와 테스트 러너와 타입스크립트 실행은 전부 Node 내장을 쓴다.
+
+---
+
+## 설치
+
+**Node.js 22.18 이상**이 필요하다. 실행되는 것은 컴파일된 `dist/index.js` 지만, 개발과 검증이 `.ts` 를 직접 실행하고 그게 플래그 없이 도는 첫 버전이 22.18 이다. CI 는 22.18 과 24 와 26 에서 돌린다.
+
+### Claude Code 플러그인으로 (권장)
 
 ```bash
 /plugin marketplace add milcho0604/velog-mcp
 /plugin install velog@milcho
 ```
 
-Installation asks for four values. **Leave them all blank and it still installs,
-running read-only.**
+설치할 때 값 네 개를 묻는다. **하나도 안 넣어도 설치되고, 읽기 전용으로 동작한다.**
 
-| Prompt | If left blank |
+| 물어보는 것 | 안 넣으면 |
 | --- | --- |
-| Velog refresh token | Read-only (browse, search, stats still work) |
-| Allow public publishing | Drafts and private publishing only |
-| Allow profile edits | Profile tools stay off |
-| Chrome path | Found automatically in standard locations |
+| Velog refresh token | 읽기 전용 (조회·검색·통계는 그대로) |
+| 공개 발행 허용 | 초안과 비공개 발행까지만 |
+| 프로필 수정 허용 | 프로필 도구가 꺼짐 |
+| 크롬 경로 | 표준 위치에서 자동으로 찾는다 |
 
-**The token goes into the macOS Keychain**, not into a settings file in plaintext.
-Only values declared `sensitive: true` reach the Keychain, and a test enforces
-that declaration (P7).
+**토큰이 macOS 키체인에 들어간다.** 설정 파일에 평문으로 남지 않는다 —
+`sensitive: true` 로 선언한 값만 키체인으로 가고, 그건 테스트가 강제한다(P7).
 
-Change values later with `/plugin manage`.
+값을 나중에 바꾸려면 `/plugin manage`.
 
-### As a plain MCP server
+### 그냥 MCP 서버로
 
-Published on npm, so nothing to clone — your MCP client runs it via `npx`. See
-[Configure](#configure) for the config block and the client-support note.
+npm 에 올려뒀으니 클론할 것 없이 MCP 클라이언트가 `npx` 로 띄운다. 설정 블록과
+클라이언트 지원 범위는 [설정](#설정) 을 볼 것.
 
 ```bash
-claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
+claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
   -- npx -y @milcho0604/velog-mcp@0.9.0
 ```
 
-The token stays in your client's config file here. The plugin route above puts it in
-the Keychain instead.
+이 방식은 토큰이 클라이언트 설정 파일에 남는다. 위의 플러그인 방식은 키체인에 넣는다.
 
-### From source
+### 직접 빌드해서
 
 ```bash
 git clone https://github.com/milcho0604/velog-mcp.git
@@ -82,9 +76,9 @@ cd velog-mcp
 npm install && npm run build
 ```
 
-## Configure
+## 설정
 
-Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, …):
+MCP 클라이언트 설정 파일(`claude_desktop_config.json`, `.mcp.json` 등)에 추가한다.
 
 ```json
 {
@@ -93,66 +87,62 @@ Add this to your MCP client config (`claude_desktop_config.json`, `.mcp.json`, �
       "command": "npx",
       "args": ["-y", "@milcho0604/velog-mcp@0.9.0"],
       "env": {
-        "VELOG_REFRESH_TOKEN": "your_refresh_token"
+        "VELOG_REFRESH_TOKEN": "여기에 토큰"
       }
     }
   }
 }
 ```
 
-With the Claude Code CLI:
+Claude Code CLI 라면:
 
 ```bash
-claude mcp add velog -e VELOG_REFRESH_TOKEN=your_refresh_token \
+claude mcp add velog -e VELOG_REFRESH_TOKEN=여기에_토큰 \
   -- npx -y @milcho0604/velog-mcp@0.9.0
 ```
 
-To run a local checkout instead, swap the command for
-`node /absolute/path/to/velog-mcp/dist/index.js`.
+로컬 체크아웃으로 돌리려면 command 를
+`node /절대경로/velog-mcp/dist/index.js` 로 바꾼다.
 
-> **Which clients can run this?** This is a stdio server: the client starts it as a
-> local process. That works in Claude Code, Claude Desktop, Cursor, and other clients
-> that run MCP servers locally. It does **not** work in the claude.ai or ChatGPT web
-> apps — both accept only remote MCP servers reachable over HTTP, since the connection
-> originates from their servers rather than your machine. Using it there would mean
-> hosting it publicly and handing your Velog token to that deployment, which defeats
-> the point of keeping the token on your own machine.
+> **어떤 클라이언트에서 되나?** 이건 stdio 서버다 — 클라이언트가 로컬 프로세스로 띄운다.
+> Claude Code·Claude Desktop·Cursor 처럼 MCP 서버를 로컬에서 실행하는 클라이언트에서 된다.
+> **claude.ai 와 ChatGPT 웹앱에서는 안 된다** — 둘 다 HTTP 로 접근 가능한 원격 MCP 서버만
+> 받는다. 연결이 내 기계가 아니라 그쪽 서버에서 출발하기 때문이다. 웹에서 쓰려면 서버를
+> 공개 호스팅하고 벨로그 토큰을 그 배포본에 넘겨야 하는데, 그러면 토큰을 내 기계에만
+> 두려던 이유가 사라진다.
 
-### Getting your token
+### 토큰 얻는 법
 
-Velog has no public write API, so the server authenticates with your browser session
-cookie.
+벨로그는 공개 쓰기 API 가 없어서 브라우저 세션 쿠키로 인증한다.
 
-1. Log in at [velog.io](https://velog.io)
-2. Open DevTools (`F12`) → **Application** → **Cookies** → `https://velog.io`
-3. Copy the value of **`refresh_token`**
+1. [velog.io](https://velog.io) 에 로그인
+2. 개발자도구(`F12`) → **Application** → **Cookies** → `https://velog.io`
+3. **`refresh_token`** 값을 복사
 
-**`VELOG_REFRESH_TOKEN` alone is enough.** Velog's server reissues the short-lived
-`access_token` on its own ([`authPlugin.mts`](https://github.com/velog-io/velog/blob/main/apps/server/src/common/plugins/global/authPlugin.mts)),
-and this server picks the refreshed cookie out of the response. One paste lasts
-**30 days**.
+**`VELOG_REFRESH_TOKEN` 하나만 넣으면 된다.** 벨로그 서버가 수명 짧은
+`access_token` 을 알아서 재발급하고([`authPlugin.mts`](https://github.com/velog-io/velog/blob/main/apps/server/src/common/plugins/global/authPlugin.mts)),
+이 서버가 응답에 실려 오는 갱신 쿠키를 받아 쓴다. 한 번 넣으면 **30일** 간다.
 
-`VELOG_ACCESS_TOKEN` also works but expires in about an hour by itself.
+`VELOG_ACCESS_TOKEN` 도 받지만 단독으로는 1시간이면 만료된다.
 
-> Tokens are read from the environment only. They are never written to disk, and the
-> server never reads your browser's cookie database or your OS keychain.
-> Whatever you put in your MCP config file does live there in plain text, though —
-> that file is yours to protect.
+> 토큰은 환경변수로만 읽는다. 디스크에 쓰지 않고, 브라우저 쿠키 DB 나 OS 키체인을
+> 건드리지 않는다. 다만 MCP 설정 파일에 적은 값은 그 파일에 평문으로 남는다 —
+> 그 파일 관리는 사용자 몫이다.
 
-**Without a token the server still starts**, read-only. Public posts, search, trending,
-and blog stats all work unauthenticated.
+**토큰이 없어도 서버는 뜬다.** 읽기 전용으로 동작하고, 공개 글 조회·검색·트렌딩·
+블로그 통계는 인증 없이 된다.
 
 ---
 
-## Permissions
+## 권한
 
-| Environment | What you get |
+| 환경변수 | 되는 것 |
 | --- | --- |
-| *(nothing set)* | Read everything · create drafts · **publish privately** · draw and upload images · check the schema — 23 tools |
-| `VELOG_ALLOW_PUBLIC=1` | …plus **public publishing** (adds an `is_private` parameter) |
-| `VELOG_ALLOW_PROFILE=1` | …plus **profile editing** (adds 5 tools) |
+| *(설정 없음)* | 전체 읽기 · 초안 작성 · **비공개 발행** · 그림 생성·업로드 · 스키마 점검 — 도구 23개 |
+| `VELOG_ALLOW_PUBLIC=1` | …**공개 발행** 추가 (`is_private` 파라미터가 생김) |
+| `VELOG_ALLOW_PROFILE=1` | …**프로필 수정** 추가 (도구 5개) |
 
-The two switches are independent — enable either, both, or neither.
+두 스위치는 독립이다 — 하나만 켜도 되고 둘 다 켜도 된다.
 
 ```json
 "env": {
@@ -162,289 +152,287 @@ The two switches are independent — enable either, both, or neither.
 }
 ```
 
-Accepted as "on": `1`, `true`, `yes`, `on`. Anything else is off — a typo won't quietly
-enable it.
+'켬'으로 인정하는 값은 `1`, `true`, `yes`, `on` 뿐이다. 나머지는 전부 꺼짐 —
+오타로 조용히 켜지지 않는다.
 
-When public publishing is off, the `is_private` parameter **does not exist** on any
-tool, so the model has no way to ask for it. When it's on, `is_private` appears and
-still defaults to `true`.
+공개 발행이 꺼져 있으면 어떤 도구에도 `is_private` 파라미터가 **존재하지 않는다.**
+모델이 공개를 요청할 방법 자체가 없다. 켜면 파라미터가 생기지만 기본값은 여전히
+`true`(비공개)다.
 
-### Why private-by-default
+### 왜 비공개가 기본인가
 
-Not caution for its own sake. Velog's rate limiter counts only `is_private: false`
-posts:
+몸사리는 게 아니라 실측 근거가 있다. 벨로그의 발행 제한은 `is_private: false` 인
+글만 센다:
 
 ```ts
 // apps/server/src/services/PostApiService/index.mts
-count({ where: { fk_user_id, is_private: false, released_at: { gt: fiveMinutesAgo } } })
+count({ where: { fk_user_id, is_private: false, released_at: { gt: 5분전 } } })
 if (count >= 10) {
-  updateMany({ where: { fk_user_id, released_at: { gt: fiveMinutesAgo } },
-               data: { is_private: true } })   // flips *everything* recent to private
+  updateMany({ where: { fk_user_id, released_at: { gt: 5분전 } },
+               data: { is_private: true } })   // 최근 글을 '전부' 비공개로
 }
 ```
 
-Private posts don't **increment** that count. But `isPostLimitReached()` runs
-unconditionally, *before* privacy is examined — so if ten public posts already exist in
-the last five minutes, even a private draft request can trigger the sweep. "Doesn't
-increment" is not "can't trigger." That's why write retries stay disabled and the local
-limiter stays in place.
+비공개 글은 이 계수를 **올리지 않는다.** 다만 `isPostLimitReached()` 는 공개 여부를
+보기 **전에** 무조건 실행되므로, 이미 최근 5분에 공개 글이 10건 쌓여 있으면 비공개
+초안 요청도 그 파괴 동작을 촉발할 수 있다 — '올리지 않는다'와 '유발하지 않는다'는
+다르다. 그래서 쓰기 무재시도와 자체 상한을 함께 유지한다.
 
-Public posts do increment it, and once a post is public it has already gone out through
-RSS, search indexes, and subscriber email, none of which a delete reaches. That
-asymmetry is what deserves an explicit opt-in.
+공개 글은 계수를 올리고, 한번 공개되면 RSS·검색 색인·구독 메일로 이미 나간 뒤라
+지워도 회수가 안 된다. 명시적 opt-in 을 둘 만한 비대칭은 여기에 있다.
 
-Full reasoning: [docs/security.md](docs/security.md)
+자세한 내용: [docs/security.md](docs/security.md)
 
 ---
 
-## Tools
+## 도구
 
-23 tools. Only 10 of them change anything on Velog.
+23개. 벨로그 상태를 바꾸는 건 그중 10개뿐이다.
 
-### Reading — no auth required
+### 읽기 — 인증 불필요
 
-| Tool | Purpose |
+| 도구 | 하는 일 |
 | --- | --- |
-| `velog_get_post` | Read one post, body included |
-| `velog_list_posts` | A user's posts, optionally filtered by tag |
-| `velog_search_posts` | Keyword search; pass `username` to search inside one blog |
-| `velog_trending_posts` | Trending by `day` / `week` / `month` / `year` |
-| `velog_recent_posts` | Newest posts across Velog |
-| `velog_get_user` | Profile, follower counts, bio |
-| `velog_list_series` | A user's series, with post counts and IDs |
-| `velog_user_tags` | Tags a user writes about, with counts |
+| `velog_get_post` | 글 하나를 본문까지 |
+| `velog_list_posts` | 사용자의 글 목록, 태그로 좁힐 수 있음 |
+| `velog_search_posts` | 키워드 검색. `username` 을 주면 그 블로그 안에서만 |
+| `velog_trending_posts` | 트렌딩 (`day`/`week`/`month`/`year`) |
+| `velog_recent_posts` | 벨로그 전체 최신 글 |
+| `velog_get_user` | 프로필·팔로워 수·소개 |
+| `velog_list_series` | 시리즈 목록 (글 수와 id 포함) |
+| `velog_user_tags` | 사용자가 쓰는 태그와 글 수 |
 
-### Reading — auth required
+### 읽기 — 인증 필요
 
-| Tool | Purpose |
+| 도구 | 하는 일 |
 | --- | --- |
-| `velog_whoami` | Which account the token belongs to (also a token health check) |
-| `velog_list_drafts` | Your saved drafts, with IDs |
+| `velog_whoami` | 토큰이 어느 계정인지 (토큰 생존 확인용으로도) |
+| `velog_list_drafts` | 내 초안 목록과 id |
 
-### Derived — things Velog doesn't provide
+### 파생 — 벨로그에 없는 기능
 
-| Tool | Purpose |
+| 도구 | 하는 일 |
 | --- | --- |
-| `velog_blog_stats` | Aggregate views/likes/comments, top posts, per-year and per-tag breakdown |
-| `velog_diagnose` | Compare Velog's current schema against this server's baseline |
-| `velog_export_posts` | Save posts as Markdown files with YAML front matter |
+| `velog_blog_stats` | 조회수·좋아요·댓글 집계, 상위 글, 연도별·태그별 분포 |
+| `velog_export_posts` | 글을 YAML 프론트매터 붙은 마크다운으로 저장 |
+| `velog_diagnose` | 지금 벨로그 스키마가 이 서버의 기준선과 같은지 대조 |
 
-### Writing
+### 쓰기
 
-| Tool | Effect |
+| 도구 | 효과 |
 | --- | --- |
-| `velog_create_draft` | Save a draft. Never publishes, under any configuration |
-| `velog_update_draft` | Replace a draft **entirely** — omitted fields are reset |
-| `velog_publish_post` | Publish a new post |
-| `velog_publish_draft` | Publish an existing draft, reusing its stored body |
-| `velog_unpublish_post` | Send a published post back to drafts |
-| `velog_update_post` | Edit a published post — omitted fields are **kept** |
+| `velog_create_draft` | 초안 저장. 어떤 설정에서도 발행하지 않는다 |
+| `velog_update_draft` | 초안 **전체 교체** — 생략한 필드는 초기화된다 |
+| `velog_publish_post` | 새 글 발행 |
+| `velog_publish_draft` | 기존 초안을 발행 (저장된 본문을 그대로 씀) |
+| `velog_unpublish_post` | 발행글을 초안으로 되돌림 |
+| `velog_update_post` | 발행글 수정 — 생략한 필드는 **유지된다** |
 
-> `velog_update_draft` resets what you omit; `velog_update_post` preserves it.
-> The asymmetry is deliberate — see [docs/tools.md](docs/tools.md).
+> `velog_update_draft` 는 생략하면 초기화하고, `velog_update_post` 는 유지한다.
+> 의도한 비대칭이고 이유는 [docs/tools.md](docs/tools.md) 에 있다.
 
-#### Automatic thumbnail
+#### 썸네일 자동 채움
 
-Omit `thumbnail` and the **first image in the body** becomes the thumbnail, so list and
-share cards aren't text-only. What was chosen is always reported back, along with the
-other candidates when there is more than one.
+`thumbnail` 을 생략하면 **본문 첫 이미지**를 썸네일로 쓴다. 목록·공유 카드가 글자만
+나오는 걸 막기 위해서다. 무엇을 넣었는지는 결과에 항상 표시하고, 후보가 여럿이면
+나머지도 함께 보여준다.
 
-| `thumbnail` | Behaviour |
+| `thumbnail` 값 | 동작 |
 | --- | --- |
-| omitted | first image in the body |
-| a URL | used as given |
-| `null` | **opt out** — leave it empty on purpose |
+| 생략 | 본문 첫 이미지로 자동 설정 |
+| URL | 그대로 사용 |
+| `null` | **자동 채움 끄기** — 일부러 비워 두는 경우 |
 
-Images inside code fences and inline code are excluded, so a markdown example never
-becomes your thumbnail. `velog_update_post` **never replaces an existing thumbnail** —
-editing a title should not change the card. There, `null` means "don't fill it in",
-not "delete it".
+코드블록·인라인코드 안의 이미지는 후보에서 **제외**한다(예제로 적어둔 마크다운이
+썸네일이 되면 안 되므로). `velog_update_post` 는 **기존 썸네일이 있으면 덮지 않는다** —
+제목만 고쳤는데 목록 카드가 바뀌는 일이 없도록 한 것이고, 이때 `null` 은 "채우지 마라"이지
+"지워라"가 아니다.
 
-#### Series — by name, in one call
+#### 시리즈 — 이름으로 한 번에
 
-Pass `series_name` and the server resolves it **before** saving, then sends the id in the
-**same request** — writing and filing happen in one call. Names are matched ignoring case
-and surrounding whitespace; `series_id` wins if you know it.
-
-⚠️ **If the name isn't found, nothing is written** — saving without the series would look
-like it worked. The available series are listed in the error.
-
-Omit both and the result carries **your series list**. That lookup never fails the write
-(cancellation included — reporting failure after a successful save makes retries duplicate
-the post).
-
-> ⚠️ The velog API cannot **create** a series — there is no series mutation, and
-> `WritePostInput` only accepts `series_id`. Create one on velog once, then this
-> server can attach posts to it.
-
-Tools that take a `username` — `velog_list_drafts`, `velog_blog_stats`,
-`velog_export_posts` — fall back to your own account when you omit it.
-`velog_search_posts` does not: omitting `username` searches all of Velog.
-
-### Diagrams and images
-
-| Tool | Effect |
-| --- | --- |
-| `velog_render_diagram` | Draw an architecture/flow diagram and upload it |
-| `velog_render_sequence` | Draw a sequence diagram from participants and ordered messages |
-| `velog_render_cover` | Draw a 1200×630 cover card for a post |
-| `velog_upload_image` | Upload a local image file, get the Markdown back |
-
-You describe **what exists and what flows where**; the renderer owns everything else —
-palette, spacing, text measurement, corner rounding, canvas size. That is deliberate: a
-diagram redrawn from scratch each time looks different each time.
-
-Every measurement is real. Node widths and line breaks come from the browser's
-`getBBox()`, never from a character count — with mixed Korean and English text, counting
-characters is wrong every time. The canvas is sized *after* drawing, from the content's
-bounding box, so a diagram cannot be clipped.
-
-Then it audits itself and reports five classes of defect:
+`series_name` 에 **이름**을 주면 저장 **전에** 내 시리즈에서 찾아 **같은 요청에 실어 보낸다**.
+글쓰기와 시리즈 등록이 한 번의 호출로 끝난다. id 는 사람도 AI 도 모르기 때문에 이름을 받는다.
 
 ```
-text spilling outside its card · letter-spacing squeezed to fit
-a line crossing (or hiding behind) a node
-two lines overlapping · two nodes overlapping · a label sitting on a card
+series_name: "PostgreSQL"     ← 대소문자·앞뒤 공백은 무시하고 찾는다
+series_id:   "e53810ca-..."   ← id 를 알면 이쪽이 우선
 ```
 
-**If the audit finds anything, nothing is uploaded — and there is no flag to turn that
-off.** Velog has no delete-image API and every upload counts against your quota, so a
-flawed diagram is worth redrawing rather than shipping. An override that the model can
-set itself is not a safeguard (same reasoning as the publishing switch in
-[ADR 0004](docs/decisions/0004-capability-model.md)). **There is no path to upload an audit-rejected PNG through this server.** Rendering with
-`upload: false` still puts that file on the reject list, and `velog_upload_image` refuses
-it — closing that exact two-step bypass. Fix the diagram and render again.
-(A PNG that *passes* the audit can be rendered with `upload: false` and uploaded by path.)
+⚠️ **못 찾으면 글을 저장하지 않는다.** 조용히 시리즈 없이 저장하면 들어간 줄 알기 때문이다.
+이때 있는 시리즈 목록을 함께 알려준다.
 
-Icons are 28 built-in glyphs (`server`, `database`, `cloud`, `clock`, `alert`, …) drawn
-from primitive shapes. Nothing is fetched — the renderer runs with DNS disabled.
+`series_name`·`series_id` 를 둘 다 생략하면 저장 뒤 결과에 **내 시리즈 목록**을 붙여준다.
+이 조회가 실패해도 글은 이미 저장된 뒤이므로 **저장을 실패시키지 않는다**(취소도 삼킨다 —
+여기서 실패로 보고하면 재시도 때 글이 두 번 생긴다).
 
-**Requires Chrome** (or any Chromium-based browser: Edge, Brave, Chromium). It is found
-automatically on macOS/Linux/Windows; set `VELOG_CHROME_PATH` if yours lives elsewhere.
-Only `velog_render_diagram`, `velog_render_sequence` and `velog_render_cover` need it — `velog_upload_image`
-just reads a local file, so it and the other 19 tools work without a browser.
+> ⚠️ 벨로그 API 로는 **시리즈를 만들 수 없다.** 뮤테이션에 시리즈 관련이 하나도 없고
+> `WritePostInput` 도 `series_id` 만 받는다. 새 시리즈는 벨로그 웹에서 한 번 만들면
+> 그 뒤부터 이 도구로 붙일 수 있다.
 
-**Cost, measured:** one diagram is ~1 GB peak across 9–11 Chrome processes for 3–4
-seconds, then back to zero. That's Chrome's floor, not our content. Coordinates, text
-lengths and array sizes are all bounded, and the canvas cap (6000px / 9M px) is enforced
-**inside the page** — a browser commits to a surface the moment it receives width and
-height, so checking after the fact is too late. Renders are
-**serialized** — MCP clients call tools in parallel, and without that a five-diagram
-request would mean 45 Chrome processes and 6 GB. Serialized, four concurrent requests
-still peak at one render's worth. Ten renders in a row show no accumulation.
+`username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·`velog_export_posts`
+는 생략하면 **내 계정**을 쓴다. `velog_search_posts` 는 생략하면 **벨로그 전체**를 검색한다.
 
-### Profile editing — `VELOG_ALLOW_PROFILE=1`
+### 그림 — 다이어그램·표지
 
-Five more tools appear: `velog_update_profile` (display name, bio),
-`velog_update_about`, `velog_update_blog_title`, `velog_update_social_links`,
-`velog_update_profile_image`. Without the flag they aren't registered at all.
+| 도구 | 효과 |
+| --- | --- |
+| `velog_render_diagram` | 구성도·흐름도를 그려 올린다 |
+| `velog_render_sequence` | 참가자와 순서 있는 메시지로 시퀀스 다이어그램을 그린다 |
+| `velog_render_cover` | 글 표지 카드(1200×630)를 만든다 |
+| `velog_upload_image` | 로컬 이미지를 올리고 마크다운을 돌려준다 |
 
-The gate isn't about danger — these are reversible, affect only your own account, and
-aren't distributed anywhere. It's about **confusion**: a profile's `short_bio` and a
-post's `short_description` sound alike. "Fix my description" is ambiguous, and with the
-switch off a wrong guess can't reach your profile.
+넘기는 건 **무엇이 있고 무엇이 어디로 흐르는지**뿐이다. 색·여백·글자 실측·모서리
+라운딩·캔버스 크기는 렌더러가 쥔다. 매번 처음부터 그리면 매번 다르게 생기기 때문이다.
 
-`velog_update_profile` **keeps what you omit.** Velog's `UpdateProfileInput` requires
-both `display_name` and `short_bio`, so sending one alone would blank the other — the
-tool reads your current values and fills them in.
+수치는 전부 실측이다. 노드 폭과 줄바꿈은 브라우저 `getBBox()` 로 잰다 — 글자수로
+추정하면 한글·영문이 섞인 라벨에서 반드시 틀린다. 캔버스는 다 그린 **뒤에** 내용
+bbox 로 정하므로 그림이 잘릴 수가 없다.
+
+그리고 스스로 감사해서 다섯 가지를 보고한다:
+
+```
+카드 밖으로 삐져나온 글자 · 억지로 맞추려 눌린 자간
+노드를 관통하거나 노드 뒤에 숨은 선
+선끼리 겹침 · 노드끼리 겹침 · 라벨이 카드 위에 얹힘
+```
+
+**감사에 하나라도 걸리면 올리지 않는다. 그리고 그걸 끄는 스위치는 없다.**
+벨로그에는 이미지 삭제 API 가 없고 업로드 한도도 깎이니, 어설픈 그림은 올리는 것보다
+고쳐 그리는 게 낫다. 모델이 스스로 켤 수 있는 우회는 방어가 아니다 —
+공개 발행 스위치와 같은 이유다([ADR 0004](docs/decisions/0004-capability-model.md)).
+**감사에 떨어진 PNG 는 이 서버로 올릴 길이 없다.** `upload:false` 로 그려도 그 산출물은
+거부 목록에 오르고, 경로를 `velog_upload_image` 에 줘도 막힌다 — 그 두 단계 우회를
+막으려고 만든 장치다. 고쳐서 다시 그리는 것이 유일한 경로다.
+(감사를 **통과한** PNG 는 `upload:false` 로 그린 뒤 경로를 넘겨 올릴 수 있다.)
+
+아이콘은 내장 28종(`server`·`database`·`cloud`·`clock`·`alert` …)이고 전부 도형
+조합이다. 밖에서 받아오는 게 하나도 없다 — 렌더러는 DNS 를 막은 채로 돈다.
+
+**크롬이 필요하다** (크로미움 계열이면 된다: Edge·Brave·Chromium). macOS·리눅스·
+윈도우에서 알아서 찾고, 다른 데 있으면 `VELOG_CHROME_PATH` 로 지정한다.
+이 중 브라우저를 쓰는 건 `velog_render_diagram`, `velog_render_sequence`, `velog_render_cover` **셋뿐**이고,
+`velog_upload_image` 를 포함한 나머지 19개는 크롬 없이 동작한다.
+
+**비용은 실측해서 밝혀 둔다.** 그림 한 장에 크롬 9~11개·최대 약 1GB 를 3~4초 쓰고
+0 으로 돌아온다. 이건 크롬의 바닥이지 우리 그림 탓이 아니다.
+좌표·글자·개수에는 전부 상한이 있고, 캔버스 상한(6000px/900만px)은 **페이지 안에서**
+걸린다 — 브라우저는 크기를 받는 순간 표면을 준비하므로 바깥에서 막으면 늦다.
+**렌더는 줄을 세운다** — MCP 클라이언트가 도구를 병렬로 부르기 때문에, 안 그러면
+그림 다섯 장 요청에 크롬 45개·6GB 가 된다. 줄을 세우면 동시 4회도 한 장 분량으로
+고정된다. 10회 연속에서 누적이 없는 것도 확인했다.
+
+### 프로필 수정 — `VELOG_ALLOW_PROFILE=1`
+
+도구 5개가 추가된다: `velog_update_profile`(이름·한줄소개), `velog_update_about`,
+`velog_update_blog_title`, `velog_update_social_links`, `velog_update_profile_image`.
+설정이 없으면 **등록조차 되지 않는다.**
+
+게이트를 둔 건 위험해서가 아니다 — 전부 되돌릴 수 있고 본인 계정에만 영향이며
+어디로도 배포되지 않는다. 이유는 **혼동**이다: 프로필의 `short_bio` 와 글의
+`short_description` 은 이름이 비슷하다. "소개 좀 고쳐줘" 가 어느 쪽인지 모호할 때,
+스위치가 꺼져 있으면 잘못 짚어도 프로필에 손이 닿지 않는다.
+
+`velog_update_profile` 은 **생략한 항목을 유지한다.** 벨로그의 `UpdateProfileInput`
+은 `display_name` 과 `short_bio` 를 둘 다 필수로 받아서 한쪽만 보내면 다른 쪽이
+빈 문자열로 덮인다 — 그래서 현재 값을 읽어 채워 보낸다.
 
 ---
 
-## Usage
+## 사용법
 
-Once it's configured, just talk to your MCP client.
+설정이 끝나면 MCP 클라이언트에 그냥 말하면 된다.
 
 ```
-"Draft a Velog post about the bug I fixed today"
-   → writes Markdown, saves it as a draft, hands back the edit URL
+"오늘 고친 버그로 벨로그 초안 잡아줘"
+   → 마크다운을 쓰고 초안으로 저장, 편집 URL 을 준다
 
-"What did I write about HTTP/2 last year?"
-   → searches inside your own posts
+"작년에 HTTP/2 로 뭐 썼더라"
+   → 내 글 안에서 검색
 
-"Show my top 10 posts by views, and which tags get read most"
-   → walks your whole blog and aggregates
+"내 글 조회수 상위 10개랑 어떤 태그가 제일 많이 읽혔는지"
+   → 블로그 전체를 훑어 집계
 
-"Back up all my posts to ~/blog-backup"
-   → writes .md files with front matter
+"내 글 전부 ~/blog-backup 에 백업해"
+   → 프론트매터 붙은 .md 로 저장
 
-"Publish that draft"
-   → private by default; public only with VELOG_ALLOW_PUBLIC=1
+"그 초안 발행해줘"
+   → 기본은 비공개. 공개는 VELOG_ALLOW_PUBLIC=1 이 있어야 한다
 
-"Draw how the request flows from the LB through the workers to Redis"
-   → renders a diagram, audits it, uploads it, hands back the Markdown line
+"요청이 LB 에서 워커 거쳐 레디스까지 어떻게 흐르는지 그려줘"
+   → 그림을 그리고 자가감사한 뒤 올리고, 본문에 붙일 마크다운을 준다
 
-"Make a cover image for this post"
-   → 1200×630 card; pass the URL to velog_update_post's thumbnail
+"이 글 표지 이미지 만들어줘"
+   → 1200×630 카드. 주소를 velog_update_post 의 thumbnail 에 넣으면 표지가 된다
 ```
 
-Irreversible tools carry `destructiveHint`. **Annotations are hints, not gates** —
-whether your client asks for approval is its own setting. What this server actually
-enforces is different: public publishing has no code path without `VELOG_ALLOW_PUBLIC=1`,
-writes are never retried, and **public** publishing is self-limited to 5 posts per 5
-minutes within this server instance (private posts and drafts are not rate-limited).
+되돌릴 수 없는 도구에는 `destructiveHint` 가 붙어 있다. **다만 annotation 은
+«힌트» 이지 차단이 아니다** — 호출 전에 승인을 물을지는 MCP 클라이언트 설정에 달렸다.
+서버가 막는 것은 따로다: 공개 발행은 `VELOG_ALLOW_PUBLIC=1` 없이는 경로 자체가 없고,
+쓰기는 재시도하지 않으며, **공개 발행**은 이 서버 인스턴스 안에서 5분에 5건으로
+스스로 제한한다(비공개 발행·초안에는 이 제한이 걸리지 않는다).
 
-### Exported file format
+### 백업 파일 형식
 
 ```yaml
 ---
-title: "Post title"
+title: "글 제목"
 date: 2022-12-31T18:32:39.790Z
 slug: "url-slug"
 url: "https://velog.io/@username/url-slug"
-tags: ["tag1", "tag2"]
+tags: ["태그1", "태그2"]
 likes: 260
 views: 16323
 ---
 
-Post body in Markdown…
+마크다운 본문…
 ```
 
 ---
 
-## Development
+## 개발
 
 ```bash
-npm test              # node:test, runs .ts directly — no jest, no ts-node
-npm run typecheck     # includes tests — they used to be excluded, which hid real errors
-npm run lint          # typescript-eslint, type-aware
-npm run build         # tsconfig.build.json (tests excluded from dist)
-npm run schema:dump   # dump Velog's current GraphQL schema
-npm run schema:baseline        # rebuild schema/baseline.json from the live schema
-npm run schema:baseline -- --check   # compare only; don't write
+npm test              # node:test 로 .ts 직접 실행 — jest·ts-node 없음
+npm run typecheck     # 테스트 포함 — 종전엔 제외돼 실제 오류가 숨어 있었다
+npm run lint          # typescript-eslint (타입 기반)
+npm run build         # tsconfig.build.json (dist 에 테스트 미포함)
+npm run schema:dump   # 현재 벨로그 GraphQL 스키마 덤프
+npm run schema:baseline  # schema/baseline.json 을 실측으로 다시 만든다 (velog_diagnose 의 기준선)
+npm run schema:baseline -- --check   # 쓰지 않고 «지금 기준선이 맞는지» 만 본다
 ```
 
-608 tests (as of 0.9.0). `src/__tests__/safety.test.ts` pins the security
-invariants (A1–A13), `render.test.ts` pins the diagram ones (R1–R23, D1) and the
-sequence ones (S1–S12), and `plugin.test.ts` pins the packaging ones (P1–P28) —
-if any fails, find out why instead of working around it.
+테스트 608건(0.9.0 기준). `safety.test.ts` 가 보안 불변식(A1~A13)을,
+`render.test.ts` 가 구성도 불변식(R1~R23, D1)과 시퀀스 불변식(S1~S12)을,
+`plugin.test.ts` 가 포장 불변식(P1~P28)을 고정한다.
+깨지면 우회하지 말고 왜 깨졌는지부터 볼 것.
 
-Every guard here was checked by **breaking it on purpose**: 54 mutations against the
-source, plus 12 against the publish gate itself (`scripts/gate-mutation.sh`), each of
-which must make exactly one check fail. A test that still passes with the guard removed
-is not a test. Several in this repo did pass at first, and that is how they got fixed.
+여기 있는 방어는 전부 **일부러 망가뜨려** 확인했다. 소스 변이 54종 + 발행 관문
+자체를 겨눈 변이 12종(`scripts/gate-mutation.sh`), 각각이 검사를 정확히 1건씩
+실패시켜야 한다. **방어를 지웠는데도 통과하는 테스트는 테스트가 아니다.**
+이 저장소에도 그런 게 여럿 있었고, 그렇게 해서 고쳤다.
 
-## Documentation
+## 문서
 
-| Document | Contents |
+| 문서 | 내용 |
 | --- | --- |
-| [docs/PRD.md](docs/PRD.md) | Goals, non-goals, success criteria |
-| [docs/architecture.md](docs/architecture.md) | Layering, and the TypeScript subset Node's type stripping allows |
-| [docs/api-reference.md](docs/api-reference.md) | Measured Velog GraphQL schema and server quirks |
-| [docs/security.md](docs/security.md) | Token handling, capability model, what's deliberately unimplemented |
-| [docs/tools.md](docs/tools.md) | Full tool catalog with gotchas |
-| [docs/decisions/](docs/decisions/) | Architecture decision records |
-| [CHANGELOG.md](CHANGELOG.md) | What was broken and what got fixed, per release |
+| [docs/PRD.md](docs/PRD.md) | 기획서 — 목표·비목표·성공 기준 |
+| [docs/architecture.md](docs/architecture.md) | 구조, Node 타입 스트리핑이 허용하는 TS 부분집합 |
+| [docs/api-reference.md](docs/api-reference.md) | 벨로그 GraphQL 스키마 실측 + 서버 함정 |
+| [docs/security.md](docs/security.md) | 토큰 취급, 권한 모델, 의도적으로 뺀 기능 |
+| [docs/tools.md](docs/tools.md) | 도구 카탈로그와 주의사항 |
+| [docs/decisions/](docs/decisions/) | 설계 결정 기록 (ADR) |
+| [CHANGELOG.md](CHANGELOG.md) | 버전별로 무엇이 깨져 있었고 무엇이 고쳐졌나 |
 
-## Notes
+## 참고
 
-This talks to Velog's internal GraphQL API, which is undocumented and can change
-without warning. When something breaks, run `npm run schema:dump` and diff it against
-`docs/api-reference.md` — that's the fastest way to find what moved.
+벨로그 내부 GraphQL API 를 쓴다. 비공식이라 예고 없이 바뀔 수 있다.
+뭔가 깨지면 `npm run schema:dump` 를 돌려 `docs/api-reference.md` 와 diff 하는 게
+가장 빠르다.
 
-Velog's [terms of service](https://velog.io/policy/terms) contain no clause restricting
-automated access. Using your own token to manage your own posts stays within scope, and
-your posts remain yours (Article 5).
+벨로그 [이용약관](https://velog.io/policy/terms)에는 자동화 접근을 제한하는 조항이
+없다. 본인 토큰으로 본인 글을 다루는 것은 권한 내 행위이고, 게시물 저작권은
+회원에게 귀속된다(제5조).
 
-## License
+## 라이선스
 
 MIT
