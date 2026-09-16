@@ -26,6 +26,7 @@ import {
 	PublishRateLimitError,
 	PUBLIC_PUBLISH_LIMIT,
 	VELOG_DESTRUCTIVE_THRESHOLD,
+	WINDOW_MS,
 } from '../ratelimit.ts';
 
 const authed = {
@@ -71,6 +72,71 @@ describe('공개 발행 속도 제한', () => {
 			assert.match(message, /초 뒤에/, '언제 풀리는지 안 알렸다');
 			assert.ok((error as PublishRateLimitError).retryAfterMs > 0);
 		}
+	});
+
+	/**
+	 * ★★ **기본값으로 돈다.** 위 검사들은 전부 `limit`·`windowMs` 를 직접 넣는다.
+	 *   그래서 **운영에서 실제로 쓰이는 값**(상한 5, 창 5분)은 한 번도 안 걸렸고,
+	 *   기본값을 `1000` 으로 바꾸는 변이가 21개 전부를 통과했다. 그 변이가 나가면
+	 *   1초만 지나도 카운터가 비어 벨로그가 최근 5분 글을 전부 비공개로 바꾼다.
+	 *
+	 *   그래서 여기서는 **`now` 만 주입하고 나머지는 건드리지 않는다.**
+	 */
+	test('★ 기본 상한(5건)으로 막는다 — 인자를 안 주는 경로', () => {
+		const now = 1_000_000;
+		const limiter = new PublishRateLimiter({ now: () => now });
+		for (let i = 0; i < PUBLIC_PUBLISH_LIMIT; i += 1) limiter.check();
+		assert.equal(limiter.count, PUBLIC_PUBLISH_LIMIT);
+		assert.throws(
+			() => { limiter.check(); },
+			PublishRateLimitError,
+			`기본 상한 ${PUBLIC_PUBLISH_LIMIT} 을 넘겼는데 안 막았다`,
+		);
+	});
+
+	test('★ 기본 시간창(5분) 경계에서 풀린다 — 1ms 전에는 아직 막는다', () => {
+		let now = 1_000_000;
+		const limiter = new PublishRateLimiter({ now: () => now });
+		for (let i = 0; i < PUBLIC_PUBLISH_LIMIT; i += 1) limiter.check();
+
+		// 처음 막힐 때 알려주는 대기 시간이 곧 기본 창이다.
+		try {
+			limiter.check();
+			assert.fail('막히지 않았다');
+		} catch (error) {
+			assert.equal(
+				(error as PublishRateLimitError).retryAfterMs,
+				WINDOW_MS,
+				'안내한 대기 시간이 기본 창과 다르다',
+			);
+		}
+
+		now += WINDOW_MS - 1;
+		assert.throws(
+			() => { limiter.check(); },
+			PublishRateLimitError,
+			'창이 끝나기 1ms 전인데 풀렸다 — 창이 짧아졌다',
+		);
+
+		now += 1;
+		limiter.check(); // 정확히 창을 넘겼으니 통과해야 한다
+		// 앞의 5건은 **같은 시각**에 쌓였으므로 창을 넘는 순간 한꺼번에 빠진다.
+		// 그래서 남는 건 방금 통과한 1건뿐이다.
+		assert.equal(limiter.count, 1, '창을 넘긴 기록이 안 빠졌다');
+	});
+
+	/**
+	 * ☑ 대조군 — 위 둘이 「무조건 막기」로 굳지 않게, **기본값에서 정상 발행이
+	 *   끝까지 되는지**를 함께 잰다. 창이 지나치게 길어지는 변이도 여기서 걸린다.
+	 */
+	test('☑ 대조군 — 기본값에서 5건은 막지 않고 전부 통과한다', () => {
+		let now = 1_000_000;
+		const limiter = new PublishRateLimiter({ now: () => now });
+		for (let i = 0; i < PUBLIC_PUBLISH_LIMIT; i += 1) {
+			limiter.check(); // 던지면 테스트가 실패한다
+			now += 1_000;
+		}
+		assert.equal(limiter.count, PUBLIC_PUBLISH_LIMIT, '창 안의 건수를 잘못 센다');
 	});
 
 	test('창이 지나면 다시 통과한다', () => {

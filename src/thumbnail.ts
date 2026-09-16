@@ -38,10 +38,58 @@ export interface ThumbnailChoice {
  * ⚠️ 코드블록 안의 이미지는 **제외한다.** 예제로 적어둔 마크다운이 썸네일이
  *   되어버리면 황당하다. 펜스(``` 또는 ~~~)와 인라인 코드(`...`)를 먼저 지운다.
  */
+/**
+ * 들여쓰기 코드블록(4칸·탭)을 지운다.
+ *
+ * ★★ 펜스(```·~~~)와 인라인 코드는 막고 있었는데 **이것만 빠져 있었다.**
+ *   실측: 4칸 들여쓴 예제 이미지가 실제 본문 이미지보다 먼저 뽑혀 **코드 예제가
+ *   블로그 표지가 됐다.** 목록 카드만 조용히 이상해지는 종류라 눈에 늦게 띈다.
+ *
+ * ⚠️ 목록 항목의 들여쓰기와 구분해야 한다. CommonMark 의 들여쓰기 코드블록은
+ *   **빈 줄 뒤에** 와야 하므로 그 조건을 건다. 그러지 않으면 중첩 목록 안의
+ *   멀쩡한 이미지를 지워 «이미지가 있는데 없다» 고 하게 된다.
+ */
+function stripIndentedCode(body: string): string {
+	const lines = body.split('\n');
+	const out: string[] = [];
+	let prevBlank = true; // 문서 첫 줄도 «빈 줄 뒤» 로 본다
+	let inBlock = false;
+	// ⚠️ **목록 안인지** 기억한다. 목록 항목 뒤에 빈 줄이 오고 들여쓴 줄이 이어지는 것은
+	//   CommonMark 에서 «느슨한 목록의 이어지는 문단» 이지 코드가 아니다.
+	//   그걸 코드로 보고 지웠더니 `- item\n\n    ![real](…)` 의 멀쩡한 이미지가
+	//   통째로 사라졌다(코덱스 28차). 지우는 쪽으로 틀리면 «이미지가 있는데 없다» 가 된다.
+	let inList = false;
+	for (const line of lines) {
+		const indented = /^(?: {4,}|\t)/.test(line);
+		const blank = line.trim() === '';
+		const startsList = /^\s{0,3}(?:[-*+]|\d{1,9}[.)])\s/.test(line);
+
+		if (startsList) inList = true;
+		// 들여쓰지 않은 «내용» 줄이 나오면 목록이 끝난 것으로 본다.
+		else if (!blank && !indented) inList = false;
+
+		if (inBlock) {
+			if (!indented && !blank) {
+				inBlock = false;
+				out.push(line);
+			} else {
+				out.push('');
+			}
+		} else if (indented && prevBlank && !inList) {
+			inBlock = true;
+			out.push('');
+		} else {
+			out.push(line);
+		}
+		if (!inBlock) prevBlank = blank;
+	}
+	return out.join('\n');
+}
+
 export function extractImageUrls(body: string): string[] {
 	// ★ 지우는 순서가 중요하다. 펜스를 먼저 지워야 그 안의 백틱이 인라인 코드로
 	//   잘못 짝지어지지 않는다.
-	const withoutCode = body
+	const withoutCode = stripIndentedCode(body)
 		.replace(/^[ \t]*(`{3,}|~{3,})[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
 		.replace(/`[^`\n]*`/g, '');
 
@@ -102,9 +150,11 @@ export function chooseThumbnail(
 /**
  * 병합 수정(velog_update_post)용. 생성과 규칙이 다르다.
  *
- * ★★ **기존 썸네일이 최우선이다.** 이미 붙어 있는 그림을 본문 첫 이미지로
- *    갈아치우면, 제목만 고치려던 사람이 목록 카드가 바뀌는 걸 당한다.
- *    자동 채움은 **비어 있을 때만** 한다.
+ * ★★ **기존 값이 최우선이다.** 이미 붙어 있는 그림을 본문 첫 이미지로 갈아치우면,
+ *    제목만 고치려던 사람이 목록 카드가 바뀌는 걸 당한다. 그래서 수정 경로에는
+ *    **자동 채움이 아예 없다 — 비어 있어도 채우지 않는다.** 이 도구는 "생략한 필드는
+ *    유지된다"고 약속했고, 일부러 비워 둔 썸네일을 채우는 것도 그 약속을 깨는 것이다.
+ *    자동 채움은 새로 쓰는 경로(create/publish)에만 있다.
  *
  * ⚠️ `null` 을 줘도 **기존 썸네일을 지우지 않는다.** 여기서 null 은 "자동으로
  *   채우지 마라"이지 "지워라"가 아니다. 지우는 건 되돌리기 어려운데 그 의도를

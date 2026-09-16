@@ -87,6 +87,55 @@ export function registerProfileEditTools(
 	if (!capabilities.editProfile) return;
 
 	/** 현재 프로필을 읽는다. 병합의 기준값이다. */
+	/**
+	 * 저장 **뒤** 확인용 재조회.
+	 *
+	 * ★★ 저장이 끝난 다음의 조회 실패를 «저장 실패» 로 보고하면 안 된다.
+	 *   실측(코덱스 19차): mutation 은 성공시키고 재조회만 실패시키자 결과가
+	 *   `isError: true` 에 「readback unavailable」뿐이었다 — 저장됐다는 말이 없다.
+	 *   사용자는 다시 부르고, 프로필이 두 번 덮인다.
+	 *   그래서 재조회 실패는 **«저장 완료, 확인 실패»** 로 돌려준다.
+	 */
+	async function readBack(toolName: string): Promise<MyProfile | null> {
+		return current(toolName).catch(() => null);
+	}
+
+	/**
+	 * 저장 뒤 보고를 **한 곳에서만** 만든다.
+	 *
+	 * ★★ 처음엔 `velog_update_profile` 한 군데만 고쳤다. 그랬더니 나머지 네 도구
+	 *   (about·blog_title·social_links·profile_image)는 그대로 «저장 실패» 로
+	 *   보고하고 있었다(코덱스 21차). 같은 실수를 다섯 곳에 흩어 두면 하나는 반드시
+	 *   빠진다. 보고 문구를 여기서만 만들게 해서 빠뜨릴 자리를 없앤다.
+	 */
+	/** 마지막 글자에 받침이 있나. 「SNS 링크을」 같은 어색한 조사를 막는다. */
+	function hasFinalConsonant(word: string): boolean {
+		const last = word.trim().at(-1) ?? '';
+		const code = last.charCodeAt(0);
+		if (code < 0xac00 || code > 0xd7a3) return false; // 한글 음절이 아니면 «를» 로 둔다
+		return (code - 0xac00) % 28 !== 0;
+	}
+
+	async function reportAfterWrite(
+		toolName: string,
+		what: string,
+		render: (after: MyProfile) => string,
+	): Promise<ReturnType<typeof textResult>> {
+		const after = await readBack(toolName);
+		if (!after) {
+			return textResult(
+				[
+					`✅ ${what}${hasFinalConsonant(what) ? '을' : '를'} 저장했습니다. ` +
+						'⚠️ 다만 **저장 뒤 확인 조회에 실패**했습니다.',
+					'',
+					'저장 자체는 성공했습니다 — 다시 부르지 마세요. 반영됐는지는',
+					'velog_get_user 나 벨로그에서 확인하세요.',
+				].join('\n'),
+			);
+		}
+		return textResult(render(after));
+	}
+
 	async function current(toolName: string): Promise<MyProfile> {
 		client.requireAuth(toolName);
 		const me = await fetchCurrentUser(client);
@@ -143,8 +192,7 @@ export function registerProfileEditTools(
 				await client.mutate(MUTATION_UPDATE_PROFILE, { input }, { signal: extra.signal });
 				invalidateMe(client);
 
-				const after = await current('velog_update_profile');
-				return textResult(
+				return reportAfterWrite('velog_update_profile', '프로필', (after) =>
 					[
 						'✅ 프로필을 수정했습니다.',
 						'',
@@ -162,7 +210,8 @@ export function registerProfileEditTools(
 			title: '소개글 수정',
 			description:
 				'벨로그 "소개" 탭의 긴 글을 통째로 바꾼다(마크다운). ' +
-				'★ 전체 교체다 — 기존 내용에 덧붙이려면 먼저 velog_get_user 로 읽어 합친 뒤 넘길 것.',
+				'★ 전체 교체다 — 기존 내용에 덧붙이려면 먼저 velog_get_user 로 읽어 합친 뒤 넘길 것. ' +
+				'⚠️ 그 결과에 «잘랐습니다» 안내가 붙어 있으면 합치지 말 것 — 나머지가 사라진다.',
 			inputSchema: {
 				about: z.string().describe('소개글 전문 (마크다운). 빈 문자열이면 소개글이 비워진다'),
 			},
@@ -179,10 +228,9 @@ export function registerProfileEditTools(
 				);
 				invalidateMe(client);
 
-				const after = await current('velog_update_about');
-				const saved = after.profile?.about ?? '';
-				return textResult(
-					[
+				return reportAfterWrite('velog_update_about', '소개글', (after) => {
+					const saved = after.profile?.about ?? '';
+					return [
 						'✅ 소개글을 수정했습니다.',
 						'',
 						`- 길이: ${saved.length}자`,
@@ -190,8 +238,8 @@ export function registerProfileEditTools(
 						'',
 						'--- 저장된 내용 앞부분 ---',
 						saved.slice(0, 300) + (saved.length > 300 ? '…' : ''),
-					].join('\n'),
-				);
+					].join('\n');
+				});
 			}),
 	);
 
@@ -213,8 +261,7 @@ export function registerProfileEditTools(
 					{ signal: extra.signal },
 				);
 
-				const after = await current('velog_update_blog_title');
-				return textResult(
+				return reportAfterWrite('velog_update_blog_title', '블로그 제목', (after) =>
 					`✅ 블로그 제목을 "${after.velog_config?.title ?? title}" 로 바꿨습니다.\n` +
 						`- 확인: https://velog.io/@${after.username ?? ''}`,
 				);
@@ -270,15 +317,14 @@ export function registerProfileEditTools(
 				);
 				invalidateMe(client);
 
-				const after = await current('velog_update_social_links');
-				const links = after.profile?.profile_links ?? {};
-				const shown = Object.entries(links)
-					.filter(([, v]) => typeof v === 'string' && v.length > 0)
-					.map(([k, v]) => `  - ${k}: ${String(v)}`)
-					.join('\n');
-				return textResult(
-					`✅ SNS 링크를 수정했습니다.\n\n${shown || '  (등록된 링크 없음)'}`,
-				);
+				return reportAfterWrite('velog_update_social_links', 'SNS 링크', (after) => {
+					const links = after.profile?.profile_links ?? {};
+					const shown = Object.entries(links)
+						.filter(([, v]) => typeof v === 'string' && v.length > 0)
+						.map(([k, v]) => `  - ${k}: ${String(v)}`)
+						.join('\n');
+					return `✅ SNS 링크를 수정했습니다.\n\n${shown || '  (등록된 링크 없음)'}`;
+				});
 			}),
 	);
 
@@ -288,7 +334,8 @@ export function registerProfileEditTools(
 			title: '프로필 사진 변경',
 			description:
 				'프로필 이미지를 지정한 URL 로 바꾼다. http(s) 이미지 주소만 받는다. ' +
-				'이미지 업로드 기능은 없으므로 이미 어딘가에 올라간 주소가 필요하다.',
+				'★ 로컬 파일이라면 먼저 velog_upload_image(type:"profile") 로 올려 URL 을 받고 ' +
+				'그 URL 을 여기에 넘긴다 — 이 서버에 업로드 경로가 있다.',
 			inputSchema: {
 				url: z
 					.string()
@@ -308,8 +355,7 @@ export function registerProfileEditTools(
 				);
 				invalidateMe(client);
 
-				const after = await current('velog_update_profile_image');
-				return textResult(
+				return reportAfterWrite('velog_update_profile_image', '프로필 사진', (after) =>
 					`✅ 프로필 사진을 바꿨습니다.\n- 현재: ${after.profile?.thumbnail ?? '—'}`,
 				);
 			}),

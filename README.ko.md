@@ -269,8 +269,8 @@ series_id:   "e53810ca-..."   ← id 를 알면 이쪽이 우선
 > `WritePostInput` 도 `series_id` 만 받는다. 새 시리즈는 벨로그 웹에서 한 번 만들면
 > 그 뒤부터 이 도구로 붙일 수 있다.
 
-`username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·
-`velog_export_posts`·`velog_search_posts` 는 생략하면 **내 계정**을 쓴다.
+`username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·`velog_export_posts`
+는 생략하면 **내 계정**을 쓴다. `velog_search_posts` 는 생략하면 **벨로그 전체**를 검색한다.
 
 ### 그림 — 다이어그램·표지
 
@@ -300,8 +300,10 @@ bbox 로 정하므로 그림이 잘릴 수가 없다.
 벨로그에는 이미지 삭제 API 가 없고 업로드 한도도 깎이니, 어설픈 그림은 올리는 것보다
 고쳐 그리는 게 낫다. 모델이 스스로 켤 수 있는 우회는 방어가 아니다 —
 공개 발행 스위치와 같은 이유다([ADR 0004](docs/decisions/0004-capability-model.md)).
-그래도 올려야 하면 `upload:false` 로 그린 뒤 PNG 를 눈으로 확인하고
-`velog_upload_image` 에 그 경로를 준다. 사람이 한 번 더 개입하게 된다.
+**감사에 떨어진 PNG 는 이 서버로 올릴 길이 없다.** `upload:false` 로 그려도 그 산출물은
+거부 목록에 오르고, 경로를 `velog_upload_image` 에 줘도 막힌다 — 그 두 단계 우회를
+막으려고 만든 장치다. 고쳐서 다시 그리는 것이 유일한 경로다.
+(감사를 **통과한** PNG 는 `upload:false` 로 그린 뒤 경로를 넘겨 올릴 수 있다.)
 
 아이콘은 내장 28종(`server`·`database`·`cloud`·`clock`·`alert` …)이고 전부 도형
 조합이다. 밖에서 받아오는 게 하나도 없다 — 렌더러는 DNS 를 막은 채로 돈다.
@@ -363,8 +365,11 @@ bbox 로 정하므로 그림이 잘릴 수가 없다.
    → 1200×630 카드. 주소를 velog_update_post 의 thumbnail 에 넣으면 표지가 된다
 ```
 
-MCP 클라이언트가 도구 호출 전에 승인을 받고, 되돌릴 수 없는 도구에는
-`destructiveHint` 가 붙어 있다. 모르는 새 발행되는 일은 없다.
+되돌릴 수 없는 도구에는 `destructiveHint` 가 붙어 있다. **다만 annotation 은
+«힌트» 이지 차단이 아니다** — 호출 전에 승인을 물을지는 MCP 클라이언트 설정에 달렸다.
+서버가 막는 것은 따로다: 공개 발행은 `VELOG_ALLOW_PUBLIC=1` 없이는 경로 자체가 없고,
+쓰기는 재시도하지 않으며, **공개 발행**은 이 서버 인스턴스 안에서 5분에 5건으로
+스스로 제한한다(비공개 발행·초안에는 이 제한이 걸리지 않는다).
 
 ### 백업 파일 형식
 
@@ -396,7 +401,7 @@ npm run schema:baseline  # schema/baseline.json 을 실측으로 다시 만든�
 npm run schema:baseline -- --check   # 쓰지 않고 «지금 기준선이 맞는지» 만 본다
 ```
 
-테스트 569건(0.9.0 기준). `safety.test.ts` 가 보안 불변식(A1~A12)을,
+테스트 608건(0.9.0 기준). `safety.test.ts` 가 보안 불변식(A1~A13)을,
 `render.test.ts` 가 구성도 불변식(R1~R23, D1)과 시퀀스 불변식(S1~S12)을,
 `plugin.test.ts` 가 포장 불변식(P1~P28)을 고정한다.
 깨지면 우회하지 말고 왜 깨졌는지부터 볼 것.

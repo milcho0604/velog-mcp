@@ -34,7 +34,10 @@ export class PublishRateLimitError extends Error {
 		const seconds = Math.ceil(retryAfterMs / 1000);
 		super(
 			`공개 발행을 잠시 멈춥니다. 최근 5분에 이미 ${PUBLIC_PUBLISH_LIMIT}건을 발행했습니다.\n\n` +
-				`이유: 벨로그는 최근 5분의 공개 글이 ${VELOG_DESTRUCTIVE_THRESHOLD}건을 넘으면 ` +
+				// ⚠️ «넘으면» 이 아니라 «이상» 이다. 서버 판정은 `recentPostCount < 10` 이면
+				//   그냥 돌아가는 형태라, 정확히 10건에서 이미 동작한다(capabilities.ts 실측).
+				//   한 건 차이가 «괜찮다» 와 «이미 위험하다» 를 가른다.
+				`이유: 벨로그는 최근 5분의 공개 글이 ${VELOG_DESTRUCTIVE_THRESHOLD}건 이상이면 ` +
 				'그 시간대 글을 **전부 비공개로 바꿉니다**. 계속하면 방금 올리신 글들이 ' +
 				'한꺼번에 비공개가 될 수 있습니다.\n\n' +
 				`약 ${seconds}초 뒤에 다시 시도하세요. ` +

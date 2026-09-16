@@ -661,12 +661,49 @@ describe('쓰기 경로는 빠짐없이 취소·직렬화를 거친다', () => {
 					}
 				}
 				const call = src.slice(start, end + 1);
-				// uploadImage 는 옵션 객체를 변수로 만들어 넘기므로 그 변수도 인정한다.
-				if (!/signal/.test(call) && !/uploadOptions/.test(call)) {
+				// ⚠️ 「signal 이라는 낱말이 있나」로 보면 `signal: undefined` 나
+				//   `signal: x.aborted ? x : undefined` 같은 변이가 통과한다(코덱스 23차).
+				//   **호출자 신호를 그대로 싣는 모양**만 인정한다.
+				//   uploadImage 는 옵션 객체를 변수로 만들어 넘기므로 그 변수도 인정한다.
+				//   ⚠️ `{ signal }` **축약형**도 정상 배선이다. 그걸 빠뜨렸다가 멀쩡한
+				//     drafts.ts 의 editPost 를 «미배선» 으로 잡을 뻔했다(거짓 양성).
+				//   ⚠️ 뒤에 `&&`·`||`·`?` 가 붙으면 신호가 아닌 다른 값이 간다.
+				//     `{ signal: extra.signal && undefined }` 가 그렇게 통과했다(코덱스 24차).
+				//     **그 자리에서 끝나는** 모양만 인정한다(쉼표·닫는 괄호·줄끝).
+				//   ⚠️ `'m'` 옵션과 `$` 때문에 **다음 줄에 `&& undefined` 를 붙이면** 통과했다
+				//     (코덱스 25차). 줄끝을 허용하지 말고 **쉼표나 닫는 괄호**만 인정한다.
+				const endsClean = String.raw`\s*[,)}]`;
+				const wiresSignal =
+					new RegExp(String.raw`signal:\s*extra\.signal` + endsClean).test(call) ||
+					new RegExp(String.raw`signal:\s*signal` + endsClean).test(call) ||
+					/\{\s*signal\s*\}/.test(call) ||
+					/uploadOptions/.test(call);
+				//   ⚠️ `uploadOptions` 는 **두 갈래**다(post_id 있음/없음). 낱말만 보면
+				//     한쪽을 `signal: undefined` 로 바꿔도 통과한다(코덱스 26차).
+				//     아래에서 그 정의를 따로 본다.
+				if (!wiresSignal) {
 					missing.push(`${name}: ${call.replace(/\s+/g, ' ').slice(0, 70)}`);
 				}
 			}
 		}
+		// ★ uploadOptions 의 **모든 갈래**가 신호를 싣는지 따로 본다.
+		//   `signal: args.signal` 이 갈래 수만큼 있어야 한다.
+		const imagesSrc = await readFile(new URL('../tools/images.ts', import.meta.url), 'utf8');
+		const optionBlocks = imagesSrc.match(/const uploadOptions[\s\S]*?;\n/g) ?? [];
+		assert.ok(optionBlocks.length >= 2, `uploadOptions 정의를 못 찾았다(${optionBlocks.length}개)`);
+		for (const block of optionBlocks) {
+			const branches = block.match(/\{[^{}]*type:[^{}]*\}/g) ?? [];
+			assert.ok(branches.length >= 2, `갈래를 못 찾았다: ${block.slice(0, 80)}`);
+			for (const branch of branches) {
+				// 두 정의가 서로 다른 이름을 쓴다(`args.signal`·`extra.signal`). 둘 다 인정한다.
+				assert.match(
+					branch,
+					/signal:\s*(?:args|extra)\.signal\s*[,}]/,
+					`업로드 옵션 한 갈래가 취소 신호를 안 싣는다: ${branch.replace(/\s+/g, ' ').slice(0, 90)}`,
+				);
+			}
+		}
+
 		assert.deepEqual(
 			missing,
 			[],
@@ -742,5 +779,124 @@ describe('쓰기 경로는 빠짐없이 취소·직렬화를 거친다', () => {
 			}
 		}
 		assert.deepEqual(outside, [], '동시 수정이 서로를 덮어쓸 수 있다 — src/serial.ts 참고');
+	});
+});
+
+/**
+ * ★★ 18차: **거짓 초록을 메운다.**
+ *
+ * 프로필 도구 검사는 등록·게이트·annotation 만 봤다. 그래서 «생략한 필드를 보존한다» 는
+ * 핵심 동작을 깨뜨려도 272/272 가 초록이었다(코덱스 18차가 변이로 증명).
+ * 여기서는 **실제로 호출해서 서버로 나가는 mutation 입력**을 본다.
+ */
+describe('★★ A13 — 프로필 수정이 생략한 필드를 실제로 보존한다', () => {
+	const authed = {
+		kind: 'authenticated' as const,
+		credentials: { accessToken: 'tok12345678', refreshToken: undefined },
+	};
+
+	/** 프로필 도구를 부르고, 서버로 나간 mutation 의 input 을 돌려준다. */
+	const callProfileTool = async (
+		name: string,
+		args: Record<string, unknown>,
+	): Promise<{ input: Record<string, unknown> | null; isError: boolean; text: string }> => {
+		// ⚠️ 상태가 없으면 재조회가 늘 같은 값을 주고, 보고가 **틀린 값을 실어도** 안 걸린다
+		//   (코덱스 24차: short_bio 를 'WRONG_BIO' 로 바꿔도 통과). 서버가 저장을 반영하게 한다.
+		const existing: Record<string, string> = {
+			display_name: 'KEEP_NAME',
+			short_bio: 'KEEP_BIO',
+			about: 'KEEP_ABOUT',
+		};
+		let sentInput: Record<string, unknown> | null = null;
+		const fetchImpl = (async (_url: unknown, init?: { body?: string }) => {
+			const body = JSON.parse(init?.body ?? '{}') as {
+				query?: string;
+				variables?: { input?: Record<string, unknown> };
+			};
+			const query = body.query ?? '';
+			if (/updateProfile|updateAbout|updateSocialInfo|updateThumbnail|updateVelogTitle/.test(query)) {
+				sentInput = body.variables?.input ?? {};
+				// ⚠️ 보낸 값을 **그대로** 저장하면 «입력을 보고» 해도 «재조회를 보고» 해도
+				//   같아서 구별이 안 된다(코덱스 25차). 서버가 살짝 다른 값을 돌려주게 해서
+				//   보고가 **재조회 결과**를 쓰는지 본다 — 실제 벨로그도 값을 다듬는다.
+				for (const [k, v] of Object.entries(sentInput)) {
+					if (typeof v === 'string') existing[k] = `${v}·저장됨`;
+				}
+				return new Response(JSON.stringify({ data: { updateProfile: { id: 'u1', ...existing } } }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			return new Response(
+				JSON.stringify({
+					data: {
+						currentUser: { id: 'u1', username: 'me', profile: existing },
+						user: { id: 'u1', username: 'me', profile: existing, velog_config: { title: 'T' } },
+					},
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			);
+		}) as unknown as typeof fetch;
+
+		const client = new VelogClient({ auth: authed, fetchImpl, sleepImpl: async () => {}, maxRetries: 0 });
+		const server = createServer(client, { publicPublish: false, editProfile: true });
+		const [a, b] = InMemoryTransport.createLinkedPair();
+		await server.connect(a);
+		const mcp = new Client({ name: 't', version: '0' });
+		await mcp.connect(b);
+		// ⚠️ 결과를 버리면 «저장은 했는데 실패로 보고» 하는 회귀를 못 잡는다
+		//   (코덱스 19차: mutation 뒤에 무조건 던지게 해도 38개가 전부 초록이었다).
+		//   보낸 입력과 **호출 결과**를 함께 돌려준다.
+		let isError: boolean;
+		let text: string;
+		try {
+			const res = (await mcp.callTool({ name, arguments: args })) as {
+				isError?: boolean;
+				content?: Array<{ text?: string }>;
+			};
+			isError = res.isError === true;
+			text = (res.content ?? []).map((c) => c.text ?? '').join('\n');
+		} catch (error) {
+			isError = true;
+			text = error instanceof Error ? error.message : String(error);
+		}
+		await mcp.close();
+		return { input: sentInput, isError, text };
+	};
+
+	test('★ 한줄소개만 고치면 이름은 기존 값 그대로 나간다', async () => {
+		const { input, isError } = await callProfileTool('velog_update_profile', { short_bio: '새 소개' });
+		assert.ok(input, 'mutation 이 아예 안 나갔다');
+		// ⚠️ 여기서도 결과를 본다. 「한 필드만 줬을 때만 실패하는」 변이가 있었다.
+		assert.equal(isError, false, '한 필드만 고쳤는데 오류로 끝났다');
+		assert.equal(input?.['display_name'], 'KEEP_NAME', '생략한 이름이 빈 값으로 덮였다');
+		assert.equal(input?.['short_bio'], '새 소개');
+	});
+
+	test('★ 이름만 고치면 한줄소개는 기존 값 그대로 나간다', async () => {
+		const { input, isError } = await callProfileTool('velog_update_profile', { display_name: '새 이름' });
+		assert.ok(input, 'mutation 이 아예 안 나갔다');
+		assert.equal(isError, false, '한 필드만 고쳤는데 오류로 끝났다');
+		assert.equal(input?.['short_bio'], 'KEEP_BIO', '생략한 한줄소개가 빈 값으로 덮였다');
+		assert.equal(input?.['display_name'], '새 이름');
+	});
+
+	test('☑ 대조군 — 둘 다 주면 둘 다 넘어가고, 보고에 저장된 값이 실린다', async () => {
+		const { input, isError, text } = await callProfileTool('velog_update_profile', {
+			display_name: 'N',
+			short_bio: 'B',
+		});
+		assert.equal(input?.['display_name'], 'N');
+		assert.equal(input?.['short_bio'], 'B');
+		assert.equal(isError, false, '정상 호출인데 오류로 끝났다');
+		// ⚠️ `isError` 만 보면 보고 내용을 «✅ 완료» 한 줄로 바꿔도 통과한다
+		//   (코덱스 22차). 사용자가 확인할 값이 실제로 실리는지 본다.
+		// ⚠️ 항목 «이름» 만 보면 값이 틀려도 통과한다(코덱스 24차: short_bio 를
+		//   'WRONG_BIO' 로 바꿔도 초록이었다). **보낸 값이 그대로 보고되는지** 본다.
+		// 서버가 «·저장됨» 을 붙여 돌려준다. 보고가 그것을 실으면 재조회를 쓴 것이고,
+		// 입력 그대로면 옛 값을 보고하는 것이다.
+		assert.match(text, /이름:\s*N·저장됨/, `보고가 재조회값이 아니다:\n${text}`);
+		assert.match(text, /한줄 소개:\s*B·저장됨/, `보고가 재조회값이 아니다:\n${text}`);
+		assert.match(text, /velog\.io\/@me/, '확인 경로가 보고에 없다');
 	});
 });

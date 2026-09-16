@@ -7,6 +7,23 @@ import type { AuthState } from '../auth.ts';
 const anon: AuthState = { kind: 'anonymous' };
 const noSleep = async (): Promise<void> => {};
 
+/**
+ * ★★ **기다린 시간을 기록하는 가짜 잠.**
+ *   `noSleep` 은 인자를 버린다. 그래서 `this.#sleep(backoff)` 를 `this.#sleep(0)`
+ *   으로 바꾸는 변이가 11개 전부를 통과했다. 지수 후퇴가 통째로 사라져도 아무도
+ *   모르는 상태였다 — 벨로그가 흔들릴 때 쉬지 않고 두들기게 된다.
+ *   실제로 자지는 않되 **받은 값은 남긴다.**
+ */
+function recordingSleep(): { impl: (ms: number) => Promise<void>; waits: number[] } {
+	const waits: number[] = [];
+	return {
+		impl: async (ms: number): Promise<void> => {
+			waits.push(ms);
+		},
+		waits,
+	};
+}
+
 /** 정해진 응답을 순서대로 내주는 가짜 fetch. */
 function fakeFetch(responses: Array<{ status?: number; body: unknown }>) {
 	let calls = 0;
@@ -127,5 +144,62 @@ describe('requireAuth', () => {
 		const client = new VelogClient({ auth: anon });
 		assert.equal(client.isAuthenticated, false);
 		assert.throws(() => { client.requireAuth('velog_create_draft'); }, /인증이 필요/);
+	});
+});
+
+describe('★★ 재시도 사이에 실제로 기다린다 — 지수 후퇴', () => {
+	/** 503 을 계속 주는 서버. 재시도를 끝까지 소진시킨다. */
+	const alwaysDown = (): Array<{ status: number; body: unknown }> =>
+		Array.from({ length: 5 }, () => ({ status: 503, body: {} }));
+
+	test('★ 대기 시간이 500ms → 1s 로 늘어난다', async () => {
+		const sleep = recordingSleep();
+		const f = fakeFetch(alwaysDown());
+		const client = new VelogClient({ auth: anon, fetchImpl: f.impl, sleepImpl: sleep.impl });
+
+		await assert.rejects(async () => client.request('query { x }'));
+
+		assert.deepEqual(
+			sleep.waits,
+			[500, 1000],
+			`후퇴가 사라졌다 — 실제 대기: [${sleep.waits.join(', ')}]`,
+		);
+	});
+
+	test('★ 대기 시간은 시도마다 두 배가 된다 — 고정값이 아니다', async () => {
+		const sleep = recordingSleep();
+		const f = fakeFetch(alwaysDown());
+		const client = new VelogClient({ auth: anon, fetchImpl: f.impl, sleepImpl: sleep.impl });
+		await assert.rejects(async () => client.request('query { x }'));
+
+		assert.ok(sleep.waits.length >= 2, '재시도가 한 번뿐이라 후퇴를 잴 수 없다');
+		for (let i = 1; i < sleep.waits.length; i += 1) {
+			const prev = sleep.waits[i - 1] ?? 0;
+			const cur = sleep.waits[i] ?? 0;
+			assert.equal(cur, prev * 2, `${i}번째 대기가 두 배가 아니다: ${prev} → ${cur}`);
+		}
+	});
+
+	/**
+	 * ☑ 대조군 — 위 둘이 「무조건 잔다」로 굳지 않게, **잘 필요가 없을 때는 안 자는지**
+	 *   를 함께 잰다. 한 번에 성공하는 조회에서 잠이 들어가면 모든 호출이 느려진다.
+	 */
+	test('☑ 대조군 — 한 번에 성공하면 아예 기다리지 않는다', async () => {
+		const sleep = recordingSleep();
+		const f = fakeFetch([{ body: { data: { x: 1 } } }]);
+		const client = new VelogClient({ auth: anon, fetchImpl: f.impl, sleepImpl: sleep.impl });
+
+		assert.deepEqual(await client.request('query { x }'), { x: 1 });
+		assert.deepEqual(sleep.waits, [], '성공한 호출에서 잠이 들어갔다');
+	});
+
+	test('☑ 대조군 — 다시 쳐도 소용없는 오류에서는 기다리지 않는다', async () => {
+		const sleep = recordingSleep();
+		// 4xx 는 다시 쳐도 같다. 자면 그만큼 사용자를 세워둘 뿐이다.
+		const f = fakeFetch([{ status: 400, body: {} }]);
+		const client = new VelogClient({ auth: anon, fetchImpl: f.impl, sleepImpl: sleep.impl });
+
+		await assert.rejects(async () => client.request('query { x }'));
+		assert.deepEqual(sleep.waits, [], '영구 오류인데 후퇴를 기다렸다');
 	});
 });

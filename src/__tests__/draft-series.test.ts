@@ -35,11 +35,26 @@ interface Opts {
 function fake(opts: Opts = {}) {
 	const calls: Array<{ op: string; input: Record<string, unknown> }> = [];
 	// 벨로그가 생성 때 만들어 두는 표시 데이터. edit 이 {} 를 보내면 지워진다.
-	const stored: { series: { id: string; name: string } | null; meta: unknown; is_temp: boolean } = {
+	interface Record_ {
+		series: { id: string; name: string } | null;
+		meta: unknown;
+		is_temp: boolean;
+	}
+	const blank = (): Record_ => ({
 		series: null,
 		meta: { short_description: '벨로그가 만든 요약' },
 		is_temp: true,
-	};
+	});
+	// ★★ **글을 id 로 구분한다.** 예전에는 저장소가 하나뿐이라 조회도 수정도 대상
+	//   id 를 보지 않았다. 그래서 `id: postId` 를 `id: '다른-글'` 로 바꾸는 변이가
+	//   32개 전부를 통과했다 — 엉뚱한 글을 고치는 요청을 정상으로 인정한 것이다.
+	//   이제 `p1`(방금 만든 글) 옆에 `p2`(남의 글)를 두고, 대상이 어긋나면 벨로그처럼
+	//   「없는 글」로 답한다.
+	const posts = new Map<string, Record_>([
+		['p1', blank()],
+		['p2', blank()],
+	]);
+	const stored = posts.get('p1') as Record_;
 
 	const client = new VelogClient({
 		auth: {
@@ -78,16 +93,30 @@ function fake(opts: Opts = {}) {
 						headers: { 'Content-Type': 'application/json' },
 					});
 				}
+				const editId = input['id'];
+				const target = typeof editId === 'string' ? posts.get(editId) : undefined;
+				if (!target) {
+					return new Response(
+						JSON.stringify({ errors: [{ message: `없는 글입니다: ${String(editId)}` }] }),
+						{ status: 200, headers: { 'Content-Type': 'application/json' } },
+					);
+				}
 				if (!opts.editLies) {
 					const sid = input['series_id'];
 					if (typeof sid === 'string') {
-						stored.series = { id: sid, name: SERIES.find((s) => s.id === sid)?.name ?? sid };
+						target.series = { id: sid, name: SERIES.find((s) => s.id === sid)?.name ?? sid };
 					}
-					stored.meta = input['meta'];
+					target.meta = input['meta'];
 				}
-				if (opts.becomesPublished) stored.is_temp = false;
+				if (opts.becomesPublished) target.is_temp = false;
 				return json({
-					editPost: { id: 'p1', title: 't', url_slug: 's', is_temp: true, user: { username: 'me' } },
+					editPost: {
+						id: editId,
+						title: 't',
+						url_slug: 's',
+						is_temp: true,
+						user: { username: 'me' },
+					},
 				});
 			}
 			if (b.query.includes('post(')) {
@@ -98,13 +127,16 @@ function fake(opts: Opts = {}) {
 						headers: { 'Content-Type': 'application/json' },
 					});
 				}
+				const readId = input['id'];
+				const found = typeof readId === 'string' ? posts.get(readId) : undefined;
+				if (!found) return json({ post: null });
 				return json({
 					post: {
-						id: 'p1',
+						id: readId,
 						title: 't',
-						is_temp: stored.is_temp,
-						meta: stored.meta,
-						series: stored.series,
+						is_temp: found.is_temp,
+						meta: found.meta,
+						series: found.series,
 						user: { username: 'me' },
 					},
 				});
@@ -112,7 +144,7 @@ function fake(opts: Opts = {}) {
 			return json({});
 		}) as unknown as typeof fetch,
 	});
-	return { client, calls, stored };
+	return { client, calls, stored, posts };
 }
 
 async function connect(client: VelogClient): Promise<Client> {
@@ -148,6 +180,50 @@ describe('★ 초안을 만들면서 시리즈까지 붙는다', () => {
 		);
 		assert.match(out.text, /시리즈 \*\*PostgreSQL\*\* 에 넣었습니다/);
 		assert.doesNotMatch(out.text, /적용되지 않았습니다/);
+	});
+
+	/**
+	 * ★★ **대상 id 를 실제로 대조한다.**
+	 *   이 검사가 없을 때는 시리즈가 «어딘가에» 붙기만 하면 초록이었다. `id: postId`
+	 *   를 남의 글 id 로 바꾸는 변이가 32개 전부를 통과했고, 그 변이는 사용자의 다른
+	 *   글을 통째로 덮어쓴다(editPost 는 전체 교체다).
+	 */
+	test('★ 수정 요청이 방금 만든 글로 간다 — 남의 글은 건드리지 않는다', async () => {
+		const f = fake();
+		await createDraft(f, { title: 't', body: 'b', series_name: 'PostgreSQL' });
+
+		const edit = f.calls.find((c) => c.op === 'editPost');
+		assert.equal(edit?.input['id'], 'p1', '방금 만든 글이 아닌 것을 고치러 갔다');
+		assert.equal(f.posts.get('p1')?.series?.id, 's-pg');
+		assert.equal(f.posts.get('p2')?.series, null, '손대면 안 되는 글에 시리즈가 붙었다');
+		assert.deepEqual(
+			f.posts.get('p2')?.meta,
+			{ short_description: '벨로그가 만든 요약' },
+			'남의 글의 표시 데이터가 전체교체로 덮였다',
+		);
+	});
+
+	test('★ 붙이기 전 조회도 방금 만든 글을 읽는다', async () => {
+		const f = fake();
+		await createDraft(f, { title: 't', body: 'b', series_name: 'PostgreSQL' });
+		const reads = f.calls.filter((c) => c.op === 'post');
+		assert.ok(reads.length > 0, '조회가 아예 없었다');
+		for (const r of reads) {
+			assert.equal(r.input['id'], 'p1', `엉뚱한 글을 읽었다: ${String(r.input['id'])}`);
+		}
+	});
+
+	/**
+	 * ☑ 대조군 — 위 두 검사가 「id 만 맞으면 통과」로 굳지 않게, **정상 경로가 끝까지
+	 *   동작하는지**를 같은 모의 서버로 다시 잰다. 막는 쪽만 재면 정상까지 막는
+	 *   과잉 수정을 못 본다.
+	 */
+	test('☑ 대조군 — id 를 구분하는 서버에서도 붙이기는 그대로 된다', async () => {
+		const f = fake();
+		const out = await createDraft(f, { title: 't', body: 'b', series_name: 'PostgreSQL' });
+		assert.notEqual(out.isError, true);
+		assert.match(out.text, /시리즈 \*\*PostgreSQL\*\* 에 넣었습니다/);
+		assert.doesNotMatch(out.text, /확인하지 못했습니다/);
 	});
 
 	test('후속 edit 이 벨로그가 만든 meta 를 지우지 않는다', async () => {

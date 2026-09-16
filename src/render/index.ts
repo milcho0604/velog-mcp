@@ -176,34 +176,65 @@ async function render<A extends { w: number; h: number }>(
 	}
 }
 
+/**
+ * 취소를 **줄의 양쪽에서** 본다.
+ *
+ * ★★ 렌더는 한 번에 하나만 돈다. 그래서 두 번째 요청은 앞이 끝날 때까지 기다리는데,
+ *   기다리는 동안 클라이언트가 취소해도 **차례가 오면 그대로 크롬을 띄웠다**
+ *   (실측: 크롬 프로세스 9개·약 1GB). 이미 아무도 안 보는 결과를 만드느라
+ *   사용자 기기의 자원을 쓰는 것이라 조용히 넘길 일이 아니다.
+ *
+ * 그래서 ① 줄에 서기 전에 한 번, ② **차례가 온 직후에 다시** 본다.
+ *   ②가 없으면 «대기 중 취소» 를 못 잡는다 — 그게 정확히 이 결함이었다.
+ *
+ * ⚠️ 돌기 시작한 렌더를 중간에 끊지는 않는다. 크롬을 죽이면 프로필 폴더 정리가
+ *   반쪽이 되는데, 4초짜리 작업이라 얻는 것보다 잃는 것이 크다. 막는 것은
+ *   «시작하지 않아도 되는 것을 시작하는 일» 이다.
+ */
+function serializeCancellable<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+	signal?.throwIfAborted();
+	return serialize(() => {
+		signal?.throwIfAborted();
+		return task();
+	});
+}
+
 export function renderDiagram(
 	spec: DiagramSpec,
 	scale = 2,
+	signal?: AbortSignal,
 ): Promise<RenderResult<AuditReport>> {
-	return serialize(() =>
-		render({ html: buildDiagramHtml(spec), basename: 'diagram', scale }, parseAudit),
+	return serializeCancellable(
+		() => render({ html: buildDiagramHtml(spec), basename: 'diagram', scale }, parseAudit),
+		signal,
 	);
 }
 
 export function renderSequence(
 	spec: SequenceSpec,
 	scale = 2,
+	signal?: AbortSignal,
 ): Promise<RenderResult<SequenceAudit>> {
-	return serialize(() =>
-		render({ html: buildSequenceHtml(spec), basename: 'sequence', scale }, parseSequenceAudit),
+	return serializeCancellable(
+		() =>
+			render({ html: buildSequenceHtml(spec), basename: 'sequence', scale }, parseSequenceAudit),
+		signal,
 	);
 }
 
 export function renderCover(
 	spec: CoverSpec,
 	scale = 2,
+	signal?: AbortSignal,
 ): Promise<RenderResult<CoverAudit>> {
-	return serialize(() =>
-		render({ html: buildCoverHtml(spec), basename: 'cover', scale }, (dom) => {
-			const match = /<title>AUDIT (\{.*?\})<\/title>/s.exec(dom);
-			if (!match?.[1]) throw new Error('표지 렌더 결과를 읽지 못했습니다.');
-			return JSON.parse(match[1]) as CoverAudit;
-		}),
+	return serializeCancellable(
+		() =>
+			render({ html: buildCoverHtml(spec), basename: 'cover', scale }, (dom) => {
+				const match = /<title>AUDIT (\{.*?\})<\/title>/s.exec(dom);
+				if (!match?.[1]) throw new Error('표지 렌더 결과를 읽지 못했습니다.');
+				return JSON.parse(match[1]) as CoverAudit;
+			}),
+		signal,
 	);
 }
 

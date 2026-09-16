@@ -15,7 +15,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { ToolExtra, VelogClient } from '../client.ts';
 import type { Capabilities } from '../capabilities.ts';
-import { textResult, HUMAN_BODY_STYLE, HUMAN_TITLE_STYLE } from '../format.ts';
+import { textResult, HUMAN_BODY_STYLE, HUMAN_TITLE_STYLE, MAX_TITLE_LENGTH } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { assertOwned, assertOwnsSeries } from '../ownership.ts';
 import type { PublishRateLimiter } from '../ratelimit.ts';
@@ -338,7 +338,7 @@ export function registerPublishTools(
 				publicNote +
 				' 되돌리려면 velog_unpublish_post 로 초안으로 내릴 수 있다.',
 			inputSchema: {
-				title: z.string().min(1).describe('글 제목.' + HUMAN_TITLE_STYLE),
+				title: z.string().min(1).max(MAX_TITLE_LENGTH).describe('글 제목.' + HUMAN_TITLE_STYLE),
 				body: z.string().min(1).describe('본문 (마크다운).' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).default([]),
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
@@ -562,7 +562,7 @@ export function registerPublishTools(
 						'비공개 글은 비공개로 그대로 남는다. 범위를 바꾸려면 VELOG_ALLOW_PUBLIC=1 이 필요하다.'),
 			inputSchema: {
 				id: z.string().min(1),
-				title: z.string().min(1).optional().describe('글 제목.' + HUMAN_TITLE_STYLE),
+				title: z.string().min(1).max(MAX_TITLE_LENGTH).optional().describe('글 제목.' + HUMAN_TITLE_STYLE),
 				body: z.string().min(1).optional().describe('생략하면 기존 본문 유지.' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).optional().describe('생략하면 기존 태그 유지'),
 				url_slug: z.string().optional().describe('생략하면 기존 주소 유지'),
@@ -580,7 +580,9 @@ export function registerPublishTools(
 			},
 			// 생략 필드는 보존하지만 넘긴 필드는 덮어쓴다. MCP 명세상 false 는
 			// '추가만 한다'는 뜻이라 거짓이 된다.
-			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+			// ⚠️ idempotent 도 아니다. `url_slug` 가 다른 글과 겹치면 벨로그가 무작위
+			//   접미사를 붙여 부를 때마다 주소가 달라진다(초안 수정과 같은 이유).
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
 		},
 		async (args: UpdatePostArgs, extra: ToolExtra) =>
 			// ★ 같은 대상에 대한 쓰기는 줄을 세운다 — 이유는 src/serial.ts

@@ -26,7 +26,19 @@ export type Prim =
 	| readonly ['l', number, number, number, number] // line x1 y1 x2 y2
 	| readonly ['p', string]; // path d
 
-export const ICONS: Record<string, readonly Prim[]> = {
+/**
+ * 아이콘 이름 → 도형.
+ *
+ * ★★ **프로토타입 없는 객체**로 만든다. 평범한 객체 리터럴이면 `ICONS['constructor']`
+ *   가 `Object` 생성자를 돌려준다 — 조회하는 쪽은 `icon && ICONS[icon]` 으로 «있다» 고
+ *   읽고, 그 다음 `prim[0]` 에서 죽는다(실측: `Cannot read properties of undefined`).
+ *   `toString`·`hasOwnProperty`·`__proto__` 도 같다.
+ *
+ *   조회 지점이 네 군데(page.ts 2·sequence.ts 2)라 각자 `Object.hasOwn` 을 부르게 하면
+ *   한 곳을 빠뜨린다. 이 저장소는 프로토타입 오염으로 이미 두 번 데였다(drift.ts 의
+ *   루트 인자·타입 필드). 그래서 **자료구조 쪽을 바꿔** 조회하는 쪽이 신경 쓸 일을 없앤다.
+ */
+const ICON_TABLE = {
 	server: [
 		['r', 3, 4, 18, 7, 2],
 		['r', 3, 13, 18, 7, 2],
@@ -162,6 +174,11 @@ export const ICONS: Record<string, readonly Prim[]> = {
 		['p', 'M20.5 3.8v4.6H16'],
 	],
 	bolt: [['p', 'M13.2 2.5 5.5 13.5h5.6l-1 8L18.5 10.5h-5.6z']],
-};
+} as const satisfies Record<string, readonly Prim[]>;
 
-export const ICON_NAMES = Object.keys(ICONS).sort();
+export const ICONS: Record<string, readonly Prim[]> = Object.assign(
+	Object.create(null) as Record<string, readonly Prim[]>,
+	ICON_TABLE,
+);
+
+export const ICON_NAMES = Object.keys(ICON_TABLE).sort();

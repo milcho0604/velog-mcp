@@ -92,26 +92,29 @@ function widthOf(s, size, cls){
 }
 // 실측 기반 줄바꿈. 공백이 없으면(한글 긴 제목) 글자 단위로 끊는다.
 function wrap(s, size, cls, maxW, maxLines){
+  // ⚠️ 글자 단위 분할이 «첫 단어일 때만» 돌면, 두 번째 이후의 긴 단어는 그대로 넘친다.
+  //    실측: 'A ' + '가'x50 이 두 번째 줄에 통째로 들어가 상한 992 에 폭 3100 이 됐다.
+  //    감사는 «글자가 보존됐나» 만 봐서 이것을 못 잡았다. 단어 자리와 무관하게 같은
+  //    절차를 태운다.
+  // ⚠️ 글자는 Array.from 으로 센다. 인덱스로 끊으면 이모지가 반으로 갈린다.
   var words = s.split(' ');
   var lines = [], cur = '';
-  for (var i = 0; i < words.length; i++) {
-    var probe = cur ? cur + ' ' + words[i] : words[i];
-    if (widthOf(probe, size, cls) <= maxW || !cur) {
-      if (widthOf(probe, size, cls) > maxW && !cur) {
-        // 단어 하나가 이미 넘친다 — 글자 단위로 끊는다
-        var piece = '';
-        for (var c = 0; c < probe.length; c++) {
-          if (widthOf(piece + probe[c], size, cls) > maxW && piece) {
-            lines.push(piece); piece = probe[c];
-            if (lines.length >= maxLines) break;
-          } else piece += probe[c];
-        }
-        cur = piece;
-        continue;
-      }
-      cur = probe;
-    } else { lines.push(cur); cur = words[i]; }
-    if (lines.length >= maxLines) break;
+  for (var i = 0; i < words.length && lines.length < maxLines; i++) {
+    var w = words[i];
+    var probe = cur ? cur + ' ' + w : w;
+    if (widthOf(probe, size, cls) <= maxW) { cur = probe; continue; }
+    // 이 줄에는 더 못 넣는다 — 닫고 단어 하나만으로 다시 본다.
+    if (cur) { lines.push(cur); cur = ''; if (lines.length >= maxLines) break; }
+    if (widthOf(w, size, cls) <= maxW) { cur = w; continue; }
+    // 단어 하나가 이미 넘친다 — 글자 단위로 끊는다.
+    var chars = Array.from(w);
+    var piece = '';
+    for (var c = 0; c < chars.length && lines.length < maxLines; c++) {
+      if (piece && widthOf(piece + chars[c], size, cls) > maxW) {
+        lines.push(piece); piece = chars[c];
+      } else piece += chars[c];
+    }
+    cur = piece;
   }
   if (cur && lines.length < maxLines) lines.push(cur);
   return lines;

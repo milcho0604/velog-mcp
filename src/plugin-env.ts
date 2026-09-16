@@ -100,7 +100,18 @@ export function normalizePluginEnv(env: NodeJS.ProcessEnv): EnvAnomalies {
  * 우선순위가 있다 — 자리표시자가 살아 온 건 설정 실수가 아니라 **우리가 모르는
  * 동작**이므로 먼저, 크게 알린다.
  */
-export function describeAnomalies(anomalies: EnvAnomalies): string {
+export function describeAnomalies(
+	anomalies: EnvAnomalies,
+	/**
+	 * 정규화 **뒤에** 실제로 인증이 되는가.
+	 *
+	 * ⚠️ 한때 「토큰 키 중 하나라도 비었으면 읽기 전용」이라고 했다. 그런데 이 서버는
+	 *   **둘 중 하나만 있어도 인증된다**(auth.ts). `VELOG_ACCESS_TOKEN=""` 에
+	 *   refresh 만 넣은 정상 설정에서 「읽기 전용으로 돕니다」가 떴다(코덱스 15차).
+	 *   기동 첫 줄이 거짓이면 사용자는 그 아래 줄도 안 믿는다.
+	 */
+	authenticated = false,
+): string {
 	const out: string[] = [];
 
 	if (anomalies.literal.length > 0) {
@@ -111,10 +122,15 @@ export function describeAnomalies(anomalies: EnvAnomalies): string {
 	}
 
 	const missingToken = anomalies.blanked.filter((key) => TOKEN_KEYS.includes(key));
-	if (missingToken.length > 0) {
+	if (missingToken.length > 0 && !authenticated) {
 		out.push(
 			`토큰이 비어 있습니다(${missingToken.join(', ')}) — 읽기 전용으로 돕니다.\n` +
 				'   플러그인으로 설치했다면 `/plugin manage`, 직접 설정했다면 MCP 설정의 env 를 보세요.\n',
+		);
+	} else if (missingToken.length > 0) {
+		// 인증은 됐다. 빈 키는 알려주되 «읽기 전용» 이라고 하지 않는다.
+		out.push(
+			`설정값 중 비어 있는 것: ${missingToken.join(', ')} (나머지 토큰으로 인증됩니다)\n`,
 		);
 	}
 
