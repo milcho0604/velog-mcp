@@ -51,13 +51,14 @@ export function registerDiscoverTools(server: McpServer, client: VelogClient): v
 			},
 			annotations: READ_ONLY,
 		},
-		async ({ keyword, username, limit, offset }) => {
+		async ({ keyword, username, limit, offset }, extra) => {
 			const input: Record<string, unknown> = { keyword, limit, offset };
 			if (username) input['username'] = username;
 
 			const data = await client.request<{ searchPosts: SearchPostsResult }>(
 				QUERY_SEARCH_POSTS,
 				{ input },
+				{ signal: extra.signal },
 			);
 			const result = data.searchPosts;
 			const posts = result.posts ?? [];
@@ -104,11 +105,17 @@ export function registerDiscoverTools(server: McpServer, client: VelogClient): v
 					.int()
 					.min(0)
 					.default(0)
-					.describe('건너뛸 글 수. 다음 페이지를 볼 때 이전 limit 만큼 더한다. year 기간은 1000 까지'),
+					.describe(
+						'건너뛸 글 수. 다음 페이지는 **실제로 적용된 limit** 만큼 더한다 — ' +
+							'day·week·month 는 준 값 그대로, year 는 `min(limit, 20)` 이다. ' +
+							'year 에서 20 을 넘겨 주면 20 으로 낮춰지므로 그때는 20씩 더해야 사이가 안 빈다. ' +
+							'year 의 offset 상한은 1000 이고, 넘기면 1000 으로 낮춰져 같은 페이지가 나온다. ' +
+							'응답 첫 줄에 이번에 적용된 limit·offset 이 항상 적힌다',
+					),
 			},
 			annotations: READ_ONLY,
 		},
-		async ({ timeframe, limit, offset }) => {
+		async ({ timeframe, limit, offset }, extra) => {
 			const notes: string[] = [];
 			let safeLimit = limit;
 			let safeOffset = offset;
@@ -130,8 +137,13 @@ export function registerDiscoverTools(server: McpServer, client: VelogClient): v
 			const data = await client.request<{ trendingPosts: VelogPostSummary[] | null }>(
 				QUERY_TRENDING_POSTS,
 				{ input: { timeframe, limit: safeLimit, offset: safeOffset } },
+				{ signal: extra.signal },
 			);
-			const head = notes.length > 0 ? `⚠️ ${notes.join(' ')}\n\n` : '';
+			// ★★ 적용값을 **항상** 적는다. 예전엔 조정이 있을 때만 적어서, 안내가 약속한
+			//   「응답에 적힌 적용된 limit」이 정작 없는 경우가 있었다(코덱스 23·24차가
+			//   두 회차 연속 짚었다). 안내가 가리키는 값은 늘 거기 있어야 한다.
+			const applied = `[적용: limit ${safeLimit} · offset ${safeOffset}]\n`;
+			const head = applied + (notes.length > 0 ? `⚠️ ${notes.join(' ')}\n\n` : '\n');
 			return textResult(
 				head +
 					`[트렌딩 · ${timeframe}]\n\n` +
@@ -151,13 +163,14 @@ export function registerDiscoverTools(server: McpServer, client: VelogClient): v
 			},
 			annotations: READ_ONLY,
 		},
-		async ({ limit, cursor }) => {
+		async ({ limit, cursor }, extra) => {
 			const input: Record<string, unknown> = { limit };
 			if (cursor) input['cursor'] = cursor;
 
 			const data = await client.request<{ recentPosts: VelogPostSummary[] }>(
 				QUERY_RECENT_POSTS,
 				{ input },
+				{ signal: extra.signal },
 			);
 			const posts = data.recentPosts ?? [];
 			const last = posts.at(-1);

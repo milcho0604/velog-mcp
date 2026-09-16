@@ -39,8 +39,12 @@ VELOG_ALLOW_PROFILE=1   프로필·소개글·블로그제목·SNS·사진  도�
 | `velog_render_cover` | 올릴 때만 | 표지 생성 (+ 업로드) |
 | `velog_upload_image` | **필요** | **쓰기 — 공개 CDN 업로드** |
 
-`username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·
-`velog_export_posts`·`velog_search_posts` 는 **생략하면 토큰의 계정**을 쓴다.
+`username` 을 받는 도구 중 `velog_list_drafts`·`velog_blog_stats`·`velog_export_posts`
+는 **생략하면 토큰의 계정**을 쓴다.
+
+`velog_search_posts` 는 다르다. **생략하면 벨로그 전체를 검색한다.** 내 글 안에서만
+찾으려면 `username` 을 직접 줘야 한다. (2026-09-15 정정: 문서가 다른 셋과 같다고
+적어 놨는데 구현은 `if (username)` 으로 전체 검색이었다.)
 
 ---
 
@@ -328,8 +332,14 @@ RSS·메일로 나가지도 않는다. 이유는 **혼동**이다: 프로필의 
 
 **이 판단을 끄는 파라미터는 없다.** 한때 `force_upload` 가 있었는데, 그건 이 저장소가
 공개 발행에서 이미 배운 것(ADR 0004)을 그대로 어긴 것이었다 — 모델이 스스로 켤 수
-있는 스위치는 방어가 아니다. 그래도 올려야 하면 `upload:false` 로 그린 뒤 PNG 를 보고
-`velog_upload_image` 로 올린다.
+있는 스위치는 방어가 아니다.
+
+**감사에 떨어진 PNG 는 이 서버로 올릴 길이 없다.** `upload:false` 로 그려도
+`finish()` 가 `!clean` 인 산출물을 거부 목록에 올리고, `velog_upload_image` 가 경로를
+정규화·realpath 로 대조해 막는다. 「upload:false 로 그린 뒤 경로를 넘긴다」는 두 단계
+우회를 막으려고 만든 장치라, 그 절차를 안내문에 적으면 실행 불가능한 절차가 된다
+(2026-09-15 정정). 고쳐서 다시 그리는 것이 유일한 경로다.
+감사를 **통과한** PNG 는 `upload:false` 로 그린 뒤 경로를 넘겨 올릴 수 있다.
 
 #### 아이콘 28종
 

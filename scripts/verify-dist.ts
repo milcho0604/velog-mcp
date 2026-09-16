@@ -361,22 +361,29 @@ async function walk(dir: URL, prefix = ''): Promise<string[]> {
 //   ⚠️ 그래놓고 디렉터리는 `dist`·`docs` 로 **하드코딩돼 있었다.** 2026-09-14 에
 //   `schema` 를 더했을 때 이 자리가 그대로 뒤처졌다. 같은 실수라 아예 없앤다 —
 //   `files` 의 각 항목이 디렉터리면 훑고, 파일이면 그대로 담는다.
-const ALWAYS_SHIPPED = ['package.json', 'README.md', 'README.ko.md', 'LICENSE'];
-const shipped: Array<[string, URL]> = [];
-for (const entry of new Set([...ALWAYS_SHIPPED, ...(pkg.files ?? [])])) {
-	if (entry.includes('/')) continue; // 글롭·중첩 경로는 지금 쓰지 않는다
-	const asDir = new URL(`${entry}/`, ROOT);
-	const isDir = await stat(fileURLToPath(asDir))
-		.then((s) => s.isDirectory())
-		.catch(() => false);
-	if (isDir) {
-		for (const relative of await walk(asDir)) {
-			shipped.push([`${entry}/${relative}`, new URL(relative, asDir)]);
-		}
-	} else {
-		shipped.push([entry, new URL(entry, ROOT)]);
-	}
+// ★★ **npm 에게 직접 묻는다.** 우리가 `files` 를 해석하지 않는다.
+//
+//   한때 여기서 `files` 를 훑었다. 그러다 세 번 갈라졌다 —
+//   ① 손으로 나열해서 CHANGELOG.md 를 빠뜨렸고(107개 중 106개만 검사),
+//   ② 디렉터리를 `dist`·`docs` 로 하드코딩해서 `schema` 를 빠뜨렸고,
+//   ③ `!dist/**/*.map` 같은 **부정 패턴을 통째로 무시**해서(`entry.includes('/')` 에서
+//      continue) 실제로는 84개가 나가는데 관문은 117개를 봤다.
+//   검사에서 빠진 파일은 **개인정보 검사를 안 받고 나간다.** 그게 이 블록의 존재 이유다.
+//
+//   `npm pack --dry-run --json` 이 곧 정답이다. 우리가 규칙을 다시 구현하는 순간
+//   또 어긋난다.
+const packList = await run('npm', ['pack', '--dry-run', '--json'], fileURLToPath(ROOT));
+if (packList.code !== 0) fail(`npm pack --dry-run 이 실패했습니다:\n${packList.stderr}`);
+let packEntries: Array<{ path: string }>;
+try {
+	const parsed = JSON.parse(packList.stdout) as Array<{ files?: Array<{ path: string }> }>;
+	packEntries = parsed[0]?.files ?? [];
+} catch (cause) {
+	fail(`npm pack --dry-run 의 JSON 을 읽지 못했습니다: ${cause instanceof Error ? cause.message : String(cause)}`);
+	packEntries = [];
 }
+if (packEntries.length === 0) fail('npm 이 싣는 파일 목록이 비었습니다.');
+const shipped: Array<[string, URL]> = packEntries.map((f) => [f.path, new URL(f.path, ROOT)]);
 
 const loaded: Array<[string, Uint8Array]> = [];
 for (const [label, url] of shipped) loaded.push([label, await readFile(url)]);

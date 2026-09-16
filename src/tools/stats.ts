@@ -70,7 +70,14 @@ export async function fetchAllPosts(
 			added++;
 		}
 
-		// 새로 들어온 게 없다 = 커서가 제자리다. '다 봤다'가 아니다.
+		// ★★ **빈 페이지를 먼저 본다.** 글 수가 PAGE_SIZE 의 배수면 마지막 실제 페이지가
+		//   꽉 차서 한 번 더 묻게 되고, 그 답이 `[]` 다. 그건 «다 봤다» 인데 아래
+		//   `added === 0` 에 먼저 걸려 «커서가 제자리» 로 보고됐다. 전부 모았는데
+		//   `truncated: true` 가 나가면 사용자는 통계를 못 믿는다.
+		if (batch.length === 0) {
+			return { posts, truncated: false, outcome: 'complete' };
+		}
+		// 값은 왔는데 하나도 새롭지 않다 = 커서가 제자리다. '다 봤다'가 아니다.
 		if (added === 0) {
 			return { posts, truncated: true, outcome: 'cursor_stalled' };
 		}

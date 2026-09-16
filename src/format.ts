@@ -22,6 +22,16 @@ export const HUMAN_BODY_STYLE =
 /** 제목 규칙. 제목 필드 설명에 붙는다. */
 export const HUMAN_TITLE_STYLE = ' 긴 줄표(—) 금지. 부제는 콜론이나 괄호, 짧은 하이픈으로.';
 
+/**
+ * 글 제목 길이 상한.
+ *
+ * ★★ 벨로그 서버가 제목을 **말없이 자른다.** 넘겨도 오류가 없어서, 우리가 안 막으면
+ *   「저장했습니다」와 함께 뒷부분이 사라진다(코덱스 16차). 저장 전에 거절하면
+ *   모델이 줄여서 다시 부를 수 있다 — 잃은 뒤에 아는 것보다 낫다.
+ * ⚠️ 상한값은 상대 서버 구현에서 온 것이라 바뀔 수 있다. 바뀌면 여기만 고친다.
+ */
+export const MAX_TITLE_LENGTH = 255;
+
 export function postUrl(post: VelogPostSummary): string {
 	const username = post.user?.username;
 	// url_slug 는 공식 스키마상 nullable 이다.

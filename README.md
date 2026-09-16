@@ -278,8 +278,8 @@ the post).
 > server can attach posts to it.
 
 Tools that take a `username` — `velog_list_drafts`, `velog_blog_stats`,
-`velog_export_posts`, `velog_search_posts` — fall back to your own account when you
-omit it.
+`velog_export_posts` — fall back to your own account when you omit it.
+`velog_search_posts` does not: omitting `username` searches all of Velog.
 
 ### Diagrams and images
 
@@ -311,9 +311,10 @@ two lines overlapping · two nodes overlapping · a label sitting on a card
 off.** Velog has no delete-image API and every upload counts against your quota, so a
 flawed diagram is worth redrawing rather than shipping. An override that the model can
 set itself is not a safeguard (same reasoning as the publishing switch in
-[ADR 0004](docs/decisions/0004-capability-model.md)). If you really want a flawed
-diagram online, render with `upload: false`, look at the PNG, then pass its path to
-`velog_upload_image`.
+[ADR 0004](docs/decisions/0004-capability-model.md)). **There is no path to upload an audit-rejected PNG through this server.** Rendering with
+`upload: false` still puts that file on the reject list, and `velog_upload_image` refuses
+it — closing that exact two-step bypass. Fix the diagram and render again.
+(A PNG that *passes* the audit can be rendered with `upload: false` and uploaded by path.)
 
 Icons are 28 built-in glyphs (`server`, `database`, `cloud`, `clock`, `alert`, …) drawn
 from primitive shapes. Nothing is fetched — the renderer runs with DNS disabled.
@@ -376,8 +377,11 @@ Once it's configured, just talk to your MCP client.
    → 1200×630 card; pass the URL to velog_update_post's thumbnail
 ```
 
-Your MCP client asks for approval before each tool call, and irreversible tools carry
-`destructiveHint`, so nothing gets published without you seeing it first.
+Irreversible tools carry `destructiveHint`. **Annotations are hints, not gates** —
+whether your client asks for approval is its own setting. What this server actually
+enforces is different: public publishing has no code path without `VELOG_ALLOW_PUBLIC=1`,
+writes are never retried, and **public** publishing is self-limited to 5 posts per 5
+minutes within this server instance (private posts and drafts are not rate-limited).
 
 ### Exported file format
 
@@ -409,8 +413,8 @@ npm run schema:baseline        # rebuild schema/baseline.json from the live sche
 npm run schema:baseline -- --check   # compare only; don't write
 ```
 
-569 tests (as of 0.9.0). `src/__tests__/safety.test.ts` pins the security
-invariants (A1–A12), `render.test.ts` pins the diagram ones (R1–R23, D1) and the
+608 tests (as of 0.9.0). `src/__tests__/safety.test.ts` pins the security
+invariants (A1–A13), `render.test.ts` pins the diagram ones (R1–R23, D1) and the
 sequence ones (S1–S12), and `plugin.test.ts` pins the packaging ones (P1–P28) —
 if any fails, find out why instead of working around it.
 

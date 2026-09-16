@@ -22,12 +22,22 @@ const cache = new WeakMap<VelogClient, CurrentUser>();
 export async function fetchCurrentUser(
 	client: VelogClient,
 	signal?: AbortSignal,
+	/**
+	 * 캐시를 건너뛰고 서버에 다시 묻는다.
+	 *
+	 * ★★ `velog_whoami` 는 설명에 「토큰이 살아있는지 점검하는 용도로도 쓴다」고
+	 *   적어 놓고 캐시를 돌려줬다. 그러면 토큰이 만료된 뒤에 불러도 «✅ 인증됨» 이다
+	 *   (실측: 추가 조회 0회). 점검이라고 해놓고 점검을 안 하는 것이라,
+	 *   사용자가 제일 믿으면 안 될 때 믿게 된다.
+	 *   username 을 푸는 용도(resolveMyUsername)는 계정이 안 바뀌므로 캐시 그대로 쓴다.
+	 */
+	options: { bypassCache?: boolean } = {},
 ): Promise<CurrentUser> {
 	// ★ 캐시 적중도 취소를 존중한다. 여기서 빼면 '취소했는데 어떤 호출은 그냥
 	//   진행되는' 비일관이 생긴다 — 취소 규약은 경로마다 달라지면 안 된다.
 	signal?.throwIfAborted();
 	const cached = cache.get(client);
-	if (cached) return cached;
+	if (cached && options.bypassCache !== true) return cached;
 
 	const data = await client.request<{ currentUser: CurrentUser | null }>(
 		QUERY_CURRENT_USER,

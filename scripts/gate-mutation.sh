@@ -36,6 +36,7 @@ restore() {
   [ -f "$BAK.pkg.json" ] && cp "$BAK.pkg.json" package.json
   rm -f dist/stale-orphan.js
   rm -f schema/.gate-stray.json
+  rm -rf gate-extra
 }
 # ⚠️ EXIT 만 걸면 Ctrl-C 때 npm 자식이 살아남아 package.json 이 변이된 채 남는다
 #    (코덱스 7차: 4초 뒤에도 schema 가 빠져 있었다). 신호도 함께 받는다.
@@ -131,7 +132,7 @@ PY
 GATE_FAIL=2
 run_gate() { timeout 120 npm run verify:dist >/dev/null 2>&1; echo $?; }
 
-EXPECTED=15
+EXPECTED=16
 ran=0
 fail=0
 overlap=0
@@ -371,6 +372,64 @@ check_stray "발행물 찌꺼기: schema/ 의 임시 파일" \
   "schema/.gate-stray.json" \
   "if (strays.length > 0) {" \
   "if (false) {"
+
+# ── 13차: 관문이 «npm 이 싣는 것» 을 보는가 ──────────────────────────────
+# ⚠️ 한때 관문이 `files` 를 **자기 방식으로 해석**했다. 그래서 `/` 가 든 항목
+#    (중첩 경로 항목)과 부정 패턴(`!dist/**/*.map`)을 통째로 건너뛰었다.
+#    건너뛴 파일은 **개인정보 검사를 안 받고 나간다.** 실측: 개인 경로가 든 파일을
+#    싣고도 관문이 초록이었다. 이제 `npm pack --dry-run --json` 에게 묻는다.
+add_stray_shipped() {
+  mkdir -p gate-extra
+  printf '// %s%s%s\n' '/Users/' 'some' 'body/secret' > gate-extra/leak.js
+  python3 -c "
+import pathlib
+p = pathlib.Path('package.json'); s = p.read_text()
+p.write_text(s.replace('    \"schema\",', '    \"gate-extra/leak.js\",' + chr(10) + '    \"schema\",', 1))
+"
+}
+clear_stray_shipped() {
+  cp "$BAK.pkg.json" package.json
+  rm -rf gate-extra
+}
+
+check_shipped_scan() {
+  local label="발행물 목록: npm 이 싣는 중첩 경로"
+
+  cp "$BAK.ts" "$GATE"
+  add_stray_shipped
+  local caught; caught=$(run_gate)
+
+  if ! break_gate \
+    "const shipped: Array<[string, URL]> = packEntries.map((f) => [f.path, new URL(f.path, ROOT)]);" \
+    "const shipped: Array<[string, URL]> = packEntries.filter((f) => !f.path.includes('/')).map((f) => [f.path, new URL(f.path, ROOT)]);"
+  then
+    echo "  ??  $label — 관문 변이 패턴 불일치"; fail=$((fail+1)); clear_stray_shipped; return
+  fi
+  clear_stray_shipped
+  local sane; sane=$(run_gate)
+
+  add_stray_shipped
+  local slipped; slipped=$(run_gate)
+
+  clear_stray_shipped
+  restore
+
+  ran=$((ran+1))
+  if [ "$caught" -ne "$GATE_FAIL" ]; then
+    echo "  X   $label — 온전한 관문이 rc=$caught 로 끝났다"; fail=$((fail+1)); return
+  fi
+  if [ "$sane" -ne 0 ]; then
+    echo "  X   $label — 변이 관문이 «정상» 발행물도 막는다"; fail=$((fail+1)); return
+  fi
+  if [ "$slipped" -eq "$GATE_FAIL" ]; then
+    echo "  ~   $label — 다른 검사가 겹쳐 잡는다"; overlap=$((overlap+1)); return
+  fi
+  if [ "$slipped" -ne 0 ]; then
+    echo "  X   $label — 변이 관문이 rc=$slipped 로 비정상 종료했다"; fail=$((fail+1)); return
+  fi
+  echo "  O   $label"
+}
+check_shipped_scan
 
 # ℹ️ 발행물의 `serverInfo.name`·`version` 대조는 여기서 변이로 재지 않는다. 저장소 검사
 #    (verify-dist.ts 의 `info.name`·`info.version`)가 **같은 dist 를** 이미 보므로,

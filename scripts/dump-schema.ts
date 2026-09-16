@@ -62,9 +62,17 @@ async function main(): Promise<void> {
 		throw new Error(`HTTP ${response.status} — introspection 이 막혔을 수 있습니다.`);
 	}
 
-	const payload = (await response.json()) as { data?: Schema; errors?: unknown };
+	const payload = (await response.json()) as { data?: Schema; errors?: unknown[] };
 	if (!payload.data) {
 		throw new Error(`introspection 실패: ${JSON.stringify(payload.errors)}`);
+	}
+	// ⚠️ `data` 가 있어도 `errors` 가 함께 오면 **부분 결과**다. 그걸 정상 덤프로
+	//   출력하면 「어디가 바뀌었나」를 찾는 사람이 빠진 부분을 «없어졌다» 로 읽는다
+	//   (drift.ts 가 같은 이유로 errors 실린 응답을 안 믿는다). 여기만 빠져 있었다.
+	if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+		throw new Error(
+			`introspection 이 부분 결과를 줬습니다 — 덤프를 믿을 수 없습니다: ${JSON.stringify(payload.errors).slice(0, 300)}`,
+		);
 	}
 
 	const queries = payload.data.__schema.queryType?.fields ?? [];

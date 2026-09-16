@@ -555,7 +555,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			if (args.edges !== undefined) spec.edges = args.edges;
 			if (args.planes !== undefined) spec.planes = args.planes;
 
-			const result = await renderDiagram(spec);
+			const result = await renderDiagram(spec, 2, extra.signal);
 			const a = result.audit;
 			const clean =
 				a.over.length === 0 &&
@@ -651,7 +651,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			if (args.subtitle !== undefined) spec.subtitle = args.subtitle;
 			if (args.fragments !== undefined) spec.fragments = args.fragments;
 
-			const result = await renderSequence(spec);
+			const result = await renderSequence(spec, 2, extra.signal);
 			const q = result.audit;
 			// ★ 항목을 하나 늘리고 여기에 안 더하면 결함 있는 그림이 조용히 올라간다.
 			//   render.test.ts 의 R7 이 SequenceAudit 의 배열 항목 전부가 여기 있는지 본다.
@@ -711,7 +711,7 @@ export function registerImageTools(server: McpServer, client: VelogClient): void
 			if (args.tone !== undefined) spec.tone = args.tone;
 			if (args.footer !== undefined) spec.footer = args.footer;
 
-			const result = await renderCover(spec);
+			const result = await renderCover(spec, 2, extra.signal);
 			return textResult(
 				(await finish({
 					pngPath: result.pngPath,

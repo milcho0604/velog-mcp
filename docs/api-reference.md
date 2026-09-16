@@ -302,8 +302,10 @@ update_draft 로 제목만 변경
 ## 스키마 변경 감지
 
 ```bash
-npm run schema:dump          # 현재 스키마를 덤프
-git diff docs/api-reference.md
+npm run schema:baseline -- --check   # 기준선과 지금 스키마를 대조한다 (쓰지 않는다)
+npm run schema:dump                  # 사람이 읽을 요약을 stdout 으로 (파일을 안 고친다)
 ```
 
-깨졌을 때 "어디가" 바뀌었는지 이 diff 로 찾는다.
+⚠️ `schema:dump` 는 **이 문서를 갱신하지 않는다.** 그래서 「덤프 뒤 `git diff`」로는
+아무것도 안 나온다(2026-09-15 정정). 바뀐 자리를 찾는 정본은 `--check` 이고,
+돌고 있는 서버에서는 `velog_diagnose` 도구가 같은 대조를 해 준다.

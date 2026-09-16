@@ -88,9 +88,11 @@ export function registerProfileTools(server: McpServer, client: VelogClient): vo
 			inputSchema: {},
 			annotations: READ_ONLY,
 		},
-		async () => {
+		async (_args, extra) => {
 			client.requireAuth('velog_whoami');
-			const me = await fetchCurrentUser(client);
+			// ★ 이 도구는 «토큰이 살아있는가» 를 묻는 자리다. 캐시를 돌려주면
+			//   만료된 뒤에도 «인증됨» 이라 답한다. 여기서만 캐시를 건너뛴다.
+			const me = await fetchCurrentUser(client, extra.signal, { bypassCache: true });
 			return textResult(
 				[
 					`✅ 인증됨 — @${me.username ?? '(username 없음)'}`,
@@ -113,10 +115,12 @@ export function registerProfileTools(server: McpServer, client: VelogClient): vo
 			inputSchema: { username: z.string().describe('@ 없이') },
 			annotations: READ_ONLY,
 		},
-		async ({ username }) => {
-			const data = await client.request<UserResult>(QUERY_USER, {
-				input: { username },
-			});
+		async ({ username }, extra) => {
+			const data = await client.request<UserResult>(
+				QUERY_USER,
+				{ input: { username } },
+				{ signal: extra.signal },
+			);
 			const user = data.user;
 			if (!user) return textResult(`@${username} 을(를) 찾지 못했습니다.`);
 
@@ -130,8 +134,34 @@ export function registerProfileTools(server: McpServer, client: VelogClient): vo
 				`- 팔로워 ${user.followers_count ?? 0} · 팔로잉 ${user.followings_count ?? 0}`,
 				`- URL: https://velog.io/@${user.username ?? username}`,
 			];
-			if (p?.about?.trim()) {
-				lines.push('', '## 소개글', p.about.trim().slice(0, 1000));
+			// ★★ 소개글은 **자르지 않는다.**
+			//
+			//   한때 1,000자에서 잘랐다. 그런데 `velog_update_about` 은 「먼저
+			//   velog_get_user 로 읽어 합친 뒤 넘기라」고 안내한다 — 전체 교체라서다.
+			//   그래서 **문서가 시키는 대로 하면 1,000자 뒤가 사라졌다.** 1,216자짜리
+			//   소개글에 6자를 붙이자 1,006자가 되어 216자가 조용히 날아갔다(코덱스 18차).
+			//   잘린 줄 모르면 «성공» 응답과 함께 잃는다. 그게 제일 나쁘다.
+			//
+			//   상한은 안전선으로만 둔다. 넘으면 **잘렸다고 말하고 합치지 말라고 한다.**
+			// ⚠️ 비었는지 판정에만 trim 을 쓰고 **원문을 그대로 돌려준다.** trim 한 값을
+			//   돌려주면 마크다운 코드블록의 들여쓰기와 끝 개행이 사라진다 —
+			//   그걸 합쳐 저장하면 글이 망가진다(코덱스 19차).
+			if (p?.about && p.about.trim() !== '') {
+				const about = p.about;
+				const limit = 20_000;
+				// ⚠️ 상한 자리가 서로게이트 쌍 한가운데면 한 글자 물러선다.
+				let cut = Math.min(limit, about.length);
+				const head = about.charCodeAt(cut - 1);
+				if (cut < about.length && head >= 0xd800 && head <= 0xdbff) cut -= 1;
+				lines.push('', '## 소개글', about.slice(0, cut));
+				if (about.length > limit) {
+					lines.push(
+						'',
+						`⚠️ 소개글이 ${about.length}자라 ${limit}자에서 잘랐습니다. ` +
+							'**이 내용으로 velog_update_about 을 부르면 나머지가 사라집니다.** ' +
+							'벨로그에서 전문을 확인한 뒤 수정하세요.',
+					);
+				}
 			}
 			return textResult(lines.join('\n'));
 		},
@@ -147,10 +177,12 @@ export function registerProfileTools(server: McpServer, client: VelogClient): vo
 			inputSchema: { username: z.string().describe('@ 없이') },
 			annotations: READ_ONLY,
 		},
-		async ({ username }) => {
-			const data = await client.request<SeriesListResult>(QUERY_SERIES_LIST, {
-				input: { username },
-			});
+		async ({ username }, extra) => {
+			const data = await client.request<SeriesListResult>(
+				QUERY_SERIES_LIST,
+				{ input: { username } },
+				{ signal: extra.signal },
+			);
 			const list = data.seriesList ?? [];
 			if (list.length === 0) return textResult(`@${username} 의 시리즈가 없습니다.`);
 
@@ -178,10 +210,12 @@ export function registerProfileTools(server: McpServer, client: VelogClient): vo
 			},
 			annotations: READ_ONLY,
 		},
-		async ({ username, top }) => {
-			const data = await client.request<UserTagsResult>(QUERY_USER_TAGS, {
-				input: { username },
-			});
+		async ({ username, top }, extra) => {
+			const data = await client.request<UserTagsResult>(
+				QUERY_USER_TAGS,
+				{ input: { username } },
+				{ signal: extra.signal },
+			);
 			const tags = data.userTags?.tags ?? [];
 			if (tags.length === 0) return textResult(`@${username} 의 태그가 없습니다.`);
 

@@ -823,7 +823,14 @@ export class VelogClient {
 			throw new VelogApiError(
 				this.#mask(`벨로그 GraphQL 오류: ${messages}${hint}${partialWarning}`),
 				{
-					graphqlErrorCodes: codes.filter((c): c is string => typeof c === 'string'),
+					// ★★ detail 에도 마스킹을 건다. message 만 가리면 구멍이다 —
+					//   `extensions.code` 는 상대가 채우는 값이라 토큰이 되비칠 수 있고,
+					//   그러면 오류 수집기나 console.error(error) 에 원문이 남는다
+					//   (실측: message 는 가려졌는데 detail.graphqlErrorCodes 는 원문이었다).
+					//   drift.typeName 에서 이미 같은 이유로 마스킹을 걸었는데 여기만 빠져 있었다.
+					graphqlErrorCodes: codes
+						.filter((c): c is string => typeof c === 'string')
+						.map((c) => this.#mask(c)),
 					...(transientText ? { transientText: true } : {}),
 					// ★★ `partial` 은 **재시도를 막는 표식**이다. 막아야 하는 이유는 하나뿐이다 —
 					//   «이미 반영됐을 수 있는데 다시 치면 두 번 적용된다». 그건 **쓰기** 얘기다.

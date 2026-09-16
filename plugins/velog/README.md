@@ -1,6 +1,6 @@
 # Velog — Claude Code 플러그인
 
-벨로그(velog.io)를 Claude Code 안에서 읽고 쓴다. 기본 도구 22개
+벨로그(velog.io)를 Claude Code 안에서 읽고 쓴다. 기본 도구 23개
 (프로필 수정을 켜면 5개가 더 붙는다).
 
 전체 문서는 저장소 루트에 있다 — [README.ko.md](../../README.ko.md) ·

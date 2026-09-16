@@ -44,6 +44,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { access, constants, readFile, stat } from 'node:fs/promises';
 import { platform } from 'node:process';
+import { StringDecoder } from 'node:string_decoder';
 
 const CANDIDATES: Record<string, readonly string[]> = {
 	darwin: [
@@ -244,6 +245,9 @@ function run(
 		live.add(child);
 		let out = '';
 		let err = '';
+		// 청크 경계에 걸린 글자를 다음 청크까지 들고 있는다. 스트림마다 따로 둔다.
+		const outDecoder = new StringDecoder('utf8');
+		const errDecoder = new StringDecoder('utf8');
 		let settled = false;
 
 		// ★ stdout 을 무제한으로 모으면 페이지가 큰 문자열을 뱉을 때 그대로 따라 커진다.
@@ -263,12 +267,15 @@ function run(
 				});
 				return;
 			}
-			out += chunk.toString('utf8');
+			// ⚠️ 청크마다 따로 디코딩하면 **한 글자가 청크 경계에 걸렸을 때 깨진다.**
+			//   감사 결과에 한글 이름이 들어가는데 `노드 가` 가 `���드 가` 가 됐다
+			//   (코덱스 15차 실측). StringDecoder 는 미완성 바이트를 다음 청크까지 들고 있는다.
+			out += outDecoder.write(chunk);
 		});
 		child.stderr.on('data', (chunk: Buffer) => {
 			// ★ 크롬은 정상 동작 중에도 stderr 에 경고를 쏟는다. 실패 판정에 쓰지 않고
 			//   오류 메시지에 붙일 꼬리만 남긴다. 무한정 모으지 않는다.
-			if (err.length < 8000) err += chunk.toString('utf8');
+			if (err.length < 8000) err += errDecoder.write(chunk);
 		});
 
 		const finish = (action: () => void): void => {
@@ -303,6 +310,11 @@ function run(
 		//   열려 있을 수 있다고 명시한다 — 마지막 </html> 이 그 뒤에 도착하면
 		//   멀쩡한 결과를 실패로 처리하게 된다. 'close' 는 stdio 까지 닫힌 뒤다.
 		child.on('close', (code) => {
+			// ★ 스트림이 끝났으니 디코더가 들고 있던 미완성 바이트를 마저 꺼낸다.
+			//   안 꺼내면 마지막 글자가 **조용히 사라진다**(실측: `ok` 뒤 `EA B0` 만 오면
+			//   결과가 `ok` 였다). 잃는 것이 오류 메시지일 때가 특히 나쁘다.
+			out += outDecoder.end();
+			if (err.length < 8000) err += errDecoder.end();
 			// 스스로 끝난 경우. 산출물이 있으면 성공, 없으면 진짜 실패다.
 			check(() => {
 				finish(() => {

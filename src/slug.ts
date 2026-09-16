@@ -54,8 +54,14 @@ export const MAX_SLUG_LENGTH = 120;
 export function toUrlSlug(title: string, provided?: string): string {
 	const base = provided?.trim() ? slugify(provided) : slugify(title);
 	if (base.length <= MAX_SLUG_LENGTH) return base;
+	// ⚠️ `slice` 는 **UTF-16 코드 단위**로 자른다. 상한 자리가 서로게이트 쌍 한가운데면
+	//   짝 잃은 반쪽(`\uD840`)이 남아, UTF-8 로 나갈 때 `�` 가 된다(코덱스 15차 실측:
+	//   `isWellFormed() === false`). 한 글자를 물러서서 쌍을 깨지 않는다.
+	let cut = MAX_SLUG_LENGTH;
+	const code = base.charCodeAt(cut - 1);
+	if (code >= 0xd800 && code <= 0xdbff) cut -= 1; // 상위 서로게이트로 끝나면 버린다
 	// 자른 자리에 하이픈이 남지 않게 한다.
-	return base.slice(0, MAX_SLUG_LENGTH).replace(/-+$/, '');
+	return base.slice(0, cut).replace(/-+$/, '');
 }
 
 /**

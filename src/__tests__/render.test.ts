@@ -1209,12 +1209,19 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 		});
 		// ★ 다이어그램만 3장 돌리면 '표지가 큐를 우회하는' 변이를 못 잡는다(코덱스 4차).
 		//   두 도구를 섞어서 같은 큐를 쓰는지 본다.
-		const results = await Promise.all([
-			renderDiagram(spec('동시 1')),
-			renderCover({ title: '동시 표지' }),
-			renderDiagram(spec('동시 3')),
-		]);
-		clearInterval(timer);
+		// ⚠️ 렌더가 실패하면 `clearInterval` 에 도달하지 못해 **40ms 타이머가 남고**
+		//   테스트 프로세스가 안 끝난다(코덱스 22차: 활성 타이머 1개, 강제 종료 필요).
+		//   실패한 테스트가 프로세스를 잡아 두면 CI 가 «멈춤» 으로 보인다. finally 로 건다.
+		let results;
+		try {
+			results = await Promise.all([
+				renderDiagram(spec('동시 1')),
+				renderCover({ title: '동시 표지' }),
+				renderDiagram(spec('동시 3')),
+			]);
+		} finally {
+			clearInterval(timer);
+		}
 
 		assert.ok(
 			results.every((r) => r.width > 0),
@@ -2743,5 +2750,193 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 		assert.equal(e2.ia, 0, '가장 위 타깃이 위 차선을 받아야 한다');
 		assert.equal(e3.ia, 1, '가운데 타깃이 가운데 차선을 받아야 한다');
 		assert.equal(e1.ia, 2, '가장 아래 타깃이 아래 차선을 받아야 한다');
+	});
+});
+
+describe('★★ 15~17차 회귀 — 렌더에서 고친 것과 «정상이 그대로인가»', () => {
+	describe('아이콘 표 — 상속 이름을 아이콘으로 읽지 않는다', () => {
+		test('★ constructor·toString·__proto__ 는 «없는 아이콘» 이다', async () => {
+			const { ICONS } = await import('../render/icons.ts');
+			for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+				assert.equal(ICONS[name], undefined, `${name} 이 아이콘으로 잡힌다`);
+			}
+		});
+
+		test('☑ 대조군 — 실제 아이콘 28종은 그대로 도형 배열이다', async () => {
+			const { ICONS, ICON_NAMES } = await import('../render/icons.ts');
+			assert.equal(ICON_NAMES.length, 28);
+			for (const name of ICON_NAMES) {
+				assert.ok(Array.isArray(ICONS[name]) && ICONS[name].length > 0, `${name} 이 비었다`);
+			}
+		});
+
+		test('☑ 대조군 — 표를 순회·직렬화하는 평범한 쓰임이 깨지지 않는다', async () => {
+			const { ICONS, ICON_NAMES } = await import('../render/icons.ts');
+			assert.equal(Object.keys(ICONS).length, ICON_NAMES.length);
+			assert.ok(JSON.stringify(ICONS).length > 100);
+			assert.equal(Object.entries({ ...ICONS }).length, ICON_NAMES.length);
+		});
+	});
+
+	describe('연결점 — 노드 면 안에 들어온다', () => {
+		/** page.ts 안의 laneOffset 을 소스에서 떼어 그대로 돌린다(복제하지 않는다). */
+		const loadLaneOffset = async (): Promise<(i: number, c: number, e: number) => number> => {
+			const { readFile } = await import('node:fs/promises');
+			const src = await readFile(new URL('../render/page.ts', import.meta.url), 'utf8');
+			const match = /function laneOffset\(i, c, extent\)\{[\s\S]*?\n\}/.exec(src);
+			assert.ok(match, 'laneOffset 을 소스에서 못 찾았다 — 이름이 바뀌었나');
+			const body = match[0].replace(/^function laneOffset\(i, c, extent\)\{/, '').replace(/\}$/, '');
+			// ⚠️ eslint 는 Function 생성자를 막는다. 여기서는 **그게 요점**이다 —
+			//   page.ts 안의 함수를 복제하지 않고 **그 소스 그대로** 돌려야
+			//   「테스트가 복제본을 검사하는」 거짓 초록을 피한다(이 저장소가 두 번 겪었다).
+			//   입력은 저장소 안의 우리 소스뿐이라 외부 문자열을 실행하지 않는다.
+			// eslint-disable-next-line @typescript-eslint/no-implied-eval
+			return new Function('i', 'c', 'extent', body) as (i: number, c: number, e: number) => number;
+		};
+
+		/**
+		 * ★★ `anchor()` **호출부까지** 소스에서 떼어 돌린다.
+		 *
+		 * ⚠️ `laneOffset` 만 보면, 호출부가 그 값을 안 쓰고 제 마음대로 계산해도 통과한다
+		 *   (코덱스 19차: 호출부를 `(idx-(cnt-1)/2)*10` 으로 바꾸니 첫 연결점이 -68 인데
+		 *   테스트는 초록이었다). 좌표를 내는 **그 함수**를 돌려야 한다.
+		 */
+		const loadAnchor = async (): Promise<
+			(n: { x: number; y: number; w: number; h: number }, side: string, idx: number, cnt: number) => number[]
+		> => {
+			const { readFile } = await import('node:fs/promises');
+			const src = await readFile(new URL('../render/page.ts', import.meta.url), 'utf8');
+			const lane = /function laneOffset\(i, c, extent\)\{[\s\S]*?\n\}/.exec(src);
+			const anchorFn = /function anchor\(n, side, idx, cnt\)\{[\s\S]*?\n\}/.exec(src);
+			assert.ok(lane && anchorFn, 'page.ts 에서 laneOffset·anchor 를 못 찾았다');
+			const body = [
+				'var cy = function(n){ return n.y + n.h / 2; };',
+				'var cx = function(n){ return n.x + n.w / 2; };',
+				lane[0],
+				anchorFn[0],
+				'return anchor(n, side, idx, cnt);',
+			].join('\n');
+			// eslint-disable-next-line @typescript-eslint/no-implied-eval
+			return new Function('n', 'side', 'idx', 'cnt', body) as never;
+		};
+
+		test('★ 연결이 많아도 연결점이 노드 밖으로 나가지 않는다 (anchor 호출부까지)', async () => {
+			const anchor = await loadAnchor();
+			for (const [h, c] of [
+				[54, 10],
+				[54, 20],
+				[40, 12],
+			] as const) {
+				const node = { x: 0, y: 0, w: 100, h };
+				for (const side of ['left', 'right'] as const) {
+					const ys: number[] = [];
+					for (let i = 0; i < c; i += 1) {
+						const [, y] = anchor(node, side, i, c) as [number, number];
+						assert.ok(
+							y >= node.y && y <= node.y + h,
+							`높이 ${h} 연결 ${c}개 ${side} ${i}번째 → y=${y} 가 면(${node.y}…${node.y + h}) 밖이다`,
+						);
+						ys.push(y);
+					}
+					// ⚠️ 범위만 보면 **전부 중앙에 몰아넣는** 변이(laneOffset→0)가 통과한다.
+					//   선이 겹치면 그림이 못 쓰게 된다. 서로 다르고 순서대로여야 한다.
+					assert.equal(new Set(ys).size, c, `${side} 연결점이 겹친다: ${ys.join(',')}`);
+					for (let i = 1; i < ys.length; i += 1) {
+						assert.ok((ys[i] ?? 0) > (ys[i - 1] ?? 0), `${side} 연결점 순서가 뒤집혔다`);
+					}
+				}
+			}
+		});
+
+		test('☑ 대조군 — 위·아래 면도 노드 가로 범위 안에 들어온다', async () => {
+			const anchor = await loadAnchor();
+			const node = { x: 0, y: 0, w: 120, h: 54 };
+			for (const side of ['top', 'bottom'] as const) {
+				for (let i = 0; i < 8; i += 1) {
+					const [x] = anchor(node, side, i, 8) as [number, number];
+					assert.ok(x >= node.x && x <= node.x + node.w, `${side} ${i}번째 x=${x} 가 면 밖이다`);
+				}
+			}
+		});
+
+		test('☑ 대조군 — 넉넉한 경우의 간격은 예전 값 그대로다', async () => {
+			const laneOffset = await loadLaneOffset();
+			// 이 값들은 조이기 전에도 면 안이었다. 바뀌면 그림이 달라진 것이다.
+			assert.equal(laneOffset(0, 5, 54), -14);
+			assert.equal(laneOffset(4, 5, 54), 14);
+			assert.equal(laneOffset(0, 3, 54), -12);
+			assert.equal(laneOffset(0, 10, 120), -45);
+			assert.equal(laneOffset(0, 1, 54), 0);
+		});
+	});
+
+	describe('표지 줄바꿈 — 단어 자리와 무관하게 쪼갠다', () => {
+		const loadWrap = async (): Promise<(s: string, maxW: number, maxLines: number) => string[]> => {
+			const { readFile } = await import('node:fs/promises');
+			const src = await readFile(new URL('../render/cover.ts', import.meta.url), 'utf8');
+			const match = /var words = s\.split\(' '\);[\s\S]*?return lines;/.exec(src);
+			assert.ok(match, 'cover.ts 의 줄바꿈 본문을 못 찾았다');
+			// widthOf 는 글자당 고정 폭으로 대체한다 — 여기서 보는 건 «쪼개는가» 다.
+			const body = `var widthOf = function(t){ return Array.from(t).length * 10; };\nvar size=0, cls='';\n${match[0]}`;
+			// 위와 같은 이유. 복제하면 cover.ts 를 고쳐도 테스트가 안 깨진다.
+			// eslint-disable-next-line @typescript-eslint/no-implied-eval
+			return new Function('s', 'maxW', 'maxLines', body) as never;
+		};
+
+		test('★ 두 번째 이후의 긴 단어를 상한 안으로 쪼개고, 글자를 잃지 않는다', async () => {
+			// ⚠️ 폭만 보면 **글자를 버리는** 구현도 통과한다(코덱스 19차: Array.from 을
+			//   slice(0,-1) 로 바꿔도 초록이었다). 들어갈 수 있는 입력은 보존까지 본다.
+			const wrap = await loadWrap();
+			const input = `A ${'가'.repeat(50)}`;
+			const lines = wrap(input, 100, 20);
+			for (const line of lines) {
+				assert.ok(Array.from(line).length * 10 <= 100, `줄이 상한을 넘는다: ${line.length}글자`);
+			}
+			// ⚠️ 긴 단어는 **글자 한가운데**서 끊기므로 그 자리엔 원래 공백이 없다.
+			//   그래서 여기서는 「글자를 잃거나 더했나」만 본다.
+			//   단어 구분 공백이 살아 있는지는 **아래 대조군**이 본다 — 역할을 나눈다.
+			assert.equal(
+				lines.join('').replace(/\s/g, ''),
+				input.replace(/\s/g, ''),
+				'쪼개면서 글자를 잃거나 더했다',
+			);
+		});
+
+		test('☑ 대조군 — 평범한 제목은 단어 구분을 지킨 채 나뉜다', async () => {
+			const wrap = await loadWrap();
+			const input = '짧은 제목 하나';
+			const lines = wrap(input, 200, 3);
+			assert.ok(lines.length >= 1 && lines.length <= 3);
+			assert.equal(lines.join('\n').replace(/\n/g, ' '), input, '단어 구분이 사라졌다');
+		});
+
+		test('☑ 대조군 — 이모지가 반으로 갈리지도, 사라지지도 않는다', async () => {
+			const wrap = await loadWrap();
+			const input = '🎉'.repeat(20);
+			const lines = wrap(input, 50, 20);
+			for (const line of lines) {
+				assert.equal(line.isWellFormed(), true, `짝 잃은 서로게이트: ${JSON.stringify(line)}`);
+			}
+			assert.equal(lines.join(''), input, '이모지 개수가 달라졌다');
+		});
+	});
+
+	describe('관통 감사 — 정상 그림을 관통이라 하지 않는다', () => {
+		test('☑ 대조군 — 노드 둘·연결 하나짜리 기본 그림은 깨끗하다 (크롬 필요)', async (t) => {
+			if (!(await findChrome().then(() => true, () => false))) {
+				t.skip('크롬이 없어 건너뜀');
+				return;
+			}
+			// ⚠️ 이 대조군이 없어서 사고가 났다. 감사를 넓히다 기본 그림이 «관통 2건» 이 됐다.
+			const r = await renderDiagram({
+				title: '대조군',
+				nodes: [
+					{ id: 'A', title: 'A', x: 0, y: 0 },
+					{ id: 'B', title: 'B', x: 260, y: 0 },
+				],
+				edges: [{ from: 'A', to: 'B' }],
+			});
+			assert.deepEqual(r.audit.cross ?? [], [], '정상 그림을 관통으로 잡는다');
+		});
 	});
 });

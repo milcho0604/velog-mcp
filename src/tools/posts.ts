@@ -34,7 +34,7 @@ export function registerPostTools(server: McpServer, client: VelogClient): void 
 			},
 			annotations: READ_ONLY,
 		},
-		async ({ username, url_slug, id }) => {
+		async ({ username, url_slug, id }, extra) => {
 			// 분기 안에서 값을 쓰면 타입이 그대로 좁혀져 단언이 필요 없다.
 			const input: Record<string, string> = {};
 			if (id) {
@@ -46,9 +46,13 @@ export function registerPostTools(server: McpServer, client: VelogClient): void 
 				throw new Error('id 를 주거나, username 과 url_slug 를 함께 주세요.');
 			}
 
-			const data = await client.request<{ post: VelogPostDetail | null }>(QUERY_POST, {
-				input,
-			});
+			// ★ 취소를 HTTP 까지 넘긴다. 안 넘기면 호출자가 포기해도 요청은 끝까지 간다 —
+			//   상대 서버의 커넥션 풀(limit 5)을 그만큼 더 잡고 있는 셈이다.
+			const data = await client.request<{ post: VelogPostDetail | null }>(
+				QUERY_POST,
+				{ input },
+				{ signal: extra.signal },
+			);
 			if (!data.post) return textResult('해당 글을 찾지 못했습니다.');
 			return textResult(formatPostDetail(data.post));
 		},
@@ -69,14 +73,16 @@ export function registerPostTools(server: McpServer, client: VelogClient): void 
 			},
 			annotations: READ_ONLY,
 		},
-		async ({ username, tag, limit, cursor }) => {
+		async ({ username, tag, limit, cursor }, extra) => {
 			const input: Record<string, unknown> = { username, limit };
 			if (tag) input['tag'] = tag;
 			if (cursor) input['cursor'] = cursor;
 
-			const data = await client.request<{ posts: VelogPostSummary[] }>(QUERY_POSTS, {
-				input,
-			});
+			const data = await client.request<{ posts: VelogPostSummary[] }>(
+				QUERY_POSTS,
+				{ input },
+				{ signal: extra.signal },
+			);
 			const posts = data.posts ?? [];
 			const body = formatPostList(posts);
 			const last = posts.at(-1);

@@ -385,8 +385,13 @@ function autoSides(a, b){
 }
 function laneOffset(i, c, extent){
   if (c <= 1) return 0;
+  // ⚠️ Math.max(7, …) 가 **면이 못 담는 간격도 강제**했다. 높이 54 인 노드에
+  //    연결 10개를 붙이면 첫 연결점 y = -4.5, 마지막 58.5 로 **노드 밖에서 선이
+  //    시작**했다(실측). 전부 면 안에 들어오는 간격으로 한 번 더 조인다.
+  var margin = 6;                                   // 모서리 라운딩을 피한다
+  var fit = Math.max(0, extent - margin * 2) / (c - 1);
   var step = Math.min(15, Math.max(7, (extent - 30) / (c - 1)));
-  return (i - (c - 1) / 2) * step;
+  return (i - (c - 1) / 2) * Math.min(step, fit);
 }
 function anchor(n, side, idx, cnt){
   if (side === 'left' || side === 'right') {
@@ -793,9 +798,34 @@ for (var ci = 0; ci < plan.length; ci++) {
   // ★ 여기도 Object.create(null) 이어야 한다. 보통 객체면 own['constructor'] 가
   //   상속 프로퍼티라 **항상 참**이라, id 가 'constructor' 인 노드는 관통 검사에서
   //   통째로 빠진다. NMAP 등은 고쳤는데 이것만 남아 있었다.
+  // ★ 여기도 Object.create(null) 이어야 한다. 보통 객체면 own['constructor'] 가
+  //   상속 프로퍼티라 **항상 참**이라, id 가 'constructor' 인 노드는 관통 검사에서
+  //   통째로 빠진다.
+  //
+  // ★★ 양끝 노드는 **일반 관통 검사에서 뺀다.** 연결점이 자기 면에 붙어 있어서
+  //   그대로 검사하면 정상 그림도 「관통」이 된다(실측: 노드 둘·연결 하나짜리
+  //   기본 그림이 cross 2건). 대신 아래에서 «면을 등지고 출발했는가» 를 따로 본다 —
+  //   그게 «자기 카드를 가로지르는» 경우의 진짜 특징이다.
   var own = Object.create(null);
   if (ic.a) { own[ic.a.n.id] = 1; own[ic.b.n.id] = 1; }
   var ss = segs(ic.pts);
+  // ★★ 연결점에서 **면 바깥쪽으로** 출발했는지 본다. left 면에서 출발했는데 첫
+  //   걸음이 오른쪽이면 그 선은 자기 카드 속으로 들어간 것이다. 실측(코덱스 16차):
+  //   A 의 left 에서 오른쪽의 B 로 가는 연결이 두 카드 속을 지나는데 cross 가 비었다.
+  //   면에 «닿는» 것과 «뚫고 들어가는» 것을 방향으로 가른다 — 위치로는 못 가른다.
+  if (ic.a && ss.length) {
+    var ends = [[ic.a, ss[0], 1], [ic.b, ss[ss.length - 1], -1]];
+    for (var ei2 = 0; ei2 < ends.length; ei2++) {
+      var end = ends[ei2][0], seg = ends[ei2][1], dir = ends[ei2][2];
+      var vx = (seg[2] - seg[0]) * dir, vy = (seg[3] - seg[1]) * dir;
+      var into =
+        (end.s === 'left' && vx > 0.5) || (end.s === 'right' && vx < -0.5) ||
+        (end.s === 'top' && vy > 0.5) || (end.s === 'bottom' && vy < -0.5);
+      if (into) {
+        cross.push((ic.e.label || ('선#' + ci)) + ' → 노드 ' + (end.n.title || end.n.id) + ' 관통');
+      }
+    }
+  }
   for (var cj = 0; cj < S.nodes.length; cj++) {
     var cn = S.nodes[cj];
     if (own[cn.id]) continue;

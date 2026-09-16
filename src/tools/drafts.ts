@@ -14,7 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { VelogClient } from '../client.ts';
 import { QUERY_POSTS } from '../graphql.ts';
-import { formatPostList, textResult, HUMAN_BODY_STYLE, HUMAN_TITLE_STYLE } from '../format.ts';
+import { formatPostList, textResult, HUMAN_BODY_STYLE, HUMAN_TITLE_STYLE, MAX_TITLE_LENGTH } from '../format.ts';
 import { toUrlSlug, isSafeImageUrl } from '../slug.ts';
 import { resolveMyUsername } from '../me.ts';
 import { assertOwned, assertOwnsSeries } from '../ownership.ts';
@@ -284,7 +284,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				'이 도구는 어떤 설정에서도 발행하지 않는다 — 발행하려면 velog_publish_draft 를 따로 부를 것. ' +
 				'body 는 마크다운으로 쓴다.',
 			inputSchema: {
-				title: z.string().min(1).describe('글 제목.' + HUMAN_TITLE_STYLE),
+				title: z.string().min(1).max(MAX_TITLE_LENGTH).describe('글 제목.' + HUMAN_TITLE_STYLE),
 				body: z.string().min(1).describe('본문 (마크다운).' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).default([]).describe('태그 목록'),
 				url_slug: z.string().optional().describe('생략하면 제목에서 생성'),
@@ -307,7 +307,12 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 					),
 			},
 			// 되돌릴 수 있는 쓰기다 — 비공개 초안이므로 파괴적이지 않다.
-			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+			// ★★ destructive 가 맞다. 이 저장소가 capabilities.ts 에 적어 둔 실측대로,
+			//   벨로그 서버는 «최근 5분 공개 글» 검사를 **공개 여부를 보기 전에** 돌린다.
+			//   그래서 이미 10건이 쌓여 있으면 **비공개 초안 생성이 기존 글들을 비공개로
+			//   바꾼다.** 그 10건은 사용자가 웹에서 올린 것일 수도 있다.
+			//   「추가만 한다」고 표시하면 클라이언트가 확인 없이 부르게 된다.
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
 		},
 		async (
 			{ title, body, tags, url_slug, thumbnail, series_id: rawSeriesId, series_name },
@@ -394,7 +399,7 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 				'발행된 글의 id 는 거부한다(비공개로 내려가는 사고 방지).',
 			inputSchema: {
 				id: z.string().min(1).describe('초안의 id (velog_list_drafts 로 확인)'),
-				title: z.string().min(1).describe('글 제목.' + HUMAN_TITLE_STYLE),
+				title: z.string().min(1).max(MAX_TITLE_LENGTH).describe('글 제목.' + HUMAN_TITLE_STYLE),
 				body: z.string().min(1).describe('본문 전체 (마크다운). 부분 수정이 아니라 교체다.' + HUMAN_BODY_STYLE),
 				tags: z.array(z.string()).default([]),
 				url_slug: z.string().optional(),
@@ -411,7 +416,11 @@ export function registerDraftTools(server: McpServer, client: VelogClient): void
 			},
 			// ★ destructive 가 맞다. 생략 필드가 보존되지 않고 초기화된다 —
 			//   MCP 명세상 destructiveHint:false 는 '추가만 한다'는 뜻이라 거짓이 된다.
-			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+			// ⚠️ idempotent 가 아니다. `url_slug` 가 다른 글과 겹치면 벨로그가 **무작위
+			//   접미사**를 붙이므로, 같은 인자로 두 번 부르면 주소가 두 번 달라진다.
+			//   idempotentHint:true 는 클라이언트에게 «재시도해도 공짜» 라고 말하는 것이라
+			//   그 경우에 거짓이 된다. 쓰기를 자동 재시도하게 둘 이유도 없다.
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
 		},
 		async (
 			{ id, title, body, tags, url_slug, thumbnail, series_id: rawSeriesId, series_name },
