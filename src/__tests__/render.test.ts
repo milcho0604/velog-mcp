@@ -1838,8 +1838,8 @@ const SEQ_SAMPLE: SequenceSpec = {
 	title: '표본',
 	participants: [
 		{ id: 'a', name: '사용자', icon: 'user' },
-		{ id: 'b', name: 'WAS', sub: 'JSP', icon: 'server' },
-		{ id: 'c', name: 'PostgreSQL', sub: 'condurealdb', icon: 'database' },
+		{ id: 'b', name: 'demo-was', sub: 'JSP', icon: 'server' },
+		{ id: 'c', name: 'PostgreSQL', sub: 'exampledb01', icon: 'database' },
 		{ id: 'd', name: 'FCM', icon: 'cloud' },
 	],
 	messages: [
@@ -2287,7 +2287,7 @@ out = lineHeightOf(lines, 'm-label');`).runInContext(ctx);
 
 describe('★★ S8 — 긴 라벨은 글자 단위보다 구분 기호를 먼저 본다', () => {
 	/**
-	 * 왜 있나. 사내 구성도를 그려보니 `…&keyversion=v3&USE_INTT_ID=ABCD_1` 이
+	 * 왜 있나. 실제 구성도를 그려보니 `…&keyversion=v3&USE_INTT_ID=ABCD_1` 이
 	 * `USE` 와 `_INTT_ID` 로 갈라졌다. 원인은 `wrapText` 가 **공백으로만** 자르고,
 	 * 공백 없는 토큰은 곧장 글자 단위로 내려간 것이었다.
 	 *
@@ -2690,42 +2690,34 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 		assert.equal(route([100, 0], 'bottom', [109, 300], 'top', 0).length, 4, '세로 9px 인데 안 꺾었다');
 	});
 
-	test('선의 양끝은 제 자리에서 옮기지 않는다', async () => {
-		const blk = await pick(/\/\/ 선의 양끝은 면의 가운데[\s\S]*?\nfor \(var sn[\s\S]*?\n\}/, '양끝 고정 블록');
-		const run = (aY: number, bY: number, laneA = 1, laneB = 1, h = 84) => {
-			const it = {
-				a: { n: { x: 0, y: aY, w: 208, h }, s: 'right', k: 'a|right' },
-				b: { n: { x: 460, y: bY, w: 208, h }, s: 'left', k: 'b|left' },
-				pa: [208, aY + h / 2],
-				pb: [460, bY + h / 2],
-				straight: false,
-			};
-			const ctx = createContext({
-				auto: [it],
-				lanes: { 'a|right': laneA, 'b|left': laneB },
-				isH: (s: string) => s === 'left' || s === 'right',
-			});
-			new Script(blk).runInContext(ctx);
-			return it;
-		};
+	test('어긋난 선은 비스듬히 잇지 않고 가운데서 꺾는다. 양끝은 옮기지 않는다', async () => {
+		const blk = await pick(/function isH\([\s\S]*?function route\([\s\S]*?\n\}/, 'route()');
+		const ctx = createContext({ out: null });
+		new Script(blk + '\nthis.routeFn = route;').runInContext(ctx);
+		const route = (ctx as unknown as { routeFn: (...a: unknown[]) => number[][] }).routeFn;
+		// 서버 구성도 was→db 모양: 중심 42 와 72. 예전엔 1:4 보다 완만하면 대각으로 이었다.
+		const bent = route([208, 42], 'right', [460, 72], 'left', 0);
+		assert.equal(bent.length, 4, '30px 어긋났는데 꺾지 않았다');
+		assert.equal(JSON.stringify([bent[0], bent[3]]), '[[208,42],[460,72]]', '양끝이 중심에서 옮겨졌다');
+		for (let i = 0; i < bent.length - 1; i++) {
+			const p = bent[i] ?? [], q = bent[i + 1] ?? [];
+			assert.ok(p[0] === q[0] || p[1] === q[1], `비스듬한 구간이 있다: ${JSON.stringify([p, q])}`);
+		}
+		// 8px 이하는 꺾지 않되 비스듬하지도 않다. 출발점 줄로 곧게 간다.
+		assert.equal(JSON.stringify(route([0, 100], 'right', [300, 106], 'left', 0)), '[[0,100],[300,100]]');
+		assert.equal(JSON.stringify(route([100, 0], 'bottom', [107, 300], 'top', 0)), '[[100,0],[100,300]]');
+	});
 
-		// 서버 구성도 실측 모양: 중심 42 와 72. 예전엔 둘 다 57 로 끌려와 ±15px 빗나갔다.
-		const skewed = run(0, 30);
-		assert.deepEqual([skewed.pa[1], skewed.pb[1]], [42, 72], '양끝이 중심에서 옮겨졌다');
-		assert.equal(skewed.straight, true, '완만한 기울기(30/252)인데 대각 직선이 아니다');
-
-		const aligned = run(0, 0);
-		assert.equal(aligned.straight, true, 'y 가 같은데 곧게 안 간다');
-		assert.equal(aligned.pa[1], aligned.pb[1]);
-
-		const steep = run(0, 120);
-		assert.equal(steep.straight, false, '가파른 어긋남(120/252)까지 직선으로 이었다');
-		assert.deepEqual([steep.pa[1], steep.pb[1]], [42, 162]);
-
-		// 차선이 여럿인 면은 대각으로 잇지 않는다 — 여러 선이 부채꼴로 벌어진다.
-		const multi = run(0, 30, 2, 1);
-		assert.equal(multi.straight, false, '차선이 둘인 면에서 대각 직선을 그었다');
-		assert.deepEqual([multi.pa[1], multi.pb[1]], [42, 72]);
+	test('같은 쪽 면끼리는 바깥으로 돌아간다', async () => {
+		const blk = await pick(/function isH\([\s\S]*?function route\([\s\S]*?\n\}/, 'route()');
+		const ctx = createContext({ out: null });
+		new Script(blk + '\nthis.routeFn = route;').runInContext(ctx);
+		const route = (ctx as unknown as { routeFn: (...a: unknown[]) => number[][] }).routeFn;
+		// 예전엔 가운데(x=527)에서 꺾어 왼쪽 면에서 나간 선이 제 카드 속으로 되돌아 들어갔다.
+		const left = route([416, 730], 'left', [637, 1340], 'left', 0);
+		assert.ok(left.every((pt, i) => i === 0 || i === left.length - 1 || (pt[0] ?? Infinity) <= 416 - 24), JSON.stringify(left));
+		const bottom = route([100, 84], 'bottom', [400, 300], 'bottom', 0);
+		assert.ok(bottom.every((pt, i) => i === 0 || i === bottom.length - 1 || (pt[1] ?? -Infinity) >= 300 + 24), JSON.stringify(bottom));
 	});
 
 	test('복도에서 세로 구간이 안 겹치는 선은 같은 자리에서 꺾인다', async () => {
@@ -2738,10 +2730,32 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 		const down = mk(311, 470);
 		// 같은 방향으로 겹치는 셋째 선(305->200): up 과 겹친다.
 		const clash = mk(305, 200);
-		const ctx = createContext({ auto: [up, down, clash] });
+		// 차선 교환은 교차 수를 보고 판단한다. 여기선 색칠 규칙만 보려고 교차 0 으로 둔다.
+		const ctx = createContext({ auto: [up, down, clash], crossCount: () => 0, swapFree: () => true });
 		new Script(blk).runInContext(ctx);
 		assert.equal(up.midColor, down.midColor, '안 겹치는 두 선이 다른 자리에서 꺾인다');
 		assert.notEqual(up.midColor, clash.midColor, '겹치는 두 선이 같은 자리에서 꺾인다');
+	});
+
+	test('통로 차선을 바꿔도 구간이 겹치는 제3의 선과 같은 차선이 되지 않는다', async () => {
+		const blk = await pick(/var midGroups[\s\S]*?\n\}\n(?=for \(var m2)/, '복도 색칠 블록');
+		const helpers = await pick(/function spanOf\([\s\S]*?\nfunction swapFree\([\s\S]*?\n\}/, 'spanOf·swapFree');
+		const mk = (a: number, b: number) => ({ mk: 'h70', pa: [140, a], pb: [400, b], midColor: -1, colors: -1 });
+		// u[0,100] 와 w[150,250] 은 안 겹쳐 같은 차선, v[50,200] 은 둘 다와 겹쳐 다른 차선을 받는다.
+		const u = mk(0, 100), w = mk(150, 250), v = mk(50, 200);
+		// 교차 수는 늘 «바꾸면 준다» 고 답하게 해서 교환을 최대한 시도하게 한다.
+		const ctx = createContext({ auto: [u, w, v], crossCount: (_a: unknown, ca: number, _b: unknown, cb: number) => (ca < cb ? 2 : 0) });
+		new Script(helpers + '\n' + blk).runInContext(ctx);
+		const all = [u, w, v];
+		for (let i = 0; i < all.length; i++) {
+			for (let j = i + 1; j < all.length; j++) {
+				const A = all[i], B = all[j];
+				if (!A || !B) continue;
+				const overlapSpan = Math.min(A.pa[1] ?? 0, A.pb[1] ?? 0) <= Math.max(B.pa[1] ?? 0, B.pb[1] ?? 0) + 6 &&
+					Math.min(B.pa[1] ?? 0, B.pb[1] ?? 0) <= Math.max(A.pa[1] ?? 0, A.pb[1] ?? 0) + 6;
+				if (overlapSpan) assert.notEqual(A.midColor, B.midColor, `구간이 겹치는 두 선이 같은 차선이다: ${JSON.stringify(all.map((x) => x.midColor))}`);
+			}
+		}
 	});
 
 	test('차선은 상대편 위치 순서로 받는다', async () => {
@@ -2749,6 +2763,7 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 		const srcN = { x: 0, y: 300, w: 140, h: 56 };
 		const t = (y: number) => ({ x: 400, y, w: 140, h: 56 });
 		const edge = (n: { x: number; y: number; w: number; h: number }) => ({
+			e: { plane: 'r' },
 			a: { n: srcN, s: 'right', k: 's|right' },
 			b: { n, s: 'left', k: `t${String(n.y)}|left` },
 			ia: -1,
@@ -2763,6 +2778,7 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 			isH: (s: string) => s === 'left' || s === 'right',
 			cy: (n: { y: number; h: number }) => n.y + n.h / 2,
 			cx: (n: { x: number; w: number }) => n.x + n.w / 2,
+			planeOf: (k: string) => ({ key: k }),
 		});
 		new Script(blk).runInContext(ctx);
 		assert.equal(e2.ia, 0, '가장 위 타깃이 위 차선을 받아야 한다');
@@ -3244,4 +3260,377 @@ describe('D3 — 실제로 그린 그림에서 선·이름표·라벨 자리 (�
 		assert.equal(Number(m[1]), 104 - 12, `선과의 간격이 12 가 아니다: x=${m[1]}`);
 		assert.equal(Number(m[2]), 142 + 4, `기준선이 중점+4 가 아니다: y=${m[2]}`);
 	});
+});
+
+describe('D4 — 교차·나란함·끝점·라벨 거리·줄 맞춤 (크롬 필요)', () => {
+	/**
+	 * 다른 사람이 그린 고객사 구성도 세 장에서 자가감사를 통과한 결함을 모았다. 선끼리 X 자로 엇갈림,
+	 * 8px 간격으로 나란히 가 한 줄로 읽힘, 허공을 가리키는 화살촉, 선에서 170px 떨어진 라벨,
+	 * 계단처럼 내려앉은 카드. 결함 그림은 잡고, 대조군은 통과해야 한다.
+	 */
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+	const auditClean = (a: object): boolean => Object.values(a).every((x) => !Array.isArray(x) || x.length === 0);
+	const card = (id: string, x: number, y: number, h = 84) => ({ id, x, y, w: 120, h, title: id, sub: '서버' });
+
+	test('직각 교차는 반원으로 넘고 통과한다. 한 선이 두 번 넘으면 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const once = await renderDiagram({
+			title: '한 번',
+			nodes: [card('a', 0, 100), card('b', 600, 100), card('c', 240, -120), card('d', 240, 320)],
+			edges: [{ from: 'a', to: 'b', label: '가로' }, { from: 'c', to: 'd', label: '세로' }],
+			legend: false,
+		});
+		assert.ok(auditClean(once.audit), JSON.stringify(once.audit));
+		assert.ok(/ A6,6 0 0 [01] /.test(await domOfD4(once.htmlPath)), '교차 자리에 반원이 없다');
+
+		// 세 번까지는 반원으로 읽힌다(서버 세 대 구성도에서 DB 로 가는 가로선이 lb 기둥 셋을 넘는다). 네 번부터 잡는다.
+		const cols = (n: number) => Array.from({ length: n }, (_, i) => 180 + i * 140);
+		const many = async (n: number) => renderDiagram({
+			title: `${String(n)}번`,
+			nodes: [card('a', 0, 100), card('b', 180 + n * 140, 100), ...cols(n).flatMap((x, i) => [card(`t${String(i)}`, x, -120), card(`u${String(i)}`, x, 320)])],
+			edges: [{ from: 'a', to: 'b' }, ...cols(n).map((_, i) => ({ from: `t${String(i)}`, to: `u${String(i)}` }))],
+			legend: false,
+		});
+		const three = await many(3);
+		assert.ok(!three.audit.overlap.some((v) => v.includes('건넘')), JSON.stringify(three.audit.overlap));
+		const four = await many(4);
+		assert.ok(four.audit.overlap.some((v) => v.includes('4번 건넘')), JSON.stringify(four.audit.overlap));
+	});
+
+	test('반원으로 못 넘는 교차(대각)는 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '대각 교차',
+			nodes: [card('p', 0, 0), card('q', 400, 200), card('r', 0, 200), card('s', 400, 0)],
+			edges: [{ points: [[120, 42], [400, 242]] }, { points: [[120, 242], [400, 42]] }],
+			legend: false,
+		});
+		assert.ok(r.audit.overlap.some((v) => v.includes('교차')), JSON.stringify(r.audit.overlap));
+	});
+
+	test('10px 안으로 나란히 가는 두 선은 잡는다. 30px 떨어지면 통과한다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const near = await renderDiagram({
+			title: '붙음',
+			nodes: [card('p', 0, 0), card('s', 400, 0)],
+			edges: [{ points: [[120, 34], [400, 34]] }, { points: [[120, 42], [400, 42]] }],
+			legend: false,
+		});
+		assert.ok(near.audit.overlap.some((v) => v.includes('나란히')), JSON.stringify(near.audit.overlap));
+		const far = await renderDiagram({
+			title: '떨어짐',
+			nodes: [card('p', 0, 0), card('s', 400, 0)],
+			edges: [{ points: [[120, 20], [400, 20]] }, { points: [[120, 60], [400, 60]] }],
+			legend: false,
+		});
+		assert.ok(auditClean(far.audit), JSON.stringify(far.audit));
+	});
+
+	test('points 로 그린 선의 끝이 카드 면에 안 닿으면 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const bad = await renderDiagram({
+			title: '허공',
+			nodes: [card('p', 0, 0), card('s', 400, 0)],
+			edges: [{ points: [[120, 42], [370, 42]] }],
+			legend: false,
+		});
+		assert.ok(bad.audit.cross.some((v) => v.includes('닿지 않음')), JSON.stringify(bad.audit.cross));
+		const ok = await renderDiagram({
+			title: '닿음',
+			nodes: [card('p', 0, 0), card('s', 400, 0)],
+			edges: [{ points: [[120, 42], [400, 42]] }],
+			legend: false,
+		});
+		assert.ok(auditClean(ok.audit), JSON.stringify(ok.audit));
+	});
+
+	test('label_at 으로 선에서 멀리 뗀 라벨과 남의 선 위 라벨을 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const base = { nodes: [card('a', 0, 100), card('b', 600, 100), card('c', 240, -120), card('d', 240, 320)], legend: false };
+		const far = await renderDiagram({
+			...base, title: '멀리',
+			edges: [{ from: 'a', to: 'b', label: '가로', label_at: [450, 400] }, { from: 'c', to: 'd' }],
+		});
+		assert.ok(far.audit.label.some((v) => v.includes('떨어짐')), JSON.stringify(far.audit.label));
+		const onOther = await renderDiagram({
+			...base, title: '남의 선',
+			edges: [{ from: 'a', to: 'b', label: '가로 라벨', label_at: [300, 138] }, { from: 'c', to: 'd' }],
+		});
+		assert.ok(onOther.audit.label.some((v) => v.includes('다른 선')), JSON.stringify(onOther.audit.label));
+	});
+
+	test('계단처럼 어긋난 카드는 잡는다. 줄을 맞추면 통과한다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const stair = await renderDiagram({
+			title: '계단',
+			nodes: [card('n', 300, 0), card('a', 0, 240), card('b', 300, 290), card('c', 600, 340)],
+			edges: [{ from: 'n', to: 'a' }, { from: 'n', to: 'b' }, { from: 'n', to: 'c' }],
+			legend: false,
+		});
+		assert.ok(stair.audit.collide.some((v) => v.includes('어긋남')), JSON.stringify(stair.audit.collide));
+		const row = await renderDiagram({
+			title: '한 줄',
+			nodes: [card('n', 300, 0), card('a', 0, 240), card('b', 300, 240), card('c', 600, 240)],
+			edges: [{ from: 'n', to: 'a' }, { from: 'n', to: 'b' }, { from: 'n', to: 'c' }],
+			legend: false,
+		});
+		assert.ok(!row.audit.collide.some((v) => v.includes('어긋남')), JSON.stringify(row.audit.collide));
+		// 대조군. 높이가 다른 카드를 윗변으로 맞춘 것(64px 머리 카드 옆 84px 카드)은 일부러 둔 배치다.
+		const topAligned = await renderDiagram({
+			title: '윗변 맞춤',
+			nodes: [{ id: 'h', x: 0, y: 0, w: 120, h: 64, title: '머리' }, card('v', 300, 0)],
+			groups: [{ name: 'G', members: ['h', 'v'] }],
+			legend: false,
+		});
+		assert.ok(!topAligned.audit.collide.some((v) => v.includes('어긋남')), JSON.stringify(topAligned.audit.collide));
+	});
+
+	test('흐름 종류가 다른 선은 한 점(버스)을 같이 쓰지 않는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '섞인 흐름',
+			nodes: [
+				{ id: 'u', x: 0, y: 60, w: 130, h: 84, title: '가운데', sub: '서버' },
+				{ id: 'a', x: 300, y: 0, w: 208, h: 84, title: '위', sub: '서버' },
+				{ id: 'b', x: 300, y: 120, w: 208, h: 84, title: '아래', sub: '서버' },
+			],
+			edges: [{ from: 'u', to: 'a', plane: 'r' }, { from: 'u', to: 'b', plane: 'd' }],
+			legend: false,
+		});
+		const dom = await domOfD4(r.htmlPath);
+		const starts = [...dom.matchAll(/<path d="M(-?[\d.]+),(-?[\d.]+)[^"]*" fill="none" stroke="#[0-9a-fA-F]{6}"[^>]*stroke-width="1.8"/g)]
+			.map((m) => `${m[1]},${m[2]}`);
+		assert.equal(starts.length, 2);
+		assert.notEqual(starts[0], starts[1], '실선과 다른 흐름의 선이 한 점에서 나간다');
+	});
+
+	test('같은 통로를 지나는 두 선은 서로 두 번 엇갈리지 않게 차선을 고른다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 아래 선(s2)을 먼저 적으면 칠한 순서대로는 s2 가 왼쪽 차선을 받아 두 선이 두 번 엇갈린다(고객사 AP2).
+		const r = await renderDiagram({
+			title: '차선 교환',
+			nodes: [card('s1', 600, 0), card('s2', 600, 200), card('t1', 0, 350), card('t2', 0, 550)],
+			edges: [{ from: 's2:left', to: 't2:right' }, { from: 's1:left', to: 't1:right' }],
+			legend: false,
+		});
+		assert.ok(auditClean(r.audit), JSON.stringify(r.audit));
+		const arcs = (await domOfD4(r.htmlPath)).match(/ A6,6 /g) ?? [];
+		assert.equal(arcs.length, 0, `피할 수 있던 교차를 반원으로 넘었다: ${arcs.length}곳`);
+	});
+
+	test('라벨 자리를 고를 때 그룹 테두리를 피한다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 가운데 위 자리는 그룹 G 아래 테두리에 걸친다. 아래 자리가 비어 있으니 거기로 가야 한다.
+		const r = await renderDiagram({
+			title: '테두리 피하기',
+			nodes: [card('a', 0, 0), card('b', 700, 0), card('c', 360, -80)],
+			groups: [{ name: 'G', members: ['c'] }],
+			edges: [{ from: 'a', to: 'b', label: '꽤 긴 라벨 문구' }],
+			legend: false,
+		});
+		assert.ok(auditClean(r.audit), JSON.stringify(r.audit));
+	});
+
+	test('같은 줄의 두 카드를 같은 쪽 면끼리 이으면 상대 카드를 뚫지 않고 위로 돈다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 독립 측정기로 무작위 그림을 돌려 찾았다. 바깥으로 나가는 가로 구간이 오른쪽 카드를 그대로 지났다.
+		for (const [from, to] of [['a:right', 'b:right'], ['b:right', 'a:right'], ['b:left', 'a:left']] as const) {
+			const r = await renderDiagram({
+				title: `${from} → ${to}`,
+				nodes: [card('a', 0, 0), card('b', 300, 0)],
+				edges: [{ from, to }],
+				legend: false,
+			});
+			assert.ok(auditClean(r.audit), `${from} → ${to}: ${JSON.stringify(r.audit)}`);
+			// 감사와 따로, 그려진 경로의 꼭짓점이 두 카드 안쪽에 들어가는지 직접 잰다.
+			const d = /<path d="([^"]+)" fill="none" stroke="#[0-9a-fA-F]{6}"[^>]*stroke-width="1.8"/.exec(await domOfD4(r.htmlPath))?.[1] ?? '';
+			const nums = [...d.matchAll(/-?\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
+			const pts: number[][] = [];
+			for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i] ?? NaN, nums[i + 1] ?? NaN]);
+			for (let i = 0; i + 1 < pts.length; i++) {
+				const [x1, y1] = pts[i] ?? [];
+				const [x2, y2] = pts[i + 1] ?? [];
+				for (const c of [{ x: 0, y: 0 }, { x: 300, y: 0 }]) {
+					const hit = Math.max(x1 ?? 0, x2 ?? 0) > c.x + 3 && Math.min(x1 ?? 0, x2 ?? 0) < c.x + 117 &&
+						Math.max(y1 ?? 0, y2 ?? 0) > c.y + 3 && Math.min(y1 ?? 0, y2 ?? 0) < c.y + 81;
+					assert.ok(!hit, `${from} → ${to}: 경로가 카드(${c.x},${c.y}) 안을 지난다: ${JSON.stringify([pts[i], pts[i + 1]])}`);
+				}
+			}
+		}
+	});
+
+	test('같은 두 선이 두 번 엇갈리면 반원으로 넘었어도 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// p→q 는 가로-세로-가로, r→s 는 세로-가로-세로. 서로 한 번씩 반원으로 넘어 선마다 한 번이지만 쌍으로는 두 번이다.
+		const r = await renderDiagram({
+			title: '두 번 엇갈림',
+			nodes: [card('p', 0, 58), card('q', 600, 358), card('r', 180, 66), card('s', 420, 500)],
+			edges: [{ from: 'p', to: 'q' }, { from: 'r', to: 's' }],
+			legend: false,
+		});
+		assert.ok(r.audit.overlap.some((v) => v.includes('2번 교차')), JSON.stringify(r.audit.overlap));
+	});
+
+	test('버스 면에서 같은 쪽 면으로 가는 선은 갈라지는 자리 보정을 받지 않는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// m 오른쪽 면에서 a 왼쪽 면과 b 오른쪽 면으로 같이 나간다(버스). b 로 가는 선에 버스 분기 보정을
+		//   주면 바깥으로 돌 자리가 b 카드 안으로 들어갔다.
+		const r = await renderDiagram({
+			title: '버스와 같은 쪽 면',
+			nodes: [card('m', 0, 0), card('a', 400, -200), card('b', 400, 200)],
+			edges: [{ from: 'm:right', to: 'a:left' }, { from: 'm:right', to: 'b:right' }],
+			legend: false,
+		});
+		assert.ok(!r.audit.cross.some((v) => v.includes('관통')), JSON.stringify(r.audit.cross));
+	});
+
+	test('points 로 그린 선이 제가 닿은 카드를 가로지르면 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 오른쪽 면에서 왼쪽 면으로 카드 한가운데를 지난다. 양끝이 면에 닿아 예전엔 통과했다.
+		const r = await renderDiagram({
+			title: '제 카드 관통',
+			nodes: [card('p', 0, 0), card('s', 400, 0)],
+			edges: [{ points: [[120, 42], [0, 42]] }],
+			legend: false,
+		});
+		assert.ok(r.audit.cross.some((v) => v.includes('관통')), JSON.stringify(r.audit.cross));
+	});
+
+	test('차선이 있는 면과 곧게 이어도 차선 간격을 지킨다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 위 카드 아랫면에 들어오는 선과 나가는 선이 차선으로 벌어진다. 아래 카드에서 올라오는 선을
+		//   곧게 펴며 차선 쪽 끝을 가운데로 끌어오면 옆 차선과 7.5px 로 붙었다.
+		const r = await renderDiagram({
+			title: '차선 간격',
+			nodes: [
+				{ id: 'up', x: 0, y: 0, w: 180, h: 84, title: '위', sub: '서버' },
+				{ id: 'dn', x: 0, y: 300, w: 180, h: 84, title: '아래', sub: '서버' },
+				{ id: 'rt', x: 400, y: 300, w: 180, h: 84, title: '오른쪽', sub: '서버' },
+			],
+			edges: [{ from: 'dn', to: 'up' }, { from: 'up:bottom', to: 'rt:top' }],
+			legend: false,
+		});
+		const dom = await domOfD4(r.htmlPath);
+		const xs = [...dom.matchAll(/<path d="M(-?[\d.]+),(-?[\d.]+)[^"]*" fill="none" stroke="#[0-9a-fA-F]{6}"[^>]*stroke-width="1.8"/g)]
+			.map((m) => Number(m[1]));
+		const ends = [...dom.matchAll(/<path d="[^"]*L(-?[\d.]+),(-?[\d.]+)" fill="none" stroke="#[0-9a-fA-F]{6}"[^>]*stroke-width="1.8"/g)]
+			.map((m) => [Number(m[1]), Number(m[2])]);
+		// 첫 선(dn→up)이 up 아랫면(y=84)에 닿는 x 와 둘째 선(up→rt)이 up 아랫면에서 나가는 x 의 간격.
+		const inX = ends[0]?.[0] ?? NaN, outX = xs[1] ?? NaN;
+		assert.ok(Math.abs(inX - outX) >= 14, `차선 간격이 무너졌다: ${inX} vs ${outX}`);
+	});
+
+	test('꺾인 모서리가 다른 선 한가운데에 닿는 T자 엇갈림을 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 같은 높이의 두 카드에서 마주 보고 나온 선이 17px 포개진 뒤 서로의 모서리를 밟고 내려간다.
+		//   겹침(20px 기준)에도, 선분 안쪽끼리만 세던 교차에도 안 걸렸다(무작위 그림에서 찾음).
+		const r = await renderDiagram({
+			title: 'T자',
+			nodes: [
+				{ id: 'n5', x: 326, y: 0, w: 180, h: 84, title: '왼쪽 위', sub: '서버' },
+				{ id: 'n1', x: 591, y: 0, w: 180, h: 84, title: '오른쪽 위', sub: '서버' },
+				{ id: 'n6', x: 300, y: 200, w: 180, h: 84, title: '왼쪽 아래', sub: '서버' },
+				{ id: 'n0', x: 600, y: 200, w: 180, h: 84, title: '오른쪽 아래', sub: '서버' },
+			],
+			edges: [{ from: 'n5', to: 'n0' }, { from: 'n1', to: 'n6' }],
+			legend: false,
+		});
+		assert.ok(r.audit.overlap.some((v) => v.includes('교차')), JSON.stringify(r.audit.overlap));
+	});
+
+	test('남의 선에 2px 안으로 붙은 라벨도 겹침으로 본다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 세로선 c→d 바로 옆(1px)에 라벨 상자 끝이 오도록 label_at 을 준다. 상자와 선이 딱 붙어 예전엔 통과했다.
+		const base = { nodes: [card('a', 0, 100), card('b', 600, 100), card('c', 240, -120), card('d', 240, 320)], legend: false };
+		const r = await renderDiagram({
+			...base, title: '붙은 라벨',
+			edges: [{ from: 'a', to: 'b', label: '가로', label_at: [301, 138], label_anchor: 'start' }, { from: 'c', to: 'd' }],
+		});
+		assert.ok(r.audit.label.some((v) => v.includes('다른 선')), JSON.stringify(r.audit.label));
+	});
+
+	test('서로에게 넘기는 두 선은 통로 차선을 20px 벌려 교차를 반원으로 넘는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 서버 두 대가 서로의 tomcat 으로 넘기는 모양. 차선이 15px 이면 옆 차선의 꺾임과 반원이 맞닿아
+		//   반원을 못 넣고 그냥 엇갈렸다(고객사 운영 구성도).
+		const r = await renderDiagram({
+			title: '서버 간',
+			nodes: [card('a1', 0, 0), card('t1', 0, 200), card('a2', 700, 100), card('t2', 700, 300)],
+			edges: [{ from: 'a1:right', to: 't2:left' }, { from: 'a2:left', to: 't1:right' }],
+			legend: false,
+		});
+		assert.ok(!r.audit.overlap.some((v) => v.includes('교차')), JSON.stringify(r.audit.overlap));
+		assert.equal(((await domOfD4(r.htmlPath)).match(/ A6,6 /g) ?? []).length, 1, '교차 자리에 반원이 하나여야 한다');
+	});
+
+	test('조금 어긋난 두 카드는 비스듬히 잇지 않고 꺾는다(실제 그림)', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 30px 어긋남. 예전엔 1:4 보다 완만하다고 대각으로 이었다.
+		const r = await renderDiagram({ title: '어긋남', nodes: [card('a', 0, 0), card('b', 400, 30)], edges: [{ from: 'a', to: 'b' }], legend: false });
+		const d = /<path d="([^"]+)" fill="none" stroke="#[0-9a-fA-F]{6}"[^>]*stroke-width="1.8"/.exec(await domOfD4(r.htmlPath))?.[1] ?? '';
+		assert.ok(d.includes('Q'), `꺾이지 않았다: ${d}`);
+	});
+
+	async function domOfD4(htmlPath: string): Promise<string> {
+		const prof = await mkdtemp(join(tmpdir(), 'velog-mcp-d4-'));
+		try {
+			return await dumpDom(pathToFileURL(htmlPath).href, { profileDir: prof });
+		} finally {
+			await rm(prof, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+		}
+	}
 });
