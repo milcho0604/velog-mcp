@@ -330,7 +330,7 @@ for (var ni = 0; ni < S.nodes.length; ni++) {
 
 // ── 그룹 안 카드는 폭을 맞춘다 ──
 // 폭은 글자로 재므로 카드마다 제각각이다. 나란히 놓인 형제 카드가 144·143·164·208
-// 처럼 들쭉날쭉하면 줄이 안 맞아 눈에 걸린다(사내 구성도 실측). 1px 차이는 오히려
+// 처럼 들쭉날쭉하면 줄이 안 맞아 눈에 걸린다(서버 구성도 실측). 1px 차이는 오히려
 // 렌더 오류처럼 보인다. 그래서 같은 그룹의 멤버는 그중 가장 넓은 폭으로 맞춘다.
 // w 를 직접 준 노드는 건드리지 않는다 — 준 값이 뜻이다. 다만 그 값도 최댓값에 넣는다.
 // 넓어져서 옆 카드와 겹치면 자가감사(collide)가 잡는다. 조용히 망가지지 않는다.
@@ -374,7 +374,7 @@ for (var gi = 0; gi < S.groups.length; gi++) {
   var chipW = 13 + gtw + 13;
   if (g.sub) chipW += 9 + measure(g.sub, 'grp-sub');
   // 박스는 제 이름표보다 좁을 수 없다. 멤버 폭으로만 재면 긴 부제가 박스 밖으로
-  //   삐져나간다(사내 실측: DB 그룹 이름표가 오른쪽으로 100px 넘게 나왔다).
+  //   삐져나간다(서버 구성도 실측: DB 그룹 이름표가 오른쪽으로 100px 넘게 나왔다).
   //   멤버로 잰 박스만 넓힌다. 좌표를 직접 준 박스는 준 값이 뜻이라 감사가 알린다.
   var chipNeed = 13 + chipW + 13;
   if (g.members && g.members.length && g.w < chipNeed) g.w = chipNeed;
@@ -431,6 +431,10 @@ function anchor(n, side, idx, cnt){
   return [cx(n) + laneOffset(idx, cnt, n.w), side === 'top' ? n.y : n.y + n.h];
 }
 function isH(side){ return side === 'left' || side === 'right'; }
+// 면 위의 한 좌표(가로 면이면 y, 세로 면이면 x)가 모서리 둥근 곳(6px)을 뺀 면 안에 있는가.
+function withinFace(n, side, v){
+  return isH(side) ? (v >= n.y + 6 && v <= n.y + n.h - 6) : (v >= n.x + 6 && v <= n.x + n.w - 6);
+}
 // off = 중간 꺾임선을 옆으로 밀어내는 양. 같은 두 열 사이를 지나는 선들이
 // 전부 같은 중간 좌표를 쓰면 한 줄로 겹친다 — 그걸 벌리는 데 쓴다.
 function route(a, as, b, bs, off){
@@ -438,21 +442,48 @@ function route(a, as, b, bs, off){
   var d = off || 0;
   // 8px 이하 어긋남은 꺾지 않고 곧게 잇는다. 꺾임 반경(9)보다 작아서
   // Z 로 꺾으면 직각이 아니라 잔물결이 된다.
+  // 같은 쪽 면끼리(left→left 등)는 가운데서 꺾으면 한쪽 카드 속으로 되돌아 들어간다.
+  //   더 바깥쪽 면에서 24px 밖으로 나가 돌아온다.
+  var OUT = 24;
+  if (as === bs && isH(as)) {
+    var ox2 = as === 'left' ? Math.min(ax, bx) - OUT + d : Math.max(ax, bx) + OUT + d;
+    return [[ax,ay],[ox2,ay],[ox2,by],[bx,by]];
+  }
+  if (as === bs) {
+    var oy2 = as === 'top' ? Math.min(ay, by) - OUT + d : Math.max(ay, by) + OUT + d;
+    return [[ax,ay],[ax,oy2],[bx,oy2],[bx,by]];
+  }
+  // 8px 이하 어긋남은 꺾지 않는다. 그렇다고 비스듬히 이으면 직각 선들 사이에서 튄다(고객사:
+  //   차선 때문에 7.5px 밀린 nginx→keydb 선). 출발점 줄을 따라 곧게 가고 도착점을 그 줄로 맞춘다.
+  //   도착점은 면 안에서 8px 이하로만 움직인다.
   if (isH(as) && isH(bs)) {
-    if (Math.abs(ay - by) <= 8) return [[ax,ay],[bx,by]];
+    if (Math.abs(ay - by) <= 8) return [[ax,ay],[bx,ay]];
     var mx = (ax + bx) / 2 + d;
     return [[ax,ay],[mx,ay],[mx,by],[bx,by]];
   }
   if (!isH(as) && !isH(bs)) {
-    if (Math.abs(ax - bx) <= 8) return [[ax,ay],[bx,by]];
+    if (Math.abs(ax - bx) <= 8) return [[ax,ay],[ax,by]];
     var my = (ay + by) / 2 + d;
     return [[ax,ay],[ax,my],[bx,my],[bx,by]];
   }
   if (isH(as)) return [[ax,ay],[bx,ay],[bx,by]];
   return [[ax,ay],[ax,by],[bx,by]];
 }
-function rpath(pts, r){
+// hops[k] = k 번째 구간(pts[k] → pts[k+1]) 위에서 반원으로 넘어갈 x 좌표들.
+//   가로 구간만 넘는다. 반원은 늘 위로 볼록하다.
+function hopTo(d, a, b, xs){
+  if (!xs || !xs.length) return d;
+  var dir = b[0] > a[0] ? 1 : -1;
+  var list = xs.slice().sort(function(p, q){ return (p - q) * dir; });
+  for (var h = 0; h < list.length; h++) {
+    d += ' L' + (list[h] - dir * HOP) + ',' + a[1] +
+         ' A' + HOP + ',' + HOP + ' 0 0 ' + (dir > 0 ? 1 : 0) + ' ' + (list[h] + dir * HOP) + ',' + a[1];
+  }
+  return d;
+}
+function rpath(pts, r, hops){
   r = r || 9;
+  hops = hops || [];
   var d = 'M' + pts[0][0] + ',' + pts[0][1];
   for (var i = 1; i < pts.length - 1; i++) {
     var p = pts[i-1], c = pts[i], nx = pts[i+1];
@@ -467,8 +498,10 @@ function rpath(pts, r){
     var oux = outLen ? (nx[0]-c[0]) / outLen : 0, ouy = outLen ? (nx[1]-c[1]) / outLen : 0;
     var ix = c[0] - iux * rr, iy = c[1] - iuy * rr;
     var ox = c[0] + oux * rr, oy = c[1] + ouy * rr;
+    d = hopTo(d, p, c, hops[i-1]);
     d += ' L' + ix + ',' + iy + ' Q' + c[0] + ',' + c[1] + ' ' + ox + ',' + oy;
   }
+  d = hopTo(d, pts[pts.length-2], pts[pts.length-1], hops[pts.length-2]);
   d += ' L' + pts[pts.length-1][0] + ',' + pts[pts.length-1][1];
   return d;
 }
@@ -520,7 +553,7 @@ for (var lk in laneBuckets) {
   }
 }
 // 한 면의 선이 전부 나가기만(또는 들어오기만) 하면 가운데 한 점을 같이 쓴다(버스).
-//   차선으로 벌리면 둘 다 중심에서 빗나간다(사내 실측: 사용자 카드에서 DMZ 로 가는
+//   차선으로 벌리면 둘 다 중심에서 빗나간다(서버 구성도 실측: 사용자 카드에서 DMZ 로 가는
 //   두 선이 ±7.5px). 같은 점에서 나가 같은 자리에서 갈라지면 한 줄기로 읽힌다.
 // 나가는 선과 들어오는 선이 섞인 면은 차선을 유지한다. 한 점을 쓰면 들어오는
 //   화살촉이 나가는 선 머리에 꽂힌다.
@@ -531,6 +564,9 @@ for (var bbk in laneBuckets) {
   var sameDir = true;
   for (var bbi = 1; bbi < bba.length; bbi++) {
     if (bba[bbi].end !== bba[0].end) { sameDir = false; break; }
+    // 흐름 종류가 다르면 한 줄기를 쓰지 않는다. 실선과 점선이 포개지면 점선이 실선에
+    //   묻혀 안 보인다(고객사 운영 구성도 실측: 7821 실선 위의 16380 backup 점선).
+    if (planeOf(bba[bbi].it.e.plane).key !== planeOf(bba[0].it.e.plane).key) { sameDir = false; break; }
   }
   if (sameDir) busFace[bbk] = true;
 }
@@ -558,22 +594,18 @@ for (var bs2 = 0; bs2 < auto.length; bs2++) {
 }
 // 선의 양끝은 면의 가운데(차선이 있으면 그 차선)에서 옮기지 않는다.
 // 예전엔 두 노드의 세로 구간이 겹치면 두 끝을 평균 자리로 끌어와 곧게 폈다. 곧기는
-//   한데 **양끝이 둘 다 중심에서 빗나갔다**(사내 실측: was·db 사이 선이 양쪽 ±15px,
-//   web02·푸시서버 사이가 ±6.75px). 곧은 선은 입력에서 y(x)를 맞춰서 얻는다.
+//   한데 **양끝이 둘 다 중심에서 빗나갔다**(서버 구성도 실측: was·db 사이 선이 양쪽 ±15px,
+//   web02·푸시 서버 사이가 ±6.75px). 곧은 선은 입력에서 y(x)를 맞춰서 얻는다.
 //   렌더러가 끝을 끌어다 맞추면 어긋남을 감출 뿐이다.
-// 차선이 하나뿐인 두 면 사이에서 기울기가 완만하면(1:4 이하) 가운데끼리 대각으로 잇는다.
-for (var sn = 0; sn < auto.length; sn++) {
-  var its = auto[sn];
-  if (lanes[its.a.k] !== 1 || lanes[its.b.k] !== 1) continue;
-  var sdx = Math.abs(its.pb[0] - its.pa[0]), sdy = Math.abs(its.pb[1] - its.pa[1]);
-  if (isH(its.a.s) && isH(its.b.s) && sdy * 4 <= sdx) its.straight = true;
-  else if (!isH(its.a.s) && !isH(its.b.s) && sdx * 4 <= sdy) its.straight = true;
-}
+// 어긋난 두 면은 가운데서 한 번 꺾는다. 예전엔 기울기가 1:4 보다 완만하면 대각으로
+//   이었는데, 세로로 300 내려가며 옆으로 40 밀린 선이 비스듬히 그려져 직각 선들 사이에서
+//   혼자 튀었다(고객사 운영 구성도 실측). 꺾임 반경보다 작은 8px 이하 어긋남만 route 가 곧게 잇는다.
 
 // ★ 같은 두 열 사이를 지나는 선들은 중간 꺾임 좌표가 전부 같아서 한 줄로 겹친다.
 //   노드 배치가 규칙적일수록(= 보기 좋게 그릴수록) 더 잘 생긴다.
 //   실제로 11노드 그림에서 세로선 3개가 겹쳤다. 버킷별로 등간격으로 벌린다.
 function midKeyOf(it){
+  if (it.a.s === it.b.s) return '';                           // 같은 쪽 면: 바깥으로 돈다. 통로가 아니다
   var hA = isH(it.a.s), hB = isH(it.b.s);
   if (hA && hB) {
     if (Math.abs(it.pa[1] - it.pb[1]) <= 8) return '';        // 일직선 — 꺾임 없음
@@ -584,6 +616,63 @@ function midKeyOf(it){
     return 'v' + Math.round(((it.pa[1] + it.pb[1]) / 2) / 8);
   }
   return '';                                                  // ㄴ자 — 중간선이 없다
+}
+function laneRoute(it, col){
+  return route(it.pa, it.a.s, it.pb, it.b.s, (col - (it.colors - 1) / 2) * 20);
+}
+function crossCount(U, cu, V, cv){
+  var pu = laneRoute(U, cu), pv = laneRoute(V, cv), n = 0;
+  for (var i = 0; i < pu.length - 1; i++) {
+    for (var j = 0; j < pv.length - 1; j++) {
+      var A = [pu[i][0], pu[i][1], pu[i+1][0], pu[i+1][1]], B = [pv[j][0], pv[j][1], pv[j+1][0], pv[j+1][1]];
+      var d = (A[2]-A[0]) * (B[3]-B[1]) - (A[3]-A[1]) * (B[2]-B[0]);
+      if (Math.abs(d) < 1e-9) continue;
+      var t = ((B[0]-A[0]) * (B[3]-B[1]) - (B[1]-A[1]) * (B[2]-B[0])) / d;
+      var u = ((B[0]-A[0]) * (A[3]-A[1]) - (B[1]-A[1]) * (A[2]-A[0])) / d;
+      if (t > 0.001 && t < 0.999 && u > 0.001 && u < 0.999) n++;
+    }
+  }
+  return n;
+}
+function spanOf(it, horiz){
+  var ax = horiz ? 1 : 0;
+  return [Math.min(it.pa[ax], it.pb[ax]), Math.max(it.pa[ax], it.pb[ax])];
+}
+function swapFree(grp, it, col, partner){
+  var horiz = it.mk.charAt(0) === 'h', a = spanOf(it, horiz);
+  for (var i = 0; i < grp.length; i++) {
+    var w = grp[i];
+    if (w === it || w === partner || w.midColor !== col) continue;
+    var b = spanOf(w, horiz);
+    if (a[0] <= b[1] + 6 && b[0] <= a[1] + 6) return false;
+  }
+  return true;
+}
+// 같은 쪽 면끼리 바깥으로 돌 때, 안쪽 카드에서 나가는(들어오는) 가로 구간이 바깥쪽 카드를 뚫을 수 있다
+//   (두 카드가 같은 줄에 있으면 늘 그렇다). 그럴 땐 두 카드 위나 아래로 크게 돌아간다.
+function rectHitSeg(n, x1, y1, x2, y2){
+  var M = 3;
+  var loX = Math.min(x1, x2), hiX = Math.max(x1, x2), loY = Math.min(y1, y2), hiY = Math.max(y1, y2);
+  return hiX > n.x + M && loX < n.x + n.w - M && hiY > n.y + M && loY < n.y + n.h - M;
+}
+function sameSideDetour(it, pts){
+  var A = it.a.n, B = it.b.n, s = it.a.s, OUT = 24;
+  var firstBlocked = rectHitSeg(B, pts[0][0], pts[0][1], pts[1][0], pts[1][1]);
+  var lastBlocked = rectHitSeg(A, pts[pts.length-2][0], pts[pts.length-2][1], pts[pts.length-1][0], pts[pts.length-1][1]);
+  if (!firstBlocked && !lastBlocked) return pts;
+  var a = pts[0], b = pts[pts.length-1];
+  if (isH(s)) {
+    var dir = s === 'right' ? 1 : -1, ox = pts[1][0];
+    var top = Math.min(A.y, B.y) - OUT, bot = Math.max(A.y + A.h, B.y + B.h) + OUT;
+    var yd = Math.abs((a[1] + b[1]) / 2 - top) <= Math.abs(bot - (a[1] + b[1]) / 2) ? top : bot;
+    if (firstBlocked) return [a, [a[0] + dir * OUT, a[1]], [a[0] + dir * OUT, yd], [ox, yd], [ox, b[1]], b];
+    return [a, [ox, a[1]], [ox, yd], [b[0] + dir * OUT, yd], [b[0] + dir * OUT, b[1]], b];
+  }
+  var dv = s === 'bottom' ? 1 : -1, oy = pts[1][1];
+  var lft = Math.min(A.x, B.x) - OUT, rgt = Math.max(A.x + A.w, B.x + B.w) + OUT;
+  var xd = Math.abs((a[0] + b[0]) / 2 - lft) <= Math.abs(rgt - (a[0] + b[0]) / 2) ? lft : rgt;
+  if (firstBlocked) return [a, [a[0], a[1] + dv * OUT], [xd, a[1] + dv * OUT], [xd, oy], [b[0], oy], b];
+  return [a, [a[0], oy], [xd, oy], [xd, b[1] + dv * OUT], [b[0], b[1] + dv * OUT], b];
 }
 var midCount = Object.create(null);
 for (var m1 = 0; m1 < auto.length; m1++) {
@@ -617,19 +706,83 @@ for (var gk in midGroups) {
     if (col + 1 > colors) colors = col + 1;
   }
   for (var gc = 0; gc < grp.length; gc++) grp[gc].colors = colors;
+  // 칠한 순서대로 차선을 주면 같은 두 선이 통로 안에서 두 번 엇갈릴 수 있다(고객사: AP2 에서 내려오는
+  //   5432 와 6820). 차선이 다른 두 선의 차선을 바꿔 서로 건너는 횟수가 줄면 바꾼다.
+  for (var sw = 0; sw < grp.length; sw++) {
+    for (var sw2 = sw + 1; sw2 < grp.length; sw2++) {
+      var U = grp[sw], V = grp[sw2];
+      if (U.midColor === V.midColor) continue;
+      // 바꾼 차선이 구간이 겹치는 제3의 선과 같아지면 두 선이 한 줄로 포개진다. 그럴 땐 안 바꾼다.
+      if (!swapFree(grp, U, V.midColor, V) || !swapFree(grp, V, U.midColor, U)) continue;
+      var before = crossCount(U, U.midColor, V, V.midColor);
+      var after = crossCount(U, V.midColor, V, U.midColor);
+      if (after < before) { var tmpc = U.midColor; U.midColor = V.midColor; V.midColor = tmpc; }
+    }
+  }
 }
 for (var m2 = 0; m2 < auto.length; m2++) {
   var im = auto[m2];
   var off = 0;
-  if (im.mk) off = laneOffset(im.midColor, im.colors, 200);
-  var sp = im.bus ? busSplit[im.bus] : null;
+  // 통로 차선은 20px 씩 벌린다. 15px 이면 옆 차선의 꺾임(반경 9)과 교차 반원(6)이 맞닿아
+  //   반원을 넣을 자리가 없었다(고객사 운영 서버 간 AJP 두 선).
+  if (im.mk) off = (im.midColor - (im.colors - 1) / 2) * 20;
+  var sp = im.bus && im.a.s !== im.b.s ? busSplit[im.bus] : null;
   if (sp) {
     // route 는 꺾는 자리를 (a+b)/2 + off 로 잡는다. 버스가 갈라지는 자리에 맞춘다.
     var splitAt = sp.at + sp.dir * sp.dist / 2;
     if (sp.axis === 0 && isH(im.a.s) && isH(im.b.s)) off = splitAt - (im.pa[0] + im.pb[0]) / 2;
     else if (sp.axis === 1 && !isH(im.a.s) && !isH(im.b.s)) off = splitAt - (im.pa[1] + im.pb[1]) / 2;
   }
-  im.pts = im.straight ? [im.pa, im.pb] : route(im.pa, im.a.s, im.pb, im.b.s, off);
+  im.pts = route(im.pa, im.a.s, im.pb, im.b.s, off);
+  if (im.a.s === im.b.s) im.pts = sameSideDetour(im, im.pts);
+  // 8px 이하 어긋남을 곧게 펴며 도착점을 출발점 줄로 옮겼다. 어긋남은 대개 한쪽 면의 차선 때문이다.
+  //   차선이 있는 끝을 가운데로 끌어오면 차선 간격이 무너져 옆 선과 7.5px 로 붙는다(무작위 그림에서
+  //   찾음). 차선이 있는 끝이 도착점이면 그 줄을 지키고 출발점을 옮긴다. 옮긴 끝이 면 밖으로 나가면
+  //   반대쪽을 옮기고, 둘 다 안 되면 원래 두 점을 그대로 잇는다.
+  if (im.pts.length === 2) {
+    var ax2 = isH(im.a.s) ? 1 : 0;
+    if (lanes[im.b.k] > 1 && lanes[im.a.k] === 1 && Math.abs(im.pa[ax2] - im.pb[ax2]) > 0.01 &&
+        withinFace(im.a.n, im.a.s, im.pb[ax2])) {
+      im.pts = ax2 ? [[im.pa[0], im.pb[1]], im.pb] : [[im.pb[0], im.pa[1]], im.pb];
+    } else if (!withinFace(im.b.n, im.b.s, im.pts[1][ax2])) {
+      if (withinFace(im.a.n, im.a.s, im.pb[ax2])) {
+        im.pts = ax2 ? [[im.pa[0], im.pb[1]], im.pb] : [[im.pb[0], im.pa[1]], im.pb];
+      } else {
+        im.pts = [im.pa, im.pb];
+      }
+    }
+  }
+}
+
+// ── 교차는 반원으로 넘는다 ──
+// 서버 두 대가 서로의 tomcat 으로 넘기는 선처럼 구조상 피할 수 없는 교차가 있다(고객사 운영).
+//   그냥 가로지르면 어느 선이 어디로 꺾였는지 헷갈린다. 가로 구간이 세로 구간을 반원으로 넘는다.
+//   꺾임(반경 9)과 반원이 겹치지 않게 구간 양끝에서 HOP+10 안쪽일 때만 넘는다. 넘지 못한 교차와
+//   한 선이 두 번 이상 넘는 것은 자가감사(overlap)가 알린다. 교차가 여럿이면 배치를 고칠 일이다.
+var HOP = 6;
+for (var h1 = 0; h1 < plan.length; h1++) plan[h1].hops = [];
+for (var h1 = 0; h1 < plan.length; h1++) {
+  var PH = plan[h1];
+  if (!PH.pts) continue;
+  for (var hk = 0; hk < PH.pts.length - 1; hk++) {
+    var A1 = PH.pts[hk], A2 = PH.pts[hk+1];
+    if (Math.abs(A1[1] - A2[1]) > 0.5 || Math.abs(A1[0] - A2[0]) < 1) continue;
+    var lo = Math.min(A1[0], A2[0]), hi = Math.max(A1[0], A2[0]);
+    for (var h2 = 0; h2 < plan.length; h2++) {
+      var PV = plan[h2];
+      if (h2 === h1 || !PV.pts) continue;
+      for (var vk = 0; vk < PV.pts.length - 1; vk++) {
+        var B1 = PV.pts[vk], B2 = PV.pts[vk+1];
+        if (Math.abs(B1[0] - B2[0]) > 0.5 || Math.abs(B1[1] - B2[1]) < 1) continue;
+        var vx = B1[0], vlo = Math.min(B1[1], B2[1]), vhi = Math.max(B1[1], B2[1]);
+        if (vx > lo + HOP + 10 && vx < hi - HOP - 10 && A1[1] > vlo + HOP + 10 && A1[1] < vhi - HOP - 10) {
+          (PH.hops[hk] = PH.hops[hk] || []).push(vx);
+          PH.hopCount = (PH.hopCount || 0) + 1;
+          (PH.hopped = PH.hopped || []).push(h2);
+        }
+      }
+    }
+  }
 }
 
 var badRefs = [];
@@ -640,7 +793,7 @@ for (var pk = 0; pk < plan.length; pk++) {
   var pln = planeOf(itm.e.plane);
   // ★ itm.e.plane 을 그대로 쓰면 없는 key 일 때 marker 를 못 찾아 화살촉이 조용히
   //   사라진다. planeOf() 가 되돌려준 **실재하는** 평면의 key 를 쓴다.
-  var pathEl = el('path', {d:rpath(itm.pts), fill:'none', stroke:pln.color,
+  var pathEl = el('path', {d:rpath(itm.pts, 9, itm.hops), fill:'none', stroke:pln.color,
                            'stroke-width':1.8, 'marker-end':'url(#arr-'+pln.key+')'}, content);
   if (pln.dash) pathEl.setAttribute('stroke-dasharray', pln.dash);
 }
@@ -728,16 +881,21 @@ function labelCandidates(pts){
   for (var j = 0; j < order.length; j++) {
     var sg = order[j];
     if (segLen(sg) < 26) continue;
-    var mx = (sg[0][0] + sg[1][0]) / 2, my = (sg[0][1] + sg[1][1]) / 2;
-    if (Math.abs(sg[0][1] - sg[1][1]) < 0.6) {      // 수평 구간 — 위/아래
-      out.push([mx, my - 7, 'middle']);
-      out.push([mx, my + 16, 'middle']);
-    } else {                                        // 수직 구간 — 왼쪽/오른쪽
-      // 기준선을 중점에 두면 글자가 위로 올라가 한쪽 카드에 치우친다. 글자 높이의
-      //   절반(11px 글꼴에서 4)만큼 내려 글자 가운데를 중점에 맞춘다. 간격도 8 이면
-      //   흰 테두리(4.5px) 때문에 선에 붙어 보여 12 로 둔다(사내 'POST /url :6820').
-      out.push([mx - 12, my + 4, 'end']);
-      out.push([mx + 12, my + 4, 'start']);
+    // 가운데가 막히면 긴 구간의 1/4, 3/4 자리도 본다. 가운데만 보면 남의 선이 지나는
+    //   자리에서 갈 곳이 없어 첫 후보로 돌아간다.
+    var fr = segLen(sg) >= 140 ? [0.5, 0.25, 0.75] : [0.5];
+    for (var fi = 0; fi < fr.length; fi++) {
+      var mx = sg[0][0] + (sg[1][0] - sg[0][0]) * fr[fi], my = sg[0][1] + (sg[1][1] - sg[0][1]) * fr[fi];
+      if (Math.abs(sg[0][1] - sg[1][1]) < 0.6) {      // 수평 구간: 위/아래
+        out.push([mx, my - 7, 'middle']);
+        out.push([mx, my + 16, 'middle']);
+      } else {                                        // 수직 구간: 왼쪽/오른쪽
+        // 기준선을 중점에 두면 글자가 위로 올라가 한쪽 카드에 치우친다. 글자 높이의
+        //   절반(11px 글꼴에서 4)만큼 내려 글자 가운데를 중점에 맞춘다. 간격도 8 이면
+        //   흰 테두리(4.5px) 때문에 선에 붙어 보여 12 로 둔다(서버 구성도 'POST /url :6820').
+        out.push([mx - 12, my + 4, 'end']);
+        out.push([mx + 12, my + 4, 'start']);
+      }
     }
   }
   if (!out.length) out.push([pts[0][0], pts[0][1] - 7, 'middle']);
@@ -746,13 +904,85 @@ function labelCandidates(pts){
 function place(t, x, y, anchor){
   t.setAttribute('x', x); t.setAttribute('y', y); t.setAttribute('text-anchor', anchor);
 }
-function labelCollides(box){
+// 두 선이 한 면을 같이 쓰면(버스나 차선) 형제다. 형제 선 위의 라벨, 형제끼리 붙어 가는
+//   구간은 의도한 모양이라 감사에서 뺀다.
+function faceKeys(it){ return it.a ? [it.a.k, it.b.k] : []; }
+function siblings(p, q){
+  var kp = faceKeys(p), kq = faceKeys(q);
+  for (var i = 0; i < kp.length; i++) if (kq.indexOf(kp[i]) >= 0) return true;
+  return false;
+}
+// 선분이 상자를 지나는가(Liang-Barsky). m 만큼 상자를 넓혀 본다.
+function segHitsBox(x1, y1, x2, y2, bx, m){
+  var minX = bx.x - m, maxX = bx.x + bx.w + m, minY = bx.y - m, maxY = bx.y + bx.h + m;
+  var dx = x2 - x1, dy = y2 - y1;
+  var p = [-dx, dx, -dy, dy], q = [x1 - minX, maxX - x1, y1 - minY, maxY - y1];
+  var t0 = 0, t1 = 1;
+  for (var i = 0; i < 4; i++) {
+    if (Math.abs(p[i]) < 1e-9) { if (q[i] < 0) return false; continue; }
+    var t = q[i] / p[i];
+    if (p[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return t0 <= t1;
+}
+function pathHitsBox(pts, bx, m){
+  for (var i = 0; i < pts.length - 1; i++) {
+    if (segHitsBox(pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1], bx, m)) return true;
+  }
+  return false;
+}
+// 라벨이 남의 선 위에 얹히면 어느 선의 라벨인지 헷갈린다. 고객사 운영 구성도에서
+//   'redis 16379' 가 AP2 의 5432 주황선 위에 얹혔다. 자리를 고를 때부터 피한다.
+// 형제 선(한 면을 같이 씀)은 줄기를 같이 쓰는 구간만 봐주고, 갈라진 뒤의 구간은 남의 선처럼 본다.
+//   형제를 통째로 빼면 'redis 16379' 가 같은 면에서 갈라진 5432 선 위에 얹혀도 통과했다(고객사).
+function onPath(sg, pts){
+  for (var i = 0; i < pts.length - 1; i++) {
+    var A = [pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]];
+    var ax = A[2]-A[0], ay = A[3]-A[1], la = Math.hypot(ax, ay);
+    if (la < 1) continue;
+    var ux = ax/la, uy = ay/la;
+    var d0 = Math.abs((sg[0]-A[0]) * uy - (sg[1]-A[1]) * ux), d1 = Math.abs((sg[2]-A[0]) * uy - (sg[3]-A[1]) * ux);
+    if (d0 > 1 || d1 > 1) continue;
+    var t0 = (sg[0]-A[0]) * ux + (sg[1]-A[1]) * uy, t1 = (sg[2]-A[0]) * ux + (sg[3]-A[1]) * uy;
+    if (Math.min(t0, t1) >= -1 && Math.max(t0, t1) <= la + 1) return true;
+  }
+  return false;
+}
+function otherHitsBox(other, mine, box){
+  var sib = siblings(other, mine);
+  var P = other.pts;
+  for (var i = 0; i < P.length - 1; i++) {
+    var sg = [P[i][0], P[i][1], P[i+1][0], P[i+1][1]];
+    if (sib && onPath(sg, mine.pts)) continue;
+    // 2px 여유를 둔다. 라벨 흰 테두리(4.5px)가 있어 상자 끝에 딱 붙은 선도 글자에 닿아 보인다
+    //   (15px 간격 두 선 사이에 낀 라벨이 위 선을 스쳤다. 무작위 그림에서 찾음).
+    if (segHitsBox(sg[0], sg[1], sg[2], sg[3], box, 2)) return true;
+  }
+  return false;
+}
+function labelCollides(box, self){
   for (var i = 0; i < S.nodes.length; i++) {
     var n = S.nodes[i];
     if (boxesOverlap(box, {x:n.x, y:n.y, w:n.w, h:n.h})) return true;
   }
   for (var j = 0; j < placedBoxes.length; j++) {
     if (boxesOverlap(box, placedBoxes[j])) return true;
+  }
+  for (var k = 0; k < plan.length; k++) {
+    if (k === self || !plan[k].pts) continue;
+    if (otherHitsBox(plan[k], plan[self], box)) return true;
+  }
+  // 그룹 이름표와 테두리도 피한다. 감사는 잡는데 자리 고르기가 안 보면 피할 수 있던 자리를 놓친다.
+  for (var c = 0; c < CHIPS.length; c++) if (boxesOverlap(box, CHIPS[c])) return true;
+  for (var g = 0; g < S.groups.length; g++) {
+    var G = S.groups[g];
+    if (G.x === undefined) continue;
+    var inG = box.x >= G.x && box.y >= G.y && box.x + box.w <= G.x + G.w && box.y + box.h <= G.y + G.h;
+    if (!inG && boxesOverlap(box, {x:G.x, y:G.y, w:G.w, h:G.h})) {
+      var outG = box.x + box.w <= G.x || box.x >= G.x + G.w || box.y + box.h <= G.y || box.y >= G.y + G.h;
+      if (!outG) return true;
+    }
   }
   return false;
 }
@@ -768,12 +998,12 @@ for (var pm = 0; pm < plan.length; pm++) {
     var settled = false;
     for (var ci = 0; ci < cands.length; ci++) {
       place(t, cands[ci][0], cands[ci][1], cands[ci][2]);
-      if (!labelCollides(boxOf(t))) { settled = true; break; }
+      if (!labelCollides(boxOf(t), pm)) { settled = true; break; }
     }
     if (!settled) place(t, cands[0][0], cands[0][1], cands[0][2]);
   }
   placedBoxes.push(boxOf(t));
-  labelEls.push([t, itl.e.label]);
+  labelEls.push([t, itl.e.label, pm]);
 }
 
 // ── 캔버스 되맞춤: 그린 결과에 맞춰 크기와 위치를 정한다 (잘림 방지) ──
@@ -838,21 +1068,40 @@ var cross = [];
 for (var ci = 0; ci < plan.length; ci++) {
   var ic = plan[ci];
   if (!ic.pts) continue;
-  // ★ 여기도 Object.create(null) 이어야 한다. 보통 객체면 own['constructor'] 가
+  // 여기도 Object.create(null) 이어야 한다. 보통 객체면 own['constructor'] 가
   //   상속 프로퍼티라 **항상 참**이라, id 가 'constructor' 인 노드는 관통 검사에서
   //   통째로 빠진다. NMAP 등은 고쳤는데 이것만 남아 있었다.
-  // ★ 여기도 Object.create(null) 이어야 한다. 보통 객체면 own['constructor'] 가
+  // 여기도 Object.create(null) 이어야 한다. 보통 객체면 own['constructor'] 가
   //   상속 프로퍼티라 **항상 참**이라, id 가 'constructor' 인 노드는 관통 검사에서
   //   통째로 빠진다.
   //
-  // ★★ 양끝 노드는 **일반 관통 검사에서 뺀다.** 연결점이 자기 면에 붙어 있어서
+  // 양끝 노드는 **일반 관통 검사에서 뺀다.** 연결점이 자기 면에 붙어 있어서
   //   그대로 검사하면 정상 그림도 「관통」이 된다(실측: 노드 둘·연결 하나짜리
   //   기본 그림이 cross 2건). 대신 아래에서 «면을 등지고 출발했는가» 를 따로 본다 —
   //   그게 «자기 카드를 가로지르는» 경우의 진짜 특징이다.
   var own = Object.create(null);
   if (ic.a) { own[ic.a.n.id] = 1; own[ic.b.n.id] = 1; }
   var ss = segs(ic.pts);
-  // ★★ 연결점에서 **면 바깥쪽으로** 출발했는지 본다. left 면에서 출발했는데 첫
+  // points 로 직접 그린 선은 끝이 카드 면에 닿는지 아무도 안 봤다. 고객사 구성도에서
+  //   화살촉이 카드 옆 빈자리를 가리키고, 선이 카드 아래 15px 허공에서 시작했다.
+  //   끝점은 어느 카드든 테두리 위(2px 안)여야 한다.
+  if (!ic.a) {
+    var tips = [ic.pts[0], ic.pts[ic.pts.length - 1]];
+    for (var tp = 0; tp < tips.length; tp++) {
+      var onFace = false;
+      for (var tn = 0; tn < S.nodes.length && !onFace; tn++) {
+        var nd2 = S.nodes[tn], px = tips[tp][0], py = tips[tp][1];
+        var inX = px >= nd2.x - 2 && px <= nd2.x + nd2.w + 2, inY = py >= nd2.y - 2 && py <= nd2.y + nd2.h + 2;
+        var nearV = Math.abs(px - nd2.x) <= 2 || Math.abs(px - nd2.x - nd2.w) <= 2;
+        var nearH = Math.abs(py - nd2.y) <= 2 || Math.abs(py - nd2.y - nd2.h) <= 2;
+        // 닿은 카드도 관통 검사에서 빼지 않는다. 면에서 바깥으로 나가는 구간은 카드 안쪽(3px)을
+        //   안 지나므로 걸리지 않고, 제 카드를 가로지르는 구간만 걸린다(무작위 그림에서 찾음).
+        if ((nearV && inY) || (nearH && inX)) onFace = true;
+      }
+      if (!onFace) cross.push((ic.e.label || ('선#' + ci)) + (tp ? ' 화살촉' : ' 시작점') + '이 카드 면에 닿지 않음');
+    }
+  }
+  // 연결점에서 **면 바깥쪽으로** 출발했는지 본다. left 면에서 출발했는데 첫
   //   걸음이 오른쪽이면 그 선은 자기 카드 속으로 들어간 것이다. 실측(코덱스 16차):
   //   A 의 left 에서 오른쪽의 B 로 가는 연결이 두 카드 속을 지나는데 cross 가 비었다.
   //   면에 «닿는» 것과 «뚫고 들어가는» 것을 방향으로 가른다 — 위치로는 못 가른다.
@@ -868,6 +1117,15 @@ for (var ci = 0; ci < plan.length; ci++) {
         cross.push((ic.e.label || ('선#' + ci)) + ' → 노드 ' + (end.n.title || end.n.id) + ' 관통');
       }
     }
+    // 양끝 카드라도 제 면에 붙은 구간이 아닌 곳에서 지나가면 관통이다. 같은 줄의 두 카드를 같은 쪽
+    //   면끼리 이으면 바깥으로 나가는 길에 상대 카드를 뚫었는데, 양끝 카드는 검사에서 빠져 통과했다
+    //   (독립 측정기로 무작위 그림을 돌려 찾음).
+    var endHit = false;
+    for (var eh = 1; eh < ss.length && !endHit; eh++) if (hitsRect(ss[eh], ic.a.n)) endHit = true;
+    if (endHit) cross.push((ic.e.label || ('선#' + ci)) + ' → 노드 ' + (ic.a.n.title || ic.a.n.id) + ' 관통');
+    endHit = false;
+    for (var eh2 = 0; eh2 < ss.length - 1 && !endHit; eh2++) if (hitsRect(ss[eh2], ic.b.n)) endHit = true;
+    if (endHit && ic.b.n !== ic.a.n) cross.push((ic.e.label || ('선#' + ci)) + ' → 노드 ' + (ic.b.n.title || ic.b.n.id) + ' 관통');
   }
   for (var cj = 0; cj < S.nodes.length; cj++) {
     var cn = S.nodes[cj];
@@ -879,7 +1137,7 @@ for (var ci = 0; ci < plan.length; ci++) {
       }
     }
   }
-  // 그룹 이름표도 본다. 노드만 보던 때 푸시서버 그룹 이름이 선에 가려진 채 통과했다.
+  // 그룹 이름표도 본다. 노드만 보던 때 푸시 서버 그룹 이름이 선에 가려진 채 통과했다.
   for (var chx = 0; chx < CHIPS.length; chx++) {
     for (var ck2 = 0; ck2 < ss.length; ck2++) {
       if (hitsRect(ss[ck2], CHIPS[chx])) {
@@ -918,23 +1176,106 @@ function collinearOverlapOneWay(A, B){
   var hi = Math.min(Math.max(a0,a1), Math.max(b0,b1));
   return hi - lo > 20;
 }
+// 겹치지는 않아도 10px 안으로 나란히 40px 넘게 가면 한 줄로 읽힌다. 고객사 운영
+//   구성도에서 서버 간 AJP 두 선이 8px 간격으로 나란히 가 양방향 화살표 하나처럼 보였다.
+function nearParallel(A, B){
+  var ax = A[2]-A[0], ay = A[3]-A[1], bx = B[2]-B[0], by = B[3]-B[1];
+  var la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+  if (la < 1 || lb < 1) return false;
+  if (Math.abs((ax*by - ay*bx) / (la*lb)) > 0.02) return false;
+  var ux = ax/la, uy = ay/la;
+  var d0 = Math.abs((B[0]-A[0]) * uy - (B[1]-A[1]) * ux);
+  if (d0 > 10) return false;
+  var b0 = ((B[0]-A[0]) * ux + (B[1]-A[1]) * uy), b1 = ((B[2]-A[0]) * ux + (B[3]-A[1]) * uy);
+  return Math.min(la, Math.max(b0, b1)) - Math.max(0, Math.min(b0, b1)) > 40;
+}
+// 선끼리 가로지르면 어느 선이 어디로 가는지 따라가기 어렵다. 선분 안쪽에서 만날 때만
+//   센다(끝점이 닿는 것은 꺾임이나 연결점이라 교차가 아니다).
+// 한 선의 꺾인 모서리가 다른 선 한가운데에 닿는 T자 접촉도 엇갈림이다. 두 선이 같은 높이에서 마주 와
+//   17px 포개진 뒤 서로의 모서리를 밟고 내려간 그림이 겹침(20px 기준)에도 교차(선분 안쪽끼리만 셈)에도
+//   안 걸렸다(무작위 그림에서 찾음). 양쪽 다 끝점에서 만나는 것(꺾임끼리 맞닿음)은 세지 않는다.
+function touchCross(A, B){
+  var d = (A[2]-A[0]) * (B[3]-B[1]) - (A[3]-A[1]) * (B[2]-B[0]);
+  if (Math.abs(d) < 1e-9) return false;
+  var t = ((B[0]-A[0]) * (B[3]-B[1]) - (B[1]-A[1]) * (B[2]-B[0])) / d;
+  var u = ((B[0]-A[0]) * (A[3]-A[1]) - (B[1]-A[1]) * (A[2]-A[0])) / d;
+  var la = Math.hypot(A[2]-A[0], A[3]-A[1]), lb = Math.hypot(B[2]-B[0], B[3]-B[1]);
+  var tol = 0.5;
+  if (t * la < -tol || (1 - t) * la < -tol || u * lb < -tol || (1 - u) * lb < -tol) return false;
+  var aIn = t * la > 3 && (1 - t) * la > 3, bIn = u * lb > 3 && (1 - u) * lb > 3;
+  return (aIn || bIn) && !(aIn && bIn);
+}
+function properCross(A, B){
+  var d = (A[2]-A[0]) * (B[3]-B[1]) - (A[3]-A[1]) * (B[2]-B[0]);
+  if (Math.abs(d) < 1e-9) return false;
+  var t = ((B[0]-A[0]) * (B[3]-B[1]) - (B[1]-A[1]) * (B[2]-B[0])) / d;
+  var u = ((B[0]-A[0]) * (A[3]-A[1]) - (B[1]-A[1]) * (A[2]-A[0])) / d;
+  var la = Math.hypot(A[2]-A[0], A[3]-A[1]), lb = Math.hypot(B[2]-B[0], B[3]-B[1]);
+  return t * la > 3 && (1 - t) * la > 3 && u * lb > 3 && (1 - u) * lb > 3;
+}
+function busSiblings(p, q){
+  var kp = faceKeys(p), kq = faceKeys(q);
+  for (var i = 0; i < kp.length; i++) if (busFace[kp[i]] && kq.indexOf(kp[i]) >= 0) return true;
+  return false;
+}
+// 두 선의 연결점(카드 면 위의 양끝)끼리 닿는 것은 같은 면을 쓰는 것이지 엇갈림이 아니다.
+function sharedTip(pa, pb, A, B){
+  var tips = [pa[0], pa[pa.length-1], pb[0], pb[pb.length-1]];
+  var d = (A[2]-A[0]) * (B[3]-B[1]) - (A[3]-A[1]) * (B[2]-B[0]);
+  if (Math.abs(d) < 1e-9) return false;
+  var t = ((B[0]-A[0]) * (B[3]-B[1]) - (B[1]-A[1]) * (B[2]-B[0])) / d;
+  var px = A[0] + t * (A[2]-A[0]), py = A[1] + t * (A[3]-A[1]);
+  for (var i = 0; i < tips.length; i++) if (Math.hypot(tips[i][0] - px, tips[i][1] - py) <= 3) return true;
+  return false;
+}
+function countOf(arr, v){
+  var n = 0;
+  for (var i = 0; arr && i < arr.length; i++) if (arr[i] === v) n++;
+  return n;
+}
 var overlap = [];
 for (var oa = 0; oa < plan.length; oa++) {
   if (!plan[oa].pts) continue;
   var sa = segs(plan[oa].pts);
   for (var ob = oa + 1; ob < plan.length; ob++) {
     if (!plan[ob].pts) continue;
-    // 같은 버스의 선은 한 점에서 나가 한 자리까지 줄기를 같이 쓴다. 그 겹침은 의도다.
-    if (plan[oa].bus && plan[oa].bus === plan[ob].bus) continue;
+    var nmAB = (plan[oa].e.label || ('선#'+oa)) + ' ↔ ' + (plan[ob].e.label || ('선#'+ob));
     var sb = segs(plan[ob].pts);
-    var hit = false;
-    for (var x1 = 0; x1 < sa.length && !hit; x1++) {
-      for (var x2 = 0; x2 < sb.length && !hit; x2++) {
-        if (collinearOverlap(sa[x1], sb[x2])) hit = true;
+    // 한 점에서 같이 나가(들어와) 줄기를 같이 쓰는 버스 선은 그 겹침이 의도다. 버스 id 하나만 비교하면
+    //   양끝이 서로 다른 버스에 걸린 선을 놓친다(고객사: tomcat 두 대에서 PostgreSQL 윗면으로 모이는
+    //   5432 두 선). 차선으로 벌어지는 면만 같이 쓰는 선은 버스가 아니라서 겹치면 결함이다.
+    if (!busSiblings(plan[oa], plan[ob])) {
+      var hit = false;
+      for (var x1 = 0; x1 < sa.length && !hit; x1++) {
+        for (var x2 = 0; x2 < sb.length && !hit; x2++) {
+          if (collinearOverlap(sa[x1], sb[x2])) hit = true;
+        }
+      }
+      if (hit) { overlap.push(nmAB); continue; }
+    }
+    // 교차는 쌍마다 센다. 반원으로 넘은 수보다 많으면 그냥 엇갈린 곳이 있는 것이고, 같은 두 선이
+    //   두 번 넘게 만나면 넘었어도 따라가기 어렵다.
+    var crosses = 0, parallel = false;
+    for (var y1 = 0; y1 < sa.length; y1++) {
+      for (var y2 = 0; y2 < sb.length; y2++) {
+        if (properCross(sa[y1], sb[y2])) crosses++;
+        // 버스 형제는 갈라지는 자리에서 한쪽 모서리가 줄기 위에 놓이는 게 모양이다.
+        else if (!busSiblings(plan[oa], plan[ob]) && touchCross(sa[y1], sb[y2]) && !sharedTip(plan[oa].pts, plan[ob].pts, sa[y1], sb[y2])) crosses++;
+        // 한 면을 같이 쓰는 형제 선은 갈라지기 전까지 차선 간격으로 붙어 가는 게 모양이다.
+        else if (!siblings(plan[oa], plan[ob]) && nearParallel(sa[y1], sb[y2])) parallel = true;
       }
     }
-    if (hit) overlap.push((plan[oa].e.label || ('선#'+oa)) + ' ↔ ' + (plan[ob].e.label || ('선#'+ob)));
+    var jumps = countOf(plan[oa].hopped, ob) + countOf(plan[ob].hopped, oa);
+    if (parallel) overlap.push(nmAB + ' 나란히 붙음');
+    if (crosses > jumps) overlap.push(nmAB + ' 교차');
+    else if (crosses >= 2) overlap.push(nmAB + ' 서로 ' + crosses + '번 교차 (카드 자리를 바꾸세요)');
   }
+}
+// 반원으로 넘었어도 한 선이 네 번 넘게 건너면 따라가기 어렵다. 배치를 고칠 일이다.
+//   처음엔 두 번부터 걸었는데, 서버 세 대 구성도에서 서버 간 lb 세로선이 그룹을 가로지르면 DB 로
+//   가는 가로선이 세 번 넘는 것을 배치로 피할 수 없었다(flow-server-diagram 예제). 반원이면 읽힌다.
+for (var hc = 0; hc < plan.length; hc++) {
+  if ((plan[hc].hopCount || 0) > 3) overlap.push((plan[hc].e.label || ('선#' + hc)) + ' 이 다른 선을 ' + plan[hc].hopCount + '번 건넘 (카드 자리를 바꾸세요)');
 }
 var collide = [];
 for (var ka = 0; ka < S.nodes.length; ka++) {
@@ -943,6 +1284,80 @@ for (var ka = 0; ka < S.nodes.length; ka++) {
     if (A2.x < B2.x + B2.w && B2.x < A2.x + A2.w && A2.y < B2.y + B2.h && B2.y < A2.y + A2.h) {
       collide.push(A2.title + ' ↔ ' + B2.title);
     }
+  }
+}
+// ── 배치 감사: 카드가 줄을 맞췄는가 ──
+// 선 모양은 카드 자리가 정한다. 고객사 구성도에서 nginx 아래로 갈라진 dashboard·link·status 가
+//   56px 씩 계단으로 내려앉아, 선이 제각각 꺾이고 빈자리가 크게 남았다. 감사는 기하만 봐서
+//   통과했다.
+// 이어졌거나 같은 그룹인 두 카드가 옆으로 나란한데(세로 구간이 겹침) 가운데 y 가 다르면
+//   맞추려다 만 줄이다. 위아래로 나란한데(가로 구간이 겹침) 가운데 x 가 다르면 같다.
+//   멀리 떨어진 카드(구간이 안 겹침)는 일부러 다른 줄에 둔 것이라 보지 않는다.
+var related = Object.create(null);
+function relKey(p, q){ return p < q ? p + '\u0000' + q : q + '\u0000' + p; }
+var nbr = Object.create(null);
+for (var rp = 0; rp < auto.length; rp++) {
+  var ra = auto[rp].a.n.id, rb = auto[rp].b.n.id;
+  related[relKey(ra, rb)] = 1;
+  (nbr[ra] = nbr[ra] || []).push(rb);
+  (nbr[rb] = nbr[rb] || []).push(ra);
+}
+// 한 카드에 같이 이어진 카드끼리도 본다. 그룹 없이 갈라진 형제가 계단이 되는 것도 같은 결함이다.
+for (var nk in nbr) {
+  var nl = nbr[nk];
+  for (var q1 = 0; q1 < nl.length; q1++) for (var q2 = q1 + 1; q2 < nl.length; q2++) {
+    if (nl[q1] !== nl[q2]) related[relKey(nl[q1], nl[q2])] = 1;
+  }
+}
+for (var rg = 0; rg < S.groups.length; rg++) {
+  var gm = S.groups[rg].members || [];
+  for (var r1 = 0; r1 < gm.length; r1++) for (var r2 = r1 + 1; r2 < gm.length; r2++) related[relKey(gm[r1], gm[r2])] = 1;
+}
+// 한 카드가 한쪽 편의 여러 카드 한가운데에 있으면 일부러 가운데 둔 것이다(서버 구성도: 사용자 카드가
+//   web01·web02 사이). 그 카드와 그 편 카드들 사이는 보지 않는다.
+function centeredOn(C, others, axis){
+  var sides = [[], []];
+  for (var i = 0; i < others.length; i++) {
+    var O = others[i];
+    if (axis === 'y') {
+      if (!(C.y < O.y + O.h && O.y < C.y + C.h) || (C.x < O.x + O.w && O.x < C.x + C.w)) continue;
+      sides[cx(O) < cx(C) ? 0 : 1].push(O);
+    } else {
+      if (!(C.x < O.x + O.w && O.x < C.x + C.w) || (C.y < O.y + O.h && O.y < C.y + C.h)) continue;
+      sides[cy(O) < cy(C) ? 0 : 1].push(O);
+    }
+  }
+  var ok = [];
+  for (var sd = 0; sd < 2; sd++) {
+    if (sides[sd].length < 2) continue;
+    var sum = 0;
+    for (var j = 0; j < sides[sd].length; j++) sum += axis === 'y' ? cy(sides[sd][j]) : cx(sides[sd][j]);
+    if (Math.abs(sum / sides[sd].length - (axis === 'y' ? cy(C) : cx(C))) <= 0.5) ok = ok.concat(sides[sd]);
+  }
+  return ok;
+}
+var relOf = Object.create(null);
+for (var ro = 0; ro < S.nodes.length; ro++) {
+  var lst = [];
+  for (var ro2 = 0; ro2 < S.nodes.length; ro2++) {
+    if (ro !== ro2 && related[relKey(S.nodes[ro].id, S.nodes[ro2].id)]) lst.push(S.nodes[ro2]);
+  }
+  relOf[S.nodes[ro].id] = lst;
+}
+function isCentered(C, O, axis){ return centeredOn(C, relOf[C.id], axis).indexOf(O) >= 0; }
+for (var na1 = 0; na1 < S.nodes.length; na1++) {
+  for (var nb1 = na1 + 1; nb1 < S.nodes.length; nb1++) {
+    var P = S.nodes[na1], Q = S.nodes[nb1];
+    if (!related[relKey(P.id, Q.id)]) continue;
+    // 높이가 다른 카드(64px 머리 카드와 95px 카드, 44px 목록 줄)는 윗변을 맞추는 식으로 일부러 다르게
+    //   둔다. 계단 배치는 같은 종류 카드에서 생기므로 높이 차가 8px 이내인 쌍만 본다.
+    if (Math.abs(P.h - Q.h) > 8) continue;
+    var spanY = P.y < Q.y + Q.h && Q.y < P.y + P.h, spanX = P.x < Q.x + Q.w && Q.x < P.x + P.w;
+    var ddy = Math.abs(cy(P) - cy(Q)), ddx = Math.abs(cx(P) - cx(Q));
+    if (spanY && !spanX && (isCentered(P, Q, 'y') || isCentered(Q, P, 'y'))) continue;
+    if (spanX && !spanY && (isCentered(P, Q, 'x') || isCentered(Q, P, 'x'))) continue;
+    if (spanY && !spanX && ddy > 0.5) collide.push(P.title + ' ↔ ' + Q.title + ': 옆으로 나란한데 가로줄이 ' + Math.round(ddy) + 'px 어긋남 (y 를 맞추세요)');
+    else if (spanX && !spanY && ddx > 0.5) collide.push(P.title + ' ↔ ' + Q.title + ': 위아래로 나란한데 세로줄이 ' + Math.round(ddx) + 'px 어긋남 (x 를 맞추세요)');
   }
 }
 for (var bi = 0; bi < badRefs.length; bi++) over.push('없는 노드 참조: ' + badRefs[bi]);
@@ -975,13 +1390,26 @@ for (var lb2 = 0; lb2 < boxes.length; lb2++) {
       break;
     }
   }
+  var mine = plan[labelEls[lb2][2]];
+  // 라벨 자리를 label_at 으로 옮겨 감사를 피하면 라벨이 선에서 멀어져 어느 선 것인지
+  //   모른다(고객사 AP1 그림: 'join·start URL 치환' 이 선에서 170px). 제 선 20px 안이어야 한다.
+  if (!pathHitsBox(mine.pts, boxes[lb2], 20)) {
+    label.push("'" + labelEls[lb2][1] + "' 가 제 선에서 떨어짐");
+  }
+  for (var lo2 = 0; lo2 < plan.length; lo2++) {
+    if (lo2 === labelEls[lb2][2] || !plan[lo2].pts) continue;
+    if (otherHitsBox(plan[lo2], mine, boxes[lb2])) {
+      label.push("'" + labelEls[lb2][1] + "' 가 다른 선 " + (plan[lo2].e.label || ('선#' + lo2)) + ' 위에 겹침');
+      break;
+    }
+  }
   for (var lc = lb2 + 1; lc < boxes.length; lc++) {
     if (boxesOverlap(boxes[lb2], boxes[lc])) {
       label.push("'" + labelEls[lb2][1] + "' ↔ '" + labelEls[lc][1] + "' 라벨끼리 겹침");
     }
   }
   // 그룹 이름표와 테두리도 본다. 노드와 라벨끼리만 보던 때 라벨 끝이 그룹 테두리에
-  //   걸친 채 통과했다(사내 실측: 'WEB nginx · NLB 경유' 가 푸시서버 그룹 선 위).
+  //   걸친 채 통과했다(서버 구성도 실측: 'WEB nginx · NLB 경유' 가 푸시 서버 그룹 선 위).
   //   그룹 «안» 에 통째로 있거나 «밖» 에 통째로 있으면 괜찮다. 걸쳐 있으면 결함이다.
   for (var lg = 0; lg < CHIPS.length; lg++) {
     if (boxesOverlap(boxes[lb2], CHIPS[lg])) {
@@ -1061,10 +1489,10 @@ export function formatAudit(a: AuditReport): string {
 	};
 	add('글자 삐져나옴', a.over);
 	add('자간 압축(노드 폭을 넓히세요)', a.compressed);
-	add('선이 노드·그룹 이름표를 관통', a.cross);
-	add('선끼리 겹침', a.overlap);
-	add('노드/배지 겹침', a.collide);
-	add('라벨 겹침(노드·라벨·그룹)', a.label);
+	add('선이 노드·그룹 이름표를 관통하거나 끝이 카드에 안 닿음', a.cross);
+	add('선끼리 겹침·나란함·교차', a.overlap);
+	add('노드/배지 겹침·줄 어긋남', a.collide);
+	add('라벨 겹침(노드·라벨·그룹·선)·선에서 떨어짐', a.label);
 	if (!lines.length) return '자가감사 통과 — 삐져나옴·압축·관통·선겹침·라벨겹침 0건';
 	return `⚠️ 자가감사에서 걸린 것:\n${lines.join('\n')}`;
 }
