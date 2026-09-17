@@ -3043,7 +3043,8 @@ describe('D3 — 실제로 그린 그림에서 선·이름표·라벨 자리 (�
 		try {
 			return await dumpDom(pathToFileURL(htmlPath).href, { profileDir: prof });
 		} finally {
-			await rm(prof, { recursive: true, force: true });
+			// 크롬 자식 프로세스가 종료 직후까지 프로필에 써서 ENOTEMPTY 가 날 수 있다(리눅스 CI).
+			await rm(prof, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
 		}
 	}
 	const num = (v: string | undefined) => Number(v);
