@@ -313,6 +313,7 @@ var content = el('g', {});
 var NMAP = Object.create(null);
 for (var ni = 0; ni < S.nodes.length; ni++) {
   var n = S.nodes[ni];
+  n.fixedW = !!n.w;
   var tw = measure(n.title, 'n-title');
   var sw = n.sub ? measure(n.sub, 'n-sub') : 0;
   n.tagBoxW = n.tag ? measure(n.tag, 'tag-t') + 16 : 0;
@@ -327,7 +328,30 @@ for (var ni = 0; ni < S.nodes.length; ni++) {
   NMAP[n.id] = n;
 }
 
+// ── 그룹 안 카드는 폭을 맞춘다 ──
+// 폭은 글자로 재므로 카드마다 제각각이다. 나란히 놓인 형제 카드가 144·143·164·208
+// 처럼 들쭉날쭉하면 줄이 안 맞아 눈에 걸린다(사내 구성도 실측). 1px 차이는 오히려
+// 렌더 오류처럼 보인다. 그래서 같은 그룹의 멤버는 그중 가장 넓은 폭으로 맞춘다.
+// w 를 직접 준 노드는 건드리지 않는다 — 준 값이 뜻이다. 다만 그 값도 최댓값에 넣는다.
+// 넓어져서 옆 카드와 겹치면 자가감사(collide)가 잡는다. 조용히 망가지지 않는다.
+for (var gw = 0; gw < S.groups.length; gw++) {
+  var gm = S.groups[gw].members;
+  if (!gm || !gm.length) continue;
+  var wide = 0, mem = [];
+  for (var wmi = 0; wmi < gm.length; wmi++) {
+    var wmn = NMAP[gm[wmi]];
+    if (!wmn) continue;
+    mem.push(wmn);
+    if (wmn.w > wide) wide = wmn.w;
+  }
+  for (var mj = 0; mj < mem.length; mj++) {
+    if (!mem[mj].fixedW) mem[mj].w = wide;
+  }
+}
+
 // ── 그룹 박스: members 를 주면 그 노드들을 감싸도록 자동 계산 ──
+// 이름표 칩 자리는 감사가 다시 쓴다. 선이 칩을 지나면 그룹 이름이 가려진다.
+var CHIPS = [];
 var GPAD = 22;
 for (var gi = 0; gi < S.groups.length; gi++) {
   var g = S.groups[gi];
@@ -345,14 +369,21 @@ for (var gi = 0; gi < S.groups.length; gi++) {
     }
   }
   if (g.x === undefined) continue;
-  el('rect', {x:g.x, y:g.y, width:g.w, height:g.h, rx:13, fill:g.fill,
-              stroke:g.stroke, 'stroke-width':1.4}, content);
   // 좌상단 타이틀 칩 — 폭은 실측 합산
   var gtw = measure(g.name, 'grp-title');
   var chipW = 13 + gtw + 13;
   if (g.sub) chipW += 9 + measure(g.sub, 'grp-sub');
+  // 박스는 제 이름표보다 좁을 수 없다. 멤버 폭으로만 재면 긴 부제가 박스 밖으로
+  //   삐져나간다(사내 실측: DB 그룹 이름표가 오른쪽으로 100px 넘게 나왔다).
+  //   멤버로 잰 박스만 넓힌다. 좌표를 직접 준 박스는 준 값이 뜻이라 감사가 알린다.
+  var chipNeed = 13 + chipW + 13;
+  if (g.members && g.members.length && g.w < chipNeed) g.w = chipNeed;
+  else if (g.w < chipNeed) g.chipOver = true;
+  el('rect', {x:g.x, y:g.y, width:g.w, height:g.h, rx:13, fill:g.fill,
+              stroke:g.stroke, 'stroke-width':1.4}, content);
   el('rect', {x:g.x + 13, y:g.y - 13, width:chipW, height:26, rx:7,
               fill:'#ffffff', stroke:g.stroke, 'stroke-width':1.2}, content);
+  CHIPS.push({x:g.x + 13, y:g.y - 13, w:chipW, h:26, name:g.name});
   txt(g.x + 26, g.y + 4, 'grp-title', g.name, 'start', null, content);
   if (g.sub) txt(g.x + 26 + gtw + 9, g.y + 4, 'grp-sub', g.sub, 'start', null, content);
 }
@@ -488,53 +519,55 @@ for (var lk in laneBuckets) {
     if (arr[li].end === 'a') arr[li].it.ia = li; else arr[li].it.ib = li;
   }
 }
+// 한 면의 선이 전부 나가기만(또는 들어오기만) 하면 가운데 한 점을 같이 쓴다(버스).
+//   차선으로 벌리면 둘 다 중심에서 빗나간다(사내 실측: 사용자 카드에서 DMZ 로 가는
+//   두 선이 ±7.5px). 같은 점에서 나가 같은 자리에서 갈라지면 한 줄기로 읽힌다.
+// 나가는 선과 들어오는 선이 섞인 면은 차선을 유지한다. 한 점을 쓰면 들어오는
+//   화살촉이 나가는 선 머리에 꽂힌다.
+var busFace = Object.create(null);
+for (var bbk in laneBuckets) {
+  var bba = laneBuckets[bbk];
+  if (bba.length < 2) continue;
+  var sameDir = true;
+  for (var bbi = 1; bbi < bba.length; bbi++) {
+    if (bba[bbi].end !== bba[0].end) { sameDir = false; break; }
+  }
+  if (sameDir) busFace[bbk] = true;
+}
 for (var pa2 = 0; pa2 < auto.length; pa2++) {
   var ita = auto[pa2];
-  ita.pa = anchor(ita.a.n, ita.a.s, ita.ia, lanes[ita.a.k]);
-  ita.pb = anchor(ita.b.n, ita.b.s, ita.ib, lanes[ita.b.k]);
+  ita.pa = anchor(ita.a.n, ita.a.s, ita.ia, busFace[ita.a.k] ? 1 : lanes[ita.a.k]);
+  ita.pb = anchor(ita.b.n, ita.b.s, ita.ib, busFace[ita.b.k] ? 1 : lanes[ita.b.k]);
+  ita.bus = busFace[ita.a.k] ? ita.a.k : (busFace[ita.b.k] ? ita.b.k : '');
 }
-// 양끝이 가로면이고 두 노드의 세로 구간이 겹치면 한 y 로 모아 곧게 편다.
-// 몇 px 어긋난 노드 사이를 가운데서 꺾는 것보다 곧은 한 줄이 낫다.
-// 구간이 안 겹쳐도 기울기가 완만하면(1:4 이하) 대각 직선으로 잇는다.
-// 차선이 여럿인 면도 편다 — 단, 모은 자리가 옆 차선과 6px 이상 떨어질 때만.
-function laneClear(key, self, axis, v){
-  var arr = laneBuckets[key] || [];
-  for (var ci = 0; ci < arr.length; ci++) {
-    if (arr[ci].it === self) continue;
-    var pt = arr[ci].end === 'a' ? arr[ci].it.pa : arr[ci].it.pb;
-    if (Math.abs(pt[axis] - v) < 6) return false;
+// 버스는 한 자리에서 갈라져야 한 줄기로 보인다. 가장 가까운 상대까지의 절반에서 가른다.
+var busSplit = Object.create(null);
+for (var bs2 = 0; bs2 < auto.length; bs2++) {
+  var bu = auto[bs2];
+  if (!bu.bus) continue;
+  var atA = bu.bus === bu.a.k;
+  var bface = atA ? bu.pa : bu.pb, bother = atA ? bu.pb : bu.pa;
+  var bside = atA ? bu.a.s : bu.b.s;
+  var baxis = isH(bside) ? 0 : 1;
+  var bdist = Math.abs(bother[baxis] - bface[baxis]);
+  var bcur = busSplit[bu.bus];
+  if (!bcur || bdist < bcur.dist) {
+    busSplit[bu.bus] = {dist:bdist, at:bface[baxis], axis:baxis,
+                        dir:(bside === 'right' || bside === 'bottom') ? 1 : -1};
   }
-  return true;
 }
+// 선의 양끝은 면의 가운데(차선이 있으면 그 차선)에서 옮기지 않는다.
+// 예전엔 두 노드의 세로 구간이 겹치면 두 끝을 평균 자리로 끌어와 곧게 폈다. 곧기는
+//   한데 **양끝이 둘 다 중심에서 빗나갔다**(사내 실측: was·db 사이 선이 양쪽 ±15px,
+//   web02·푸시서버 사이가 ±6.75px). 곧은 선은 입력에서 y(x)를 맞춰서 얻는다.
+//   렌더러가 끝을 끌어다 맞추면 어긋남을 감출 뿐이다.
+// 차선이 하나뿐인 두 면 사이에서 기울기가 완만하면(1:4 이하) 가운데끼리 대각으로 잇는다.
 for (var sn = 0; sn < auto.length; sn++) {
   var its = auto[sn];
-  var single = lanes[its.a.k] === 1 && lanes[its.b.k] === 1;
-  var hh = isH(its.a.s) && isH(its.b.s);
-  var vv = !isH(its.a.s) && !isH(its.b.s);
-  var M = 10;
-  if (hh) {
-    var lo = Math.max(its.a.n.y, its.b.n.y) + M;
-    var hi = Math.min(its.a.n.y + its.a.n.h, its.b.n.y + its.b.n.h) - M;
-    if (lo <= hi) {
-      var sy = Math.min(hi, Math.max(lo, (its.pa[1] + its.pb[1]) / 2));
-      if (laneClear(its.a.k, its, 1, sy) && laneClear(its.b.k, its, 1, sy)) {
-        its.pa[1] = sy; its.pb[1] = sy;
-      }
-    } else if (single && Math.abs(its.pb[1] - its.pa[1]) * 4 <= Math.abs(its.pb[0] - its.pa[0])) {
-      its.straight = true;
-    }
-  } else if (vv) {
-    var lo2 = Math.max(its.a.n.x, its.b.n.x) + M;
-    var hi2 = Math.min(its.a.n.x + its.a.n.w, its.b.n.x + its.b.n.w) - M;
-    if (lo2 <= hi2) {
-      var sx = Math.min(hi2, Math.max(lo2, (its.pa[0] + its.pb[0]) / 2));
-      if (laneClear(its.a.k, its, 0, sx) && laneClear(its.b.k, its, 0, sx)) {
-        its.pa[0] = sx; its.pb[0] = sx;
-      }
-    } else if (single && Math.abs(its.pb[0] - its.pa[0]) * 4 <= Math.abs(its.pb[1] - its.pa[1])) {
-      its.straight = true;
-    }
-  }
+  if (lanes[its.a.k] !== 1 || lanes[its.b.k] !== 1) continue;
+  var sdx = Math.abs(its.pb[0] - its.pa[0]), sdy = Math.abs(its.pb[1] - its.pa[1]);
+  if (isH(its.a.s) && isH(its.b.s) && sdy * 4 <= sdx) its.straight = true;
+  else if (!isH(its.a.s) && !isH(its.b.s) && sdx * 4 <= sdy) its.straight = true;
 }
 
 // ★ 같은 두 열 사이를 지나는 선들은 중간 꺾임 좌표가 전부 같아서 한 줄로 겹친다.
@@ -589,6 +622,13 @@ for (var m2 = 0; m2 < auto.length; m2++) {
   var im = auto[m2];
   var off = 0;
   if (im.mk) off = laneOffset(im.midColor, im.colors, 200);
+  var sp = im.bus ? busSplit[im.bus] : null;
+  if (sp) {
+    // route 는 꺾는 자리를 (a+b)/2 + off 로 잡는다. 버스가 갈라지는 자리에 맞춘다.
+    var splitAt = sp.at + sp.dir * sp.dist / 2;
+    if (sp.axis === 0 && isH(im.a.s) && isH(im.b.s)) off = splitAt - (im.pa[0] + im.pb[0]) / 2;
+    else if (sp.axis === 1 && !isH(im.a.s) && !isH(im.b.s)) off = splitAt - (im.pa[1] + im.pb[1]) / 2;
+  }
   im.pts = im.straight ? [im.pa, im.pb] : route(im.pa, im.a.s, im.pb, im.b.s, off);
 }
 
@@ -693,8 +733,11 @@ function labelCandidates(pts){
       out.push([mx, my - 7, 'middle']);
       out.push([mx, my + 16, 'middle']);
     } else {                                        // 수직 구간 — 왼쪽/오른쪽
-      out.push([mx - 8, my, 'end']);
-      out.push([mx + 8, my, 'start']);
+      // 기준선을 중점에 두면 글자가 위로 올라가 한쪽 카드에 치우친다. 글자 높이의
+      //   절반(11px 글꼴에서 4)만큼 내려 글자 가운데를 중점에 맞춘다. 간격도 8 이면
+      //   흰 테두리(4.5px) 때문에 선에 붙어 보여 12 로 둔다(사내 'POST /url :6820').
+      out.push([mx - 12, my + 4, 'end']);
+      out.push([mx + 12, my + 4, 'start']);
     }
   }
   if (!out.length) out.push([pts[0][0], pts[0][1] - 7, 'middle']);
@@ -836,6 +879,15 @@ for (var ci = 0; ci < plan.length; ci++) {
       }
     }
   }
+  // 그룹 이름표도 본다. 노드만 보던 때 푸시서버 그룹 이름이 선에 가려진 채 통과했다.
+  for (var chx = 0; chx < CHIPS.length; chx++) {
+    for (var ck2 = 0; ck2 < ss.length; ck2++) {
+      if (hitsRect(ss[ck2], CHIPS[chx])) {
+        cross.push((ic.e.label || ('선#' + ci)) + ' → 그룹 이름표 ' + CHIPS[chx].name + ' 가림');
+        ck2 = ss.length;
+      }
+    }
+  }
 }
 // ★ 처음엔 수평-수평, 수직-수직만 비교했다. 그러면 똑같은 **대각선** 두 개가
 //   완전히 포개져도 통과한다. 각도에 상관없이 '평행하고 같은 직선 위이며 구간이
@@ -872,6 +924,8 @@ for (var oa = 0; oa < plan.length; oa++) {
   var sa = segs(plan[oa].pts);
   for (var ob = oa + 1; ob < plan.length; ob++) {
     if (!plan[ob].pts) continue;
+    // 같은 버스의 선은 한 점에서 나가 한 자리까지 줄기를 같이 쓴다. 그 겹침은 의도다.
+    if (plan[oa].bus && plan[oa].bus === plan[ob].bus) continue;
     var sb = segs(plan[ob].pts);
     var hit = false;
     for (var x1 = 0; x1 < sa.length && !hit; x1++) {
@@ -926,6 +980,26 @@ for (var lb2 = 0; lb2 < boxes.length; lb2++) {
       label.push("'" + labelEls[lb2][1] + "' ↔ '" + labelEls[lc][1] + "' 라벨끼리 겹침");
     }
   }
+  // 그룹 이름표와 테두리도 본다. 노드와 라벨끼리만 보던 때 라벨 끝이 그룹 테두리에
+  //   걸친 채 통과했다(사내 실측: 'WEB nginx · NLB 경유' 가 푸시서버 그룹 선 위).
+  //   그룹 «안» 에 통째로 있거나 «밖» 에 통째로 있으면 괜찮다. 걸쳐 있으면 결함이다.
+  for (var lg = 0; lg < CHIPS.length; lg++) {
+    if (boxesOverlap(boxes[lb2], CHIPS[lg])) {
+      label.push("'" + labelEls[lb2][1] + "' 가 그룹 이름표 " + CHIPS[lg].name + ' 위에 겹침');
+    }
+  }
+  for (var lgg = 0; lgg < S.groups.length; lgg++) {
+    var gb = S.groups[lgg];
+    if (gb.x === undefined) continue;
+    var lbox = boxes[lb2];
+    var inside = lbox.x >= gb.x && lbox.y >= gb.y && lbox.x + lbox.w <= gb.x + gb.w && lbox.y + lbox.h <= gb.y + gb.h;
+    if (!inside && boxesOverlap(lbox, {x:gb.x, y:gb.y, w:gb.w, h:gb.h})) {
+      label.push("'" + labelEls[lb2][1] + "' 가 그룹 " + gb.name + ' 테두리에 걸침');
+    }
+  }
+}
+for (var co = 0; co < S.groups.length; co++) {
+  if (S.groups[co].chipOver) over.push('그룹 ' + S.groups[co].name + ' 이름표가 박스보다 넓다');
 }
 
 document.title = 'AUDIT ' + JSON.stringify({
@@ -987,10 +1061,10 @@ export function formatAudit(a: AuditReport): string {
 	};
 	add('글자 삐져나옴', a.over);
 	add('자간 압축(노드 폭을 넓히세요)', a.compressed);
-	add('선이 노드를 관통', a.cross);
+	add('선이 노드·그룹 이름표를 관통', a.cross);
 	add('선끼리 겹침', a.overlap);
 	add('노드/배지 겹침', a.collide);
-	add('라벨 겹침', a.label);
+	add('라벨 겹침(노드·라벨·그룹)', a.label);
 	if (!lines.length) return '자가감사 통과 — 삐져나옴·압축·관통·선겹침·라벨겹침 0건';
 	return `⚠️ 자가감사에서 걸린 것:\n${lines.join('\n')}`;
 }
