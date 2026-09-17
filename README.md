@@ -401,7 +401,7 @@ npm run schema:baseline  # schema/baseline.json 을 실측으로 다시 만든�
 npm run schema:baseline -- --check   # 쓰지 않고 «지금 기준선이 맞는지» 만 본다
 ```
 
-테스트 662건(0.9.1 기준). `safety.test.ts` 가 보안 불변식(A1~A13)을,
+테스트 663건(0.9.1 기준). `safety.test.ts` 가 보안 불변식(A1~A13)을,
 `render.test.ts` 가 구성도 불변식(R1~R23, D1)과 시퀀스 불변식(S1~S12)을,
 `plugin.test.ts` 가 포장 불변식(P1~P28)을 고정한다.
 깨지면 우회하지 말고 왜 깨졌는지부터 볼 것.
