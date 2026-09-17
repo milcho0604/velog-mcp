@@ -157,6 +157,27 @@ export function resetChromeCache(): void {
 const live = new Set<ChildProcess>();
 let hooked = false;
 
+/**
+ * 지금 우리가 몰고 있는 크롬 수. **테스트 전용.**
+ *
+ * 왜 필요한가. 「렌더가 한 번에 하나만 돈다」를 확인하려고 임시폴더의 프로필
+ * 디렉터리를 세던 때가 있었다. 그건 **동시 실행과 정리 지연을 구분하지 못한다.**
+ * 한 판이 프로필을 둘 쓰므로 4개가 보이면 「두 판이 동시에 돈다」일 수도,
+ * 「앞판 프로필이 아직 안 지워졌는데 뒷판이 떴다」일 수도 있다. 그래서 상한을
+ * 3 으로 느슨하게 잡아 두었는데, 2026-09-17 CI 에서 4 가 찍혀 **결함 없이
+ * 빨갛게** 떨어졌다. 필수 검사라 발행까지 막는다.
+ *
+ * 이 값은 `spawn` 직후 늘고 `finish` 에서 준다. 파일 정리와 무관하다.
+ * 한 판은 DOM 과 스크린샷을 **차례로** 띄우므로 1 을 넘지 않는다.
+ *
+ * ★ 세는 자리가 중요하다. 줄 세우기(serialize) 쪽에서 세면 **큐를 우회하는
+ *   경로를 못 잡는다** — 안 세고 지나가니 늘 1 로 보인다. 크롬이 실제로 뜨는
+ *   자리에서 세야 우회가 드러난다.
+ */
+export function liveChromeCount(): number {
+	return live.size;
+}
+
 function killAll(): void {
 	for (const child of live) {
 		try {

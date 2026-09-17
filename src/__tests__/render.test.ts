@@ -19,7 +19,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { platform } from 'node:process';
@@ -37,7 +36,7 @@ import { buildCoverHtml } from '../render/cover.ts';
 import { ICONS } from '../render/icons.ts';
 import { isHexColor, TONES } from '../render/tones.ts';
 import { sniffImage, registerImageTools } from '../tools/images.ts';
-import { dumpDom, findChrome, runForTest } from '../render/chrome.ts';
+import { dumpDom, findChrome, liveChromeCount, runForTest } from '../render/chrome.ts';
 import { renderCover, renderDiagram, renderSequence } from '../render/index.ts';
 import {
 	type SequenceAudit,
@@ -1181,23 +1180,23 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 	//   → 지금은 **크롬 프로필 디렉터리**를 센다. 렌더 1회가 정확히 2개를 만들고
 	//     finally 에서 지운다(index.ts 의 profileA·profileB). 그러니 살아 있는 개수가
 	//     곧 **동시에 도는 렌더 수 × 2** 다. 헬퍼 프로세스 수와 무관하다.
-	test('동시에 3장을 요청해도 크롬은 한 판만 뜬다', async (t) => {
+	test('★ 동시에 3장을 요청해도 크롬은 한 판만 뜬다', async (t) => {
 		if (!(await findChrome().then(() => true, () => false))) {
 			t.skip('크롬이 없어 건너뜀');
 			return;
 		}
 
-		const PROFILE = 'velog-mcp-chrome-';
-		const live = (): string[] =>
-			readdirSync(tmpdir()).filter((n) => n.startsWith(PROFILE));
-
-		// 남이 남긴 것은 세지 않는다 — 이 창 안에서 **새로 생긴 것**만 본다.
-		const before = new Set(live());
+		// ★ 프로필 디렉터리를 세지 않는다. 그건 **동시 실행과 정리 지연을 구분하지
+		//   못한다.** 한 판이 프로필을 둘 쓰므로 4개가 보이면 「두 판이 동시에」일
+		//   수도, 「앞판이 아직 안 지워졌는데 뒷판이 떴다」일 수도 있다. 그래서
+		//   상한을 3 으로 느슨하게 뒀는데 2026-09-17 CI 에서 4 가 찍혀 결함 없이
+		//   떨어졌다. 필수 검사라 발행까지 막혔다.
+		//   이제 **지금 몰고 있는 크롬 수**를 본다. 파일 정리와 무관하다.
 		let peak = 0;
 		const timer = setInterval(() => {
-			const n = live().filter((d) => !before.has(d)).length;
+			const n = liveChromeCount();
 			if (n > peak) peak = n;
-		}, 40);
+		}, 10);
 
 		const spec = (title: string): Parameters<typeof renderDiagram>[0] => ({
 			title,
@@ -1209,9 +1208,8 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 		});
 		// ★ 다이어그램만 3장 돌리면 '표지가 큐를 우회하는' 변이를 못 잡는다(코덱스 4차).
 		//   두 도구를 섞어서 같은 큐를 쓰는지 본다.
-		// ⚠️ 렌더가 실패하면 `clearInterval` 에 도달하지 못해 **40ms 타이머가 남고**
-		//   테스트 프로세스가 안 끝난다(코덱스 22차: 활성 타이머 1개, 강제 종료 필요).
-		//   실패한 테스트가 프로세스를 잡아 두면 CI 가 «멈춤» 으로 보인다. finally 로 건다.
+		// ⚠️ 렌더가 실패하면 `clearInterval` 에 도달하지 못해 10ms 타이머가 남고
+		//   테스트 프로세스가 안 끝난다. finally 로 건다.
 		let results;
 		try {
 			results = await Promise.all([
@@ -1227,20 +1225,52 @@ describe('★★ R16 — 렌더는 한 번에 하나만 돈다 (크롬 필요)',
 			results.every((r) => r.width > 0),
 			'동시 요청 중 실패한 것이 있다',
 		);
-		// 한 판이 프로필 2개(profileA·profileB)를 쓴다. 그러니 상한은 **판 수**로 읽는다.
-		//   2~3 = 한 판, 4 이상 = 두 판 이상.
-		// ⚠️ 상한을 4 로 두면 **두 판 동시 실행을 통과시킨다**(코덱스 2차 지적).
-		//    그건 이 검사가 막으려던 바로 그 상태다.
-		// ⚠️ 그렇다고 2 로 조이면 **간헐적으로 3 이 찍힌다**(코덱스 3차가 미리 물었고,
-		//    로컬 3회는 통과했는데 CI Node 22.18 에서 실제로 3 이 나왔다).
-		//    프로필 두 개는 순차로 만들고 순차로 지우므로, 앞판 정리 도중과 뒷판 기동이
-		//    표본 추출 시점에 겹쳐 보인다. **로컬 몇 회 통과는 근거가 안 된다.**
-		//    3 은 여전히 «두 판(4개)» 과 구분된다 — 변이로 확인하면 6 이 찍힌다.
-		assert.ok(peak > 0, '프로필을 한 번도 못 봤다 — 이 검사는 의미가 없다');
-		assert.ok(
-			peak <= 3,
-			`동시에 크롬 프로필이 ${peak}개까지 늘었다 — 한 판은 2개다. 직렬화가 풀렸다`,
+		// 한 판은 DOM 과 스크린샷을 **차례로** 띄운다. 그러니 1 을 넘으면 두 판이
+		// 겹친 것이고, 그건 이 검사가 막으려는 바로 그 상태다. 경계가 딱 떨어지므로
+		// 예전처럼 «간헐적으로 하나 더» 를 봐주려고 느슨하게 둘 이유가 없다.
+		assert.ok(peak > 0, '크롬을 한 번도 못 봤다 — 이 검사는 의미가 없다');
+		assert.equal(
+			peak,
+			1,
+			`동시에 크롬 ${peak}개를 몰았다 — 한 판은 1개다. 직렬화가 풀렸다`,
 		);
+	});
+
+	// ☑ 대조군 — 위 검사가 «크롬이 두 개면 잡는다» 고 말하려면, 두 개일 때 실제로
+	//   2 가 보여야 한다. 안 그러면 peak 가 늘 1 이라서 통과하는 것일 뿐이다.
+	//   줄을 안 거치고 직접 두 판을 띄워 계수기가 따라 오르는지 본다.
+	test('☑ 대조군 — 줄을 안 거치면 계수기가 2 를 본다', async (t) => {
+		const chrome = await findChrome().catch(() => '');
+		if (!chrome) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+
+		const dirA = await mkdtemp(join(tmpdir(), 'velog-mcp-conc-a-'));
+		const dirB = await mkdtemp(join(tmpdir(), 'velog-mcp-conc-b-'));
+		const htmlDir = await mkdtemp(join(tmpdir(), 'velog-mcp-conc-html-'));
+		const htmlPath = join(htmlDir, 'x.html');
+		await writeFile(htmlPath, '<title>hi</title><body>hi</body>', 'utf8');
+		const url = pathToFileURL(htmlPath).href;
+
+		let peak = 0;
+		const timer = setInterval(() => {
+			const n = liveChromeCount();
+			if (n > peak) peak = n;
+		}, 10);
+		try {
+			await Promise.all([
+				dumpDom(url, { profileDir: dirA }),
+				dumpDom(url, { profileDir: dirB }),
+			]);
+		} finally {
+			clearInterval(timer);
+			await rm(dirA, { recursive: true, force: true }).catch(() => {});
+			await rm(dirB, { recursive: true, force: true }).catch(() => {});
+			await rm(htmlDir, { recursive: true, force: true }).catch(() => {});
+		}
+
+		assert.equal(peak, 2, `줄을 안 거쳤는데 ${peak} 만 보였다 — 계수기가 겹침을 못 본다`);
 	});
 
 	// 줄을 세우면 '앞 작업이 실패했을 때 줄이 끊기는' 실수를 하기 쉽다.
