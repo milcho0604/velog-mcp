@@ -1,0 +1,161 @@
+# 발행 — `v*` 태그를 밀면 npm 과 MCP 레지스트리에 함께 나간다.
+#
+# 왜 있나. 손으로 발행하다 두 번 실패했다. `prepublishOnly` 가 7분 도는 사이
+# npm 인증이 만료돼서다(EOTP, 그다음엔 `404 /-/v1/done?authId=`). 그때 얻은
+# 처방은 「검증 먼저, 업로드는 `--ignore-scripts` 로 분리」였는데, 그건 **사람이
+# 2FA 창을 붙잡고 있을 때만** 필요한 우회다. 여기서는 OIDC 로 발행할 때마다
+# 수명 짧은 토큰이 새로 발급되므로 만료될 창 자체가 없다. 그래서 우회하지 않고
+# `prepublishOnly` 를 그대로 태운다.
+#
+# ★ 비밀값이 하나도 없다.
+#   - npm      → 신뢰 발행(Trusted Publishing). npmjs.com 에서 이 저장소와
+#                **이 파일 이름**(publish.yml)을 등록해 두면 토큰이 필요 없다.
+#   - 레지스트리 → `mcp-publisher login github-oidc`.
+#   둘 다 GitHub Actions 의 OIDC 토큰을 쓴다. 그래서 `id-token: write` 가 있다.
+#
+# ⚠️ npmjs.com 의 신뢰 발행 설정은 **파일 이름을 글자 그대로** 맞춘다. 이 파일을
+#    옮기거나 이름을 바꾸면 발행이 인증에서 막힌다.
+
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+# 기본은 읽기만. 쓰기가 필요한 작업에만 job 단위로 준다.
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      # npm 신뢰 발행과 레지스트리 OIDC 로그인에 쓴다.
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 하한(22.18.0)이 아니라 LTS 로 발행한다. 발행물은 tsc 가 만든 dist 라
+          # 러너의 Node 판에 좌우되지 않는다. 하한 호환은 CI 매트릭스가 본다.
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          # 이 레포의 락파일은 package-lock 이 아니라 npm-shrinkwrap 이다.
+          cache-dependency-path: npm-shrinkwrap.json
+
+      # ★ 태그와 발행물이 어긋난 채 나가는 것을 막는다.
+      #
+      # package.json / server.json / src/index.ts 등 여덟 파일의 버전이 서로 맞는지는
+      # 이미 P8 테스트가 본다. 여기서 보는 것은 **테스트가 볼 수 없는 것** 하나다.
+      # 태그는 git 에만 있고 트리 안에 없어서, `v0.9.9` 를 0.9.1 커밋에 붙여도
+      # 검사는 전부 초록으로 지나간다.
+      - name: 태그와 package.json 버전이 같은지
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "태그 $TAG · package.json $PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::태그(v$TAG)와 package.json($PKG)이 다릅니다. 발행을 멈춥니다."
+            exit 1
+          fi
+
+      # ⚠️ 신뢰 발행은 npm 11.5.1+ 에서만 된다. 그 아래면 npm 이 OIDC 를 시도조차
+      #    하지 않고 「인증 없음」으로 실패한다. 러너 이미지의 npm 판은 예고 없이
+      #    바뀌므로 짐작하지 않고 재서 필요할 때만 올린다.
+      - name: npm 판 확인 (신뢰 발행은 11.5.1+)
+        run: |
+          NEED=11.5.1
+          HAVE="$(npm -v)"
+          echo "npm $HAVE (필요 $NEED 이상)"
+          if [ "$(printf '%s\n%s\n' "$NEED" "$HAVE" | sort -V | head -1)" != "$NEED" ]; then
+            echo "낮아서 올립니다."
+            npm install -g npm@latest
+            npm -v
+          fi
+
+      - name: Install
+        run: npm ci
+
+      # ★ 거짓 초록 방지. CI 와 같은 이유다(.github/workflows/ci.yml 주석 참고).
+      #   크롬이 없으면 렌더 테스트가 **조용히 skip** 되고 발행이 초록으로 지나간다.
+      #   PATH 가 아니라 findChrome() 을 그대로 부른다.
+      - name: Chrome 확인 (렌더 테스트가 조용히 skip 되는 것을 막는다)
+        run: |
+          node -e "
+          import('./src/render/chrome.ts')
+            .then(m => m.findChrome())
+            .then(p => console.log('크롬 발견:', p))
+            .catch(e => { console.error('크롬 없음 -', e.message.split('\n')[0]); process.exit(1); });
+          "
+
+      # typecheck → lint → test → build → verify:dist.
+      # `npm publish` 의 prepublishOnly 가 이걸 한 번 더 돌린다. 일부러 둔다 —
+      # 이 단계를 지워도 발행은 여전히 검증을 통과해야 나간다.
+      - name: Verify
+        run: npm run verify
+
+      - name: npm 발행
+        run: npm publish --access public
+
+      # ── 여기부터 MCP 레지스트리 ──────────────────────────────────────────
+      #
+      # 레지스트리는 npm 에 그 버전이 **이미 있는지**를 확인한다. 그래서 순서가
+      # 바뀌면 안 된다. 소유 확인은 package.json 의 `mcpName` 이 server.json 의
+      # `name` 과 같은지로 한다(둘 다 io.github.milcho0604/velog).
+      - name: mcp-publisher 설치
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version || true
+
+      - name: 레지스트리 로그인 (OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: 레지스트리 발행
+        run: ./mcp-publisher publish
+
+  # 릴리스 노트만 따로 만든다. 쓰기 권한이 필요한 유일한 단계라 job 을 나눠서
+  # 발행 job 이 저장소 쓰기 토큰을 쥐지 않게 한다.
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # CHANGELOG 의 해당 판 절을 그대로 릴리스 본문으로 쓴다. 두 벌로 적으면
+      # 갈라진다. 절을 못 찾으면 빈 릴리스를 만들지 말고 멈춘다.
+      - name: 릴리스 본문 뽑기
+        run: |
+          VER="${GITHUB_REF#refs/tags/v}"
+          awk -v v="## [$VER]" '
+            index($0, v) == 1 { on = 1; next }
+            on && /^## \[/     { exit }
+            on                 { print }
+          ' CHANGELOG.md > /tmp/notes.md
+          if [ ! -s /tmp/notes.md ]; then
+            echo "::error::CHANGELOG.md 에 [$VER] 절이 없습니다."
+            exit 1
+          fi
+          wc -l /tmp/notes.md
+
+      - name: GitHub 릴리스
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF#refs/tags/v}"
+          gh release create "v$VER" --title "v$VER" --notes-file /tmp/notes.md
