@@ -2636,7 +2636,8 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 	 * 왜 있나. 몇 px 어긋난 두 노드 사이를 정확히 가운데서 한 번 꺾어 이었다.
 	 * 곧게 이을 수 있는 선이 찌그러져 보였다. 규칙 셋을 잠근다:
 	 * ① 8px 이하 잔차는 꺾지 않고 잇는다 (꺾임 반경 9 보다 작아 잔물결이 된다)
-	 * ② 세로 구간이 겹치는 두 노드는 한 y 로 모아 완전한 직선으로
+	 * ② 선의 양끝은 면 가운데(또는 차선)에서 옮기지 않는다. 곧은 선은 입력의 y 를
+	 *    맞춰 얻는다. 예전엔 두 끝을 평균 자리로 모았는데 둘 다 중심에서 빗나갔다
 	 * ③ 같은 면의 차선은 배열 순서가 아니라 상대편 위치 순서로
 	 */
 	const SRC = new URL('../render/page.ts', import.meta.url);
@@ -2659,55 +2660,42 @@ describe('★ D1 — 일자로 갈 수 있는 선은 일자로 간다', () => {
 		assert.equal(route([100, 0], 'bottom', [109, 300], 'top', 0).length, 4, '세로 9px 인데 안 꺾었다');
 	});
 
-	function snapCase(aY: number, bY: number, laneA = 1, laneB = 1) {
-		const h = 56;
-		return {
-			it: {
-				a: { n: { x: 0, y: aY, w: 140, h }, s: 'right', k: 'a|right' },
-				b: { n: { x: 400, y: bY, w: 140, h }, s: 'left', k: 'b|left' },
-				pa: [140, aY + h / 2],
-				pb: [400, bY + h / 2],
+	test('선의 양끝은 제 자리에서 옮기지 않는다', async () => {
+		const blk = await pick(/\/\/ 선의 양끝은 면의 가운데[\s\S]*?\nfor \(var sn[\s\S]*?\n\}/, '양끝 고정 블록');
+		const run = (aY: number, bY: number, laneA = 1, laneB = 1, h = 84) => {
+			const it = {
+				a: { n: { x: 0, y: aY, w: 208, h }, s: 'right', k: 'a|right' },
+				b: { n: { x: 460, y: bY, w: 208, h }, s: 'left', k: 'b|left' },
+				pa: [208, aY + h / 2],
+				pb: [460, bY + h / 2],
 				straight: false,
-			},
-			lanes: { 'a|right': laneA, 'b|left': laneB },
-		};
-	}
-
-	test('구간이 겹치는 두 노드는 한 y 로 모인다', async () => {
-		// laneClear 함수 선언부터 스냅 루프 끝까지 통째로 뗀다.
-		const blk = await pick(/\/\/ 양끝이 가로면이고[\s\S]*?\n\}\nfor \(var sn[\s\S]*?\n\}/, '곧게 펴기 블록');
-		const run = (aY: number, bY: number, laneA = 1, laneB = 1, siblingY?: number) => {
-			const c = snapCase(aY, bY, laneA, laneB);
-			// 다차선일 때 옆 차선 닻을 흉내 낸다. end:'b' 로 두면 pb 를 읽는다.
-			const buckets: Record<string, unknown[]> = {
-				'a|right': [{ it: c.it, end: 'a' }],
-				'b|left': [{ it: c.it, end: 'b' }],
 			};
-			if (siblingY !== undefined) {
-				buckets['a|right']?.push({ it: { pa: [140, siblingY], pb: [0, 0] }, end: 'a' });
-			}
 			const ctx = createContext({
-				auto: [c.it],
-				lanes: c.lanes,
-				laneBuckets: buckets,
+				auto: [it],
+				lanes: { 'a|right': laneA, 'b|left': laneB },
 				isH: (s: string) => s === 'left' || s === 'right',
 			});
 			new Script(blk).runInContext(ctx);
-			return c.it;
+			return it;
 		};
-		const snapped = run(100, 130);
-		assert.equal(snapped.pa[1], snapped.pb[1], '30px 어긋남(구간 겹침)인데 안 모였다');
-		const gentle = run(100, 160);
-		assert.notEqual(gentle.pa[1], gentle.pb[1]);
-		assert.equal(gentle.straight, true, '완만한 기울기(60px/260px)인데 대각 직선이 아니다');
-		const steep = run(100, 190);
-		assert.equal(steep.straight, false, '가파른 어긋남(90px)까지 직선으로 이었다');
-		// 다차선: 옆 차선이 멀면(>=6px) 편다 — sendEach 가 기울던 원인.
-		const multiFar = run(100, 112, 2, 1, 100 + 28 + 20);
-		assert.equal(multiFar.pa[1], multiFar.pb[1], '옆 차선이 먼데도 안 폈다');
-		// 다차선: 모은 자리가 옆 차선과 6px 미만이면 그대로 둔다.
-		const multiNear = run(100, 112, 2, 1, 100 + 28 + 3);
-		assert.notEqual(multiNear.pa[1], multiNear.pb[1], '옆 차선을 깔고 앉았다');
+
+		// 서버 구성도 실측 모양: 중심 42 와 72. 예전엔 둘 다 57 로 끌려와 ±15px 빗나갔다.
+		const skewed = run(0, 30);
+		assert.deepEqual([skewed.pa[1], skewed.pb[1]], [42, 72], '양끝이 중심에서 옮겨졌다');
+		assert.equal(skewed.straight, true, '완만한 기울기(30/252)인데 대각 직선이 아니다');
+
+		const aligned = run(0, 0);
+		assert.equal(aligned.straight, true, 'y 가 같은데 곧게 안 간다');
+		assert.equal(aligned.pa[1], aligned.pb[1]);
+
+		const steep = run(0, 120);
+		assert.equal(steep.straight, false, '가파른 어긋남(120/252)까지 직선으로 이었다');
+		assert.deepEqual([steep.pa[1], steep.pb[1]], [42, 162]);
+
+		// 차선이 여럿인 면은 대각으로 잇지 않는다 — 여러 선이 부채꼴로 벌어진다.
+		const multi = run(0, 30, 2, 1);
+		assert.equal(multi.straight, false, '차선이 둘인 면에서 대각 직선을 그었다');
+		assert.deepEqual([multi.pa[1], multi.pb[1]], [42, 72]);
 	});
 
 	test('복도에서 세로 구간이 안 겹치는 선은 같은 자리에서 꺾인다', async () => {
@@ -2938,5 +2926,291 @@ describe('★★ 15~17차 회귀 — 렌더에서 고친 것과 «정상이 그�
 			});
 			assert.deepEqual(r.audit.cross ?? [], [], '정상 그림을 관통으로 잡는다');
 		});
+	});
+});
+
+describe('D2 — 그룹 안 카드는 폭이 같다', () => {
+	/**
+	 * 서버 구성도 실측: 한 그룹 안 카드 폭이 144·143·144·164·208 로 들쭉날쭉했다.
+	 * 1px 차이는 렌더 오류처럼 보인다. 멤버는 그중 가장 넓은 폭으로 맞춘다.
+	 *
+	 * 크롬 없이 돈다. 노드 크기 확정부터 폭 맞춤까지 소스에서 떼어, 글자 실측만
+	 * 가짜로 바꿔 끼운다. «w 를 줬는지 기억하는 줄» 까지 같이 떼야 한다 —
+	 * 폭 맞춤 루프만 떼면 그 줄을 지워도 시험이 모른다.
+	 */
+	const SRC = new URL('../render/page.ts', import.meta.url);
+
+	/** 노드 폭. 없으면 그 자리에서 실패한다 — `!` 로 덮지 않는다. */
+	function wOf(n: Record<string, { w: number } | undefined>, k: string): number {
+		const v = n[k];
+		assert.ok(v, `노드 ${k} 를 못 찾았다`);
+		return v.w;
+	}
+
+	async function size(nodes: Array<Record<string, unknown>>, groups: Array<Record<string, unknown>>) {
+		const src = await readFile(SRC, 'utf8');
+		const blk = /\/\/ ── 노드 크기 확정[\s\S]*?(?=\/\/ ── 그룹 박스:)/.exec(src)?.[0];
+		assert.ok(blk, '노드 크기 확정 ~ 그룹 폭 맞춤 블록을 못 찾았다 — 이름이 바뀌었으면 이 검사도 고칠 것');
+		assert.ok(blk.includes('그룹 안 카드는 폭을 맞춘다'), '떼어 낸 블록에 폭 맞춤이 없다');
+		const ctx = createContext({
+			S: { nodes, groups },
+			// 글자 한 자에 8px. 실측이 아니어도 «길이가 다르면 폭이 다르다» 는 성립한다.
+			measure: (s: string) => (s ?? '').length * 8,
+		});
+		new Script(blk + '\nthis.out = NMAP;').runInContext(ctx);
+		return (ctx as unknown as { out: Record<string, { w: number }> }).out;
+	}
+
+	test('같은 그룹 멤버는 가장 넓은 폭으로 맞춘다', async () => {
+		const n = await size(
+			[
+				{ id: 'a', x: 0, y: 0, title: '짧음' },
+				{ id: 'b', x: 0, y: 100, title: '이건 훨씬 더 긴 제목이다' },
+				{ id: 'c', x: 0, y: 200, title: '중간 길이 제목' },
+			],
+			[{ name: 'g', members: ['a', 'b', 'c'] }],
+		);
+		const ws = ['a', 'b', 'c'].map((k) => wOf(n, k));
+		assert.equal(new Set(ws).size, 1, `폭이 제각각이다: ${ws.join(',')}`);
+		assert.equal(ws[0], Math.max(...ws));
+	});
+
+	// 대조군. 「모든 노드를 같은 폭으로」 바꿔도 위 시험은 통과한다.
+	test('그룹 밖 노드는 제 폭 그대로다', async () => {
+		const n = await size(
+			[
+				{ id: 'a', x: 0, y: 0, title: '짧음' },
+				{ id: 'b', x: 0, y: 100, title: '이건 훨씬 더 긴 제목이다' },
+				{ id: 'solo', x: 400, y: 0, title: '혼자' },
+			],
+			[{ name: 'g', members: ['a', 'b'] }],
+		);
+		assert.ok(wOf(n, 'solo') < wOf(n, 'b'), `그룹 밖 노드까지 넓어졌다: solo=${wOf(n, 'solo')} b=${wOf(n, 'b')}`);
+	});
+
+	test('w 를 직접 준 노드는 건드리지 않는다', async () => {
+		const n = await size(
+			[
+				{ id: 'fixed', x: 0, y: 0, w: 100, title: '고정' },
+				{ id: 'long', x: 0, y: 100, title: '이건 훨씬 더 긴 제목이다' },
+			],
+			[{ name: 'g', members: ['fixed', 'long'] }],
+		);
+		assert.equal(wOf(n, 'fixed'), 100, `직접 준 폭이 바뀌었다: ${wOf(n, 'fixed')}`);
+		assert.ok(wOf(n, 'long') > 100);
+	});
+
+	test('직접 준 폭이 가장 넓으면 나머지가 거기에 맞춘다', async () => {
+		const n = await size(
+			[
+				{ id: 'wide', x: 0, y: 0, w: 400, title: '넓게' },
+				{ id: 'auto', x: 0, y: 100, title: '자동' },
+			],
+			[{ name: 'g', members: ['wide', 'auto'] }],
+		);
+		assert.equal(wOf(n, 'auto'), 400);
+	});
+
+	test('없는 멤버 id 는 무시하고, 두 그룹에 걸친 노드는 큰 쪽을 따른다', async () => {
+		const n = await size(
+			[
+				{ id: 'a', x: 0, y: 0, title: '가' },
+				{ id: 'b', x: 0, y: 100, title: '이건 훨씬 더 긴 제목이다' },
+				{ id: 'c', x: 400, y: 0, title: '다' },
+			],
+			[
+				{ name: 'g1', members: ['a', 'b', '없는노드'] },
+				{ name: 'g2', members: ['a', 'c'] },
+			],
+		);
+		assert.equal(wOf(n, 'a'), wOf(n, 'b'));
+		assert.equal(wOf(n, 'c'), wOf(n, 'a'), 'a 를 거쳐 c 도 같은 폭이어야 한다');
+	});
+});
+
+describe('D3 — 실제로 그린 그림에서 선·이름표·라벨 자리 (크롬 필요)', () => {
+	/**
+	 * 이 묶음은 소스 조각을 떼어 돌리지 않는다. 그림을 끝까지 그린 뒤 DOM 을 떠서
+	 * 좌표를 잰다. 서버 구성도에서 사람이 눈으로 찾은 결함 넷이 전부 «조각 시험은
+	 * 통과하고 그림에서는 틀린» 것이었다 — 이름표를 가린 선, 중심에서 빗나간 선,
+	 * 박스 밖으로 나간 이름표, 그룹 테두리에 걸친 라벨.
+	 */
+	const hasChrome = async (): Promise<boolean> => findChrome().then(() => true, () => false);
+	const clean = (a: object): boolean => Object.values(a).every((v) => !Array.isArray(v) || v.length === 0);
+
+	async function domOf(htmlPath: string): Promise<string> {
+		const prof = await mkdtemp(join(tmpdir(), 'velog-mcp-geomtest-'));
+		try {
+			return await dumpDom(pathToFileURL(htmlPath).href, { profileDir: prof });
+		} finally {
+			await rm(prof, { recursive: true, force: true });
+		}
+	}
+	const num = (v: string | undefined) => Number(v);
+	const rectsOf = (dom: string, rx: string) =>
+		[...dom.matchAll(new RegExp(`<rect x="([-\\d.]+)" y="([-\\d.]+)" width="([-\\d.]+)" height="([-\\d.]+)" rx="${rx}"`, 'g'))]
+			.map((m) => ({ x: num(m[1]), y: num(m[2]), w: num(m[3]), h: num(m[4]) }));
+	const pathsOf = (dom: string) =>
+		[...dom.matchAll(/<path d="([^"]+)" fill="none" stroke="#[0-9a-fA-F]{6}"[^>]*stroke-width="1.8"/g)]
+			.map((m) => [...(m[1] ?? '').matchAll(/-?\d+(?:\.\d+)?/g)].map((v) => Number(v[0])))
+			.map((ns) => {
+				const pts: number[][] = [];
+				for (let i = 0; i + 1 < ns.length; i += 2) pts.push([ns[i] ?? NaN, ns[i + 1] ?? NaN]);
+				return pts;
+			});
+
+	test('한 면에서 같은 방향으로 나가는 선들은 가운데 한 점에서 나가 한 자리에서 갈라진다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '버스',
+			nodes: [
+				{ id: 'u', x: 0, y: 60, w: 130, h: 84, title: '사용자', sub: '한 명' },
+				{ id: 'a', x: 300, y: 0, w: 208, h: 84, title: '위', sub: '서버' },
+				{ id: 'b', x: 300, y: 120, w: 208, h: 84, title: '아래', sub: '서버' },
+			],
+			edges: [{ from: 'u', to: 'a' }, { from: 'u', to: 'b' }],
+			legend: false,
+		});
+		assert.ok(clean(r.audit), `감사에 걸렸다(겹침 면제가 안 먹었나): ${JSON.stringify(r.audit)}`);
+		const ps = pathsOf(await domOf(r.htmlPath));
+		assert.equal(ps.length, 2);
+		for (const p of ps) {
+			assert.deepEqual(p[0], [130, 102], `버스가 사용자 면 중심(130,102)에서 안 나간다: ${JSON.stringify(p[0])}`);
+		}
+		// 첫 꺾임의 x 가 같아야 한 줄기로 보인다.
+		const bendX = ps.map((p) => p.find((pt, i) => i > 0 && pt[1] !== 102)?.[0]);
+		assert.equal(bendX[0], bendX[1], `갈라지는 자리가 다르다: ${bendX.join(',')}`);
+	});
+
+	// 대조군. 나가는 선과 들어오는 선이 섞인 면은 한 점을 쓰면 화살촉이 선 머리에 꽂힌다.
+	test('나가는 선과 들어오는 선이 섞인 면은 차선을 유지한다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '섞인 면',
+			nodes: [
+				{ id: 'm', x: 0, y: 60, w: 130, h: 84, title: '가운데', sub: '서버' },
+				{ id: 'a', x: 300, y: 0, w: 208, h: 84, title: '위', sub: '서버' },
+				{ id: 'b', x: 300, y: 120, w: 208, h: 84, title: '아래', sub: '서버' },
+			],
+			edges: [{ from: 'm', to: 'a' }, { from: 'b', to: 'm' }],
+			legend: false,
+		});
+		const ps = pathsOf(await domOf(r.htmlPath));
+		const onFace = ps
+			.flatMap((p) => [p[0], p[p.length - 1]])
+			.filter((pt): pt is number[] => pt !== undefined && pt[0] === 130);
+		assert.equal(onFace.length, 2);
+		assert.notEqual(onFace[0]?.[1], onFace[1]?.[1], '섞인 면인데 두 선이 한 점을 쓴다');
+	});
+
+	test('선이 그룹 이름표를 지나면 감사가 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// b 를 a 바로 아래 가운데에 둔다. 세로선이 b 그룹 이름표 한가운데를 지난다.
+		const bad = await renderDiagram({
+			title: '이름표 가림',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, w: 208, h: 84, title: '위', sub: '서버' },
+				{ id: 'b', x: 0, y: 260, w: 208, h: 84, title: '아래', sub: '서버' },
+			],
+			groups: [{ name: '아주 긴 이름표를 가진 그룹', members: ['b'] }],
+			edges: [{ from: 'a', to: 'b' }],
+			legend: false,
+		});
+		assert.ok(bad.audit.cross.some((v) => v.includes('그룹 이름표')), JSON.stringify(bad.audit.cross));
+
+		// 대조군. 같은 그룹을 옆에서 들어가면 이름표를 안 지난다.
+		const ok = await renderDiagram({
+			title: '이름표 안 가림',
+			nodes: [
+				{ id: 'a', x: 0, y: 260, w: 208, h: 84, title: '왼쪽', sub: '서버' },
+				{ id: 'b', x: 460, y: 260, w: 208, h: 84, title: '오른쪽', sub: '서버' },
+			],
+			groups: [{ name: '아주 긴 이름표를 가진 그룹', members: ['b'] }],
+			edges: [{ from: 'a', to: 'b' }],
+			legend: false,
+		});
+		assert.ok(!ok.audit.cross.some((v) => v.includes('그룹 이름표')), JSON.stringify(ok.audit.cross));
+	});
+
+	test('멤버로 잰 그룹 박스는 제 이름표보다 좁지 않다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '긴 부제',
+			nodes: [{ id: 'd', x: 0, y: 0, w: 140, h: 84, title: 'DB', sub: '서버' }],
+			groups: [{ name: 'DB', sub: '10.40.9.x · PostgreSQL 5432~5433 아주 긴 부제', members: ['d'] }],
+			legend: false,
+		});
+		assert.ok(clean(r.audit), JSON.stringify(r.audit));
+		const dom = await domOf(r.htmlPath);
+		const [box] = rectsOf(dom, '13');
+		const chip = rectsOf(dom, '7').find((c) => c.h === 26);
+		assert.ok(box && chip);
+		assert.ok(chip.x + chip.w <= box.x + box.w, `이름표가 박스 밖으로 나갔다: 칩 끝 ${chip.x + chip.w} > 박스 끝 ${box.x + box.w}`);
+	});
+
+	test('라벨이 그룹 테두리에 걸치면 감사가 잡는다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		// 두 그룹 사이 틈이 라벨보다 좁다. 라벨이 양쪽 테두리에 걸친다.
+		const bad = await renderDiagram({
+			title: '좁은 틈',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, w: 208, h: 84, title: '왼쪽', sub: '서버' },
+				{ id: 'b', x: 330, y: 0, w: 208, h: 84, title: '오른쪽', sub: '서버' },
+			],
+			groups: [{ name: 'L', members: ['a'] }, { name: 'R', members: ['b'] }],
+			edges: [{ from: 'a', to: 'b', label: '틈보다 훨씬 긴 라벨 문구입니다' }],
+			legend: false,
+		});
+		assert.ok(bad.audit.label.some((v) => v.includes('테두리')), JSON.stringify(bad.audit.label));
+
+		// 대조군. 틈을 넉넉히 주면 걸치지 않는다.
+		const ok = await renderDiagram({
+			title: '넓은 틈',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, w: 208, h: 84, title: '왼쪽', sub: '서버' },
+				{ id: 'b', x: 700, y: 0, w: 208, h: 84, title: '오른쪽', sub: '서버' },
+			],
+			groups: [{ name: 'L', members: ['a'] }, { name: 'R', members: ['b'] }],
+			edges: [{ from: 'a', to: 'b', label: '틈보다 훨씬 긴 라벨 문구입니다' }],
+			legend: false,
+		});
+		assert.ok(!ok.audit.label.some((v) => v.includes('테두리')), JSON.stringify(ok.audit.label));
+	});
+
+	test('세로선 라벨은 선에서 12px 떨어지고 글자 가운데가 구간 중점에 온다', async (t) => {
+		if (!(await hasChrome())) {
+			t.skip('크롬이 없어 건너뜀');
+			return;
+		}
+		const r = await renderDiagram({
+			title: '세로 라벨',
+			nodes: [
+				{ id: 'a', x: 0, y: 0, w: 208, h: 84, title: '위', sub: '서버' },
+				{ id: 'b', x: 0, y: 200, w: 208, h: 84, title: '아래', sub: '서버' },
+			],
+			edges: [{ from: 'a', to: 'b', label: 'POST /url :6820' }],
+			legend: false,
+		});
+		const dom = await domOf(r.htmlPath);
+		const m = /<text x="([-\d.]+)" y="([-\d.]+)"[^>]*>POST \/url :6820<\/text>/.exec(dom);
+		assert.ok(m, '라벨을 못 찾았다');
+		// 선: x = 104, 구간 84 → 200, 중점 142.
+		assert.equal(Number(m[1]), 104 - 12, `선과의 간격이 12 가 아니다: x=${m[1]}`);
+		assert.equal(Number(m[2]), 142 + 4, `기준선이 중점+4 가 아니다: y=${m[2]}`);
 	});
 });

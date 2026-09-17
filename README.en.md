@@ -299,12 +299,12 @@ Every measurement is real. Node widths and line breaks come from the browser's
 characters is wrong every time. The canvas is sized *after* drawing, from the content's
 bounding box, so a diagram cannot be clipped.
 
-Then it audits itself and reports five classes of defect:
+Then it audits itself and reports six classes of defect:
 
 ```
 text spilling outside its card · letter-spacing squeezed to fit
-a line crossing (or hiding behind) a node
-two lines overlapping · two nodes overlapping · a label sitting on a card
+a line crossing (or hiding behind) a node · a line covering a group's title chip
+two lines overlapping · two nodes overlapping · a label on a card or group chip, or straddling a group border
 ```
 
 **If the audit finds anything, nothing is uploaded — and there is no flag to turn that
