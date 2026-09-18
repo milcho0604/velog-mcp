@@ -38,7 +38,7 @@ export const SERVER_NAME = 'velog-mcp';
 // (2026-09-14: 주석이 «네 곳» 이라 했는데 실제로는 여덟 파일이었다. plugin.json 은
 //  plugins/velog/.claude-plugin/ 아래에 있다 — 루트에서 찾다 «없다» 고 적을 뻔했다.
 //  숫자를 적으면 낡는다 — 파일 이름을 적는다.)
-export const SERVER_VERSION = '0.9.4';
+export const SERVER_VERSION = '0.9.5';
 
 export function createServer(
 	client: VelogClient,

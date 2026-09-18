@@ -104,14 +104,42 @@ jobs:
       - name: Verify
         run: npm run verify
 
+      # ⚠️ 실패한 실행을 다시 돌리면 이 단계부터 다시 시작한다. 그때 이미 올라간
+      #    판을 또 올리려다 `You cannot publish over the previously published
+      #    versions` 로 죽는다. 실측 2026-09-18, 0.9.4. 뒷 단계만 고치고 싶은데
+      #    앞에서 막히면 다시 돌릴 방법이 없다. 그래서 **이미 있으면 건너뛴다.**
       - name: npm 발행
-        run: npm publish --access public
+        run: |
+          VER="$(node -p "require('./package.json').version")"
+          PKG="$(node -p "require('./package.json').name")"
+          if npm view "$PKG@$VER" version >/dev/null 2>&1; then
+            echo "$PKG@$VER 는 이미 npm 에 있다. 발행을 건너뛴다."
+          else
+            npm publish --access public
+          fi
 
       # ── 여기부터 MCP 레지스트리 ──────────────────────────────────────────
       #
       # 레지스트리는 npm 에 그 버전이 **이미 있는지**를 확인한다. 그래서 순서가
       # 바뀌면 안 된다. 소유 확인은 package.json 의 `mcpName` 이 server.json 의
       # `name` 과 같은지로 한다(둘 다 io.github.milcho0604/velog).
+      #
+      # ⚠️ npm 발행 직후에는 아직 안 보인다. 실측 2026-09-18: `npm publish` 가
+      #    `+ pkg@0.9.4` 를 찍고 provenance 서명까지 끝난 뒤에도 레지스트리가
+      #    `version '0.9.4' was not found (status: 404)` 로 거절했다. 레지스트리가
+      #    「Wait and retry」라고 안내한다. 그래서 **보일 때까지 기다린 뒤** 부른다.
+      - name: npm 에 반영될 때까지 기다린다
+        run: |
+          VER="$(node -p "require('./package.json').version")"
+          PKG="$(node -p "require('./package.json').name")"
+          for i in $(seq 1 40); do
+            if npm view "$PKG@$VER" version >/dev/null 2>&1; then
+              echo "npm 반영 확인 ($((i*15))초)"; exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::npm 에 $VER 가 10분 안에 안 나타났습니다."
+          exit 1
       - name: mcp-publisher 설치
         run: |
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
