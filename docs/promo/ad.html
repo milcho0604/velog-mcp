@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>velog-mcp ad</title>
+<style>
+@font-face{font-family:P;src:url(Pretendard-Regular.woff2);font-weight:400}
+@font-face{font-family:P;src:url(Pretendard-SemiBold.woff2);font-weight:600}
+@font-face{font-family:P;src:url(Pretendard-Bold.woff2);font-weight:700}
+@font-face{font-family:P;src:url(Pretendard-ExtraBold.woff2);font-weight:800}
+@font-face{font-family:M;src:url(JBMono.woff2);font-weight:500}
+:root{--g:#12b886;--g2:#20c997;--bg:#0d1117;--card:#161b22;--line:#2a313c;--t:#e6edf3;--t2:#8b949e}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:P,sans-serif;color:var(--t)}
+#stage{position:absolute;inset:0;overflow:hidden}
+.scene{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0}
+.mono{font-family:M,monospace}
+.glow{position:absolute;width:1400px;height:1400px;border-radius:50%;background:radial-gradient(circle,rgba(18,184,134,.16),transparent 60%);left:260px;top:-160px;pointer-events:none}
+.grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:64px 64px}
+.big{font-size:104px;font-weight:800;letter-spacing:-3px;line-height:1.15;text-align:center}
+.sub{font-size:40px;color:var(--t2);font-weight:600;margin-top:28px;text-align:center}
+.g{color:var(--g)}
+.strike{position:relative;display:inline-block}
+.strike i{position:absolute;left:-6px;right:-6px;top:54%;height:10px;background:var(--g);border-radius:6px;transform-origin:left;transform:scaleX(0)}
+
+/* chat window */
+.win{width:1360px;background:var(--card);border:1px solid var(--line);border-radius:28px;box-shadow:0 40px 120px rgba(0,0,0,.55);overflow:hidden}
+.bar{height:60px;display:flex;align-items:center;gap:12px;padding:0 26px;border-bottom:1px solid var(--line);color:var(--t2);font-size:22px}
+.dot{width:16px;height:16px;border-radius:50%;background:#3a414c}
+.bar .ttl{margin-left:18px;font-weight:600}
+.body{padding:40px 48px;display:flex;flex-direction:column;gap:26px;min-height:620px}
+.user{align-self:flex-end;background:var(--g);color:#04291d;font-size:36px;font-weight:700;padding:22px 32px;border-radius:26px 26px 6px 26px;max-width:1000px}
+.caret{display:inline-block;width:3px;height:38px;background:#04291d;vertical-align:-6px;margin-left:3px}
+.tool{align-self:flex-start;display:flex;align-items:center;gap:16px;font-size:26px;color:var(--t2);background:#0d1117;border:1px solid var(--line);padding:14px 22px;border-radius:14px}
+.tool b{color:var(--g2);font-family:M,monospace;font-weight:500}
+.spin{width:22px;height:22px;border:3px solid #30363d;border-top-color:var(--g);border-radius:50%}
+.ok{width:28px;height:28px;border-radius:50%;background:var(--g);color:#04291d;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800}
+.reply{align-self:flex-start;font-size:32px;line-height:1.5;max-width:1150px}
+.pill{display:inline-flex;align-items:center;height:42px;padding:0 18px;border-radius:999px;font-size:22px;font-weight:700;background:rgba(18,184,134,.15);color:var(--g2);margin-right:10px}
+
+/* draft card */
+.draft{align-self:flex-start;width:820px;border:1px solid var(--line);border-radius:18px;padding:26px 30px;background:#0d1117}
+.draft h4{font-size:32px;font-weight:800;margin-bottom:12px}
+.draft .ln{height:14px;border-radius:7px;background:#262d37;margin-top:12px}
+
+/* stats */
+.bars{align-self:stretch;display:flex;flex-direction:column;gap:14px;margin-top:6px}
+.row{display:flex;align-items:center;gap:20px;font-size:26px}
+.row .nm{width:360px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .tr{flex:1;height:34px;background:#1d232c;border-radius:8px;overflow:hidden}
+.row .fl{height:100%;background:var(--g);border-radius:8px;width:0}
+.row .v{width:150px;text-align:right;font-family:M,monospace;color:var(--t)}
+
+/* diagram */
+.dia{align-self:center;position:relative;width:1180px;height:250px;margin-top:30px}
+.node{position:absolute;top:10px;width:200px;height:110px;border-radius:18px;background:#0d1117;border:2px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:26px;font-weight:700;gap:6px}
+.node small{font-size:18px;color:var(--t2);font-weight:600}
+.edge{position:absolute;top:63px;height:4px;background:var(--g);transform-origin:left;transform:scaleX(0)}
+.edge::after{content:'';position:absolute;right:-2px;top:-8px;border-left:14px solid var(--g);border-top:10px solid transparent;border-bottom:10px solid transparent}
+.audit{position:absolute;left:0;right:0;bottom:-10px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
+.audit span{font-size:20px;height:38px;display:inline-flex;align-items:center;padding:0 14px;border-radius:999px;background:rgba(18,184,134,.12);color:var(--g2);font-weight:600}
+
+/* pillars */
+.pillars{display:flex;gap:36px;margin-top:70px}
+.pl{width:500px;height:360px;background:var(--card);border:1px solid var(--line);border-radius:28px;padding:44px 40px;display:flex;flex-direction:column;gap:18px}
+.pl .n{font-family:M,monospace;color:var(--g);font-size:28px}
+.pl h3{font-size:44px;font-weight:800;letter-spacing:-1px;line-height:1.2}
+.pl p{font-size:26px;color:var(--t2);line-height:1.5}
+
+/* cta */
+.logo{display:flex;align-items:center;gap:28px}
+.mark{width:132px;height:132px;border-radius:32px;background:var(--g);display:flex;align-items:center;justify-content:center;color:#04291d;font-size:84px;font-weight:800}
+.word{font-size:128px;font-weight:800;letter-spacing:-4px}
+.cmd{margin-top:64px;font-family:M,monospace;font-size:40px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 40px;display:flex;flex-direction:column;gap:12px}
+.cmd .p{color:var(--g)}
+.meta{margin-top:44px;display:flex;gap:18px}
+.meta span{height:54px;display:inline-flex;align-items:center;padding:0 26px;border-radius:999px;border:1px solid var(--line);font-size:26px;color:var(--t2);font-weight:600}
+.cap{position:absolute;top:84px;left:0;right:0;text-align:center;font-size:30px;font-weight:700;color:var(--g);letter-spacing:6px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="grid"></div>
+  <div class="glow" id="glow"></div>
+
+  <!-- S1: hook -->
+  <section class="scene" id="s1">
+    <div class="big" id="s1a">벨로그 글,<br>아직도 <span class="strike">손으로<i id="s1s"></i></span> 쓰세요?</div>
+    <div class="sub" id="s1b">이제 Claude한테 말만 하세요.</div>
+  </section>
+
+  <!-- S2: draft -->
+  <section class="scene" id="s2">
+    <div class="cap">01 · 초안</div>
+    <div class="win" id="w2">
+      <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ttl">Claude · velog-mcp</span></div>
+      <div class="body">
+        <div class="user"><span id="u2"></span><span class="caret" id="c2"></span></div>
+        <div class="tool" id="t2"><span class="spin" id="sp2"></span><span class="ok" id="ok2">✓</span><b>velog_create_draft</b></div>
+        <div class="draft" id="d2">
+          <h4>Redis 커넥션 풀 누수, 3줄로 잡은 이야기</h4>
+          <span class="pill">#redis</span><span class="pill">#트러블슈팅</span><span class="pill">비공개 초안</span>
+          <div class="ln" style="width:96%"></div><div class="ln" style="width:88%"></div><div class="ln" style="width:70%"></div>
+        </div>
+        <div class="reply" id="r2">초안으로 저장했어요. 발행 전에 한 번 읽어보세요!</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S3: stats -->
+  <section class="scene" id="s3">
+    <div class="cap">02 · 통계</div>
+    <div class="win" id="w3">
+      <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ttl">Claude · velog-mcp</span></div>
+      <div class="body">
+        <div class="user"><span id="u3"></span><span class="caret" id="c3"></span></div>
+        <div class="tool" id="t3"><span class="spin" id="sp3"></span><span class="ok" id="ok3">✓</span><b>velog_blog_stats</b></div>
+        <div class="bars" id="b3"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S4: diagram -->
+  <section class="scene" id="s4">
+    <div class="cap">03 · 그림</div>
+    <div class="win" id="w4">
+      <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="ttl">Claude · velog-mcp</span></div>
+      <div class="body">
+        <div class="user"><span id="u4"></span><span class="caret" id="c4"></span></div>
+        <div class="tool" id="t4"><span class="spin" id="sp4"></span><span class="ok" id="ok4">✓</span><b>velog_render_diagram</b></div>
+        <div class="dia" id="dia">
+          <div class="node" style="left:0"><span>Client</span><small>브라우저</small></div>
+          <div class="node" style="left:326px"><span>LB</span><small>nginx</small></div>
+          <div class="node" style="left:652px"><span>Worker</span><small>×4</small></div>
+          <div class="node" style="left:978px"><span>Redis</span><small>cache</small></div>
+          <div class="edge" style="left:204px;width:118px"></div>
+          <div class="edge" style="left:530px;width:118px"></div>
+          <div class="edge" style="left:856px;width:118px"></div>
+          <div class="audit" id="aud">
+            <span>✓ 글자 넘침 없음</span><span>✓ 선 관통 없음</span><span>✓ 노드 겹침 없음</span><span>✓ 자가감사 통과 → 업로드</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S5: pillars -->
+  <section class="scene" id="s5">
+    <div class="big" id="s5t" style="font-size:88px">발행은 기본값이 아니라 <span class="g">권한</span>이다.</div>
+    <div class="pillars">
+      <div class="pl"><span class="n">01</span><h3>비공개가<br>기본</h3><p>공개 발행은 설정 파일을 여는<br>사람만 켤 수 있어요.</p></div>
+      <div class="pl"><span class="n">02</span><h3>추측 말고<br>실측</h3><p>비공식 GraphQL의 함정 6가지를<br>소스와 실호출로 확인했어요.</p></div>
+      <div class="pl"><span class="n">03</span><h3>의존성<br>딱 2개</h3><p>MCP SDK와 zod뿐.<br>나머진 전부 Node 내장.</p></div>
+    </div>
+  </section>
+
+  <!-- S6: CTA -->
+  <section class="scene" id="s6">
+    <div class="logo" id="lg"><div class="mark">v</div><div class="word">velog<span class="g">-mcp</span></div></div>
+    <div class="sub" id="s6s" style="margin-top:22px">읽고, 쓰고, 그리고, 백업까지. 도구 23개.</div>
+    <div class="cmd" id="cmd">
+      <div><span class="p">❯</span> /plugin marketplace add milcho0604/velog-mcp</div>
+      <div><span class="p">❯</span> /plugin install velog@milcho</div>
+    </div>
+    <div class="meta" id="meta"><span>npm · @milcho0604/velog-mcp</span><span>MIT</span><span>github.com/milcho0604/velog-mcp</span></div>
+  </section>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const cl=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const ease=x=>1-Math.pow(1-cl(x),3);
+const spring=x=>{x=cl(x);return 1-Math.exp(-6*x)*Math.cos(9*x)};
+const prog=(t,a,d)=>cl((t-a)/d);
+
+// scene windows [start,end] in seconds
+const S={s1:[0,4.2],s2:[4.2,11.2],s3:[11.2,17.6],s4:[17.6,24.4],s5:[24.4,29.8],s6:[29.8,36]};
+const DUR=36;
+
+const stats=[["Redis 커넥션 풀 누수 잡기",16323],["HTTP/2 제대로 알고 쓰기",12880],["PostgreSQL 인덱스 실측기",9410],["사이드 프로젝트 회고",7022],["Next.js 캐시 삽질 로그",5210]];
+$("b3").innerHTML=stats.map(s=>`<div class="row"><span class="nm">${s[0]}</span><div class="tr"><div class="fl"></div></div><span class="v">0</span></div>`).join("");
+
+function typeInto(el,caret,text,t,a,cps=16){
+  const n=Math.floor(cl((t-a)*cps,0,text.length));
+  el.textContent=text.slice(0,n);
+  caret.style.opacity=(n<text.length||Math.floor(t*2)%2===0)&&t>=a-0.3?1:0;
+  return a+text.length/cps;
+}
+function show(el,p,dy=24){el.style.opacity=ease(p);el.style.transform=`translateY(${(1-ease(p))*dy}px)`}
+function tool(i,t,a,dur){
+  show($("t"+i),prog(t,a,.3));
+  const done=t>a+dur;
+  $("sp"+i).style.display=done?"none":"block";
+  $("sp"+i).style.transform=`rotate(${t*540}deg)`;
+  $("ok"+i).style.display=done?"flex":"none";
+  if(done){const s=spring(prog(t,a+dur,.4));$("ok"+i).style.transform=`scale(${s})`}
+}
+function sceneEnv(id,t){
+  const [a,b]=S[id];
+  const inP=ease(prog(t,a,.5)), outP=b>=DUR?0:ease(prog(t,b-.4,.4));
+  const el=$(id);
+  el.style.opacity=t<a-0.01||(t>b&&b<DUR)?0:inP*(1-outP);
+  el.style.transform=`scale(${0.97+0.03*inP+0.03*outP})`;
+  return t-a;
+}
+
+function render(t){
+  $("glow").style.transform=`translate(${Math.sin(t*.4)*120}px,${Math.cos(t*.3)*80}px)`;
+
+  // S1
+  let l=sceneEnv("s1",t);
+  show($("s1a"),prog(l,.1,.6),40);
+  $("s1s").style.transform=`scaleX(${ease(prog(l,1.3,.45))})`;
+  show($("s1b"),prog(l,2.0,.6));
+
+  // S2
+  l=sceneEnv("s2",t);
+  show($("w2"),prog(l,0,.5),60);
+  let e=typeInto($("u2"),$("c2"),"오늘 고친 버그로 벨로그 초안 잡아줘",l,.6);
+  tool(2,l,e+.3,1.1);
+  show($("d2"),prog(l,e+1.6,.5));
+  show($("r2"),prog(l,e+2.3,.5));
+
+  // S3
+  l=sceneEnv("s3",t);
+  show($("w3"),prog(l,0,.5),60);
+  e=typeInto($("u3"),$("c3"),"내 글 조회수 상위 5개 보여줘",l,.6);
+  tool(3,l,e+.3,.9);
+  [...$("b3").children].forEach((row,i)=>{
+    const p=prog(l,e+1.4+i*.14,.5); show(row,p,16);
+    const f=ease(prog(l,e+1.5+i*.14,1.0));
+    row.querySelector(".fl").style.width=(stats[i][1]/stats[0][1]*100*f)+"%";
+    row.querySelector(".v").textContent=Math.round(stats[i][1]*f).toLocaleString();
+  });
+
+  // S4
+  l=sceneEnv("s4",t);
+  show($("w4"),prog(l,0,.5),60);
+  e=typeInto($("u4"),$("c4"),"요청이 LB에서 워커 거쳐 레디스까지 가는 흐름 그려줘",l,.6,20);
+  tool(4,l,e+.3,1.0);
+  const nodes=[...$("dia").querySelectorAll(".node")], edges=[...$("dia").querySelectorAll(".edge")];
+  nodes.forEach((n,i)=>{const p=prog(l,e+1.4+i*.28,.45);n.style.opacity=ease(p);n.style.transform=`scale(${.6+.4*spring(p)})`;
+    n.style.borderColor=l>e+1.6+i*.28?"#12b886":"#2a313c"});
+  edges.forEach((g,i)=>g.style.transform=`scaleX(${ease(prog(l,e+1.75+i*.28,.3))})`);
+  [...$("aud").children].forEach((s,i)=>show(s,prog(l,e+2.7+i*.14,.35),12));
+
+  // S5
+  l=sceneEnv("s5",t);
+  show($("s5t"),prog(l,.1,.6),40);
+  [...document.querySelectorAll(".pl")].forEach((p,i)=>show(p,prog(l,.9+i*.25,.6),60));
+
+  // S6
+  l=sceneEnv("s6",t);
+  const lp=prog(l,.1,.7);$("lg").style.opacity=ease(lp);$("lg").style.transform=`scale(${.85+.15*spring(lp)})`;
+  show($("s6s"),prog(l,.7,.5));
+  show($("cmd"),prog(l,1.2,.5));
+  show($("meta"),prog(l,1.8,.5));
+}
+window.render=render;window.DUR=DUR;
+render(0);
+</script>
+</body>
+</html>

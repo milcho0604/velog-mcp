@@ -15,3 +15,6 @@ schema-dump/
 
 .DS_Store
 tmp/
+
+# promo 영상 빌드용 폰트
+docs/promo/*.woff2
