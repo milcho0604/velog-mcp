@@ -33,16 +33,19 @@ FF=$(which ffmpeg) node rec.mjs video velog-mcp-ad.mp4   # 전체 (playwright �
 
 ## 나레이션
 
-대사와 시작 시점(초)은 `lines.json` 에 있다. 음성은 오프라인 TTS
-[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + `vits-mimic3-ko_KO-kss_low`(KSS 데이터셋)로 합성한다.
-`low` 품질 모델이라 기계음이 섞인다 — 실제 게시용이면 사람 목소리나 상용 TTS 로 바꿔 넣는 걸 권한다.
+목소리는 Supertonic 3 의 **M2**(중년 남성, 중앙 F0 약 97Hz)다. 대사와 시작 시점(초)은 `lines.json`.
+오프라인 TTS [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + `sherpa-onnx-supertonic-3-tts-int8-2026-05-11`
+(MIT, Supertone Inc.)로 합성한다. sid 5–9 가 M1–M5, 0–4 가 F1–F5.
+
+생성이 확률적이라 같은 문장도 테이크마다 조금씩 다르다 — 몇 번 뽑아 발음이 가장 깨끗한 걸 고른다.
 
 ```bash
 pip install sherpa-onnx soundfile
-curl -sSL https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-mimic3-ko_KO-kss_low.tar.bz2 | tar xj
-python3 narr.py                     # n0.wav … n5.wav
+curl -sSL https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2 | tar xj
+python3 narr.py voices          # 같은 문장을 M1–M5 로 (v5.wav … v9.wav)
+python3 narr.py lines 6 1.05    # sid 6(M2), 속도 1.05 로 전 대사 → m0.wav … m5.wav
 # 각 줄을 lines.json 의 시작 시점에 놓고 섞어 영상에 입힌다
-ffmpeg -i n0.wav … -filter_complex "[0:a]adelay=400:all=1[a0];…;[a0]…amix=inputs=6:normalize=0,loudnorm=I=-16:TP=-1.5[out]" \
+ffmpeg -i m0.wav … -filter_complex "[0:a]adelay=400:all=1[a0];…;[a0]…amix=inputs=6:normalize=0,equalizer=f=3500:t=q:w=1:g=2,loudnorm=I=-16:TP=-1.5[out]" \
   -map "[out]" narration.wav
 ffmpeg -i velog-mcp-ad.mp4 -i narration.wav -map 0:v -map 1:a -c:v copy -c:a aac -shortest velog-mcp-ad-narrated.mp4
 ```
