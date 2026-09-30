@@ -1,6 +1,7 @@
 # 홍보 영상
 
 `velog-mcp-ad.mp4` — 1920×1080 · 30fps · 36초 · 무음.
+`velog-mcp-ad-narrated.mp4` — 같은 영상에 한국어 나레이션을 얹은 버전.
 
 | 구간 | 장면 |
 | --- | --- |
@@ -28,4 +29,20 @@ tar xzf fontsource-jetbrains-mono-*.tgz && cp package/files/jetbrains-mono-latin
 
 node rec.mjs preview 2.8,9.5,16.5   # 특정 시점 PNG
 FF=$(which ffmpeg) node rec.mjs video velog-mcp-ad.mp4   # 전체 (playwright 필요)
+```
+
+## 나레이션
+
+대사와 시작 시점(초)은 `lines.json` 에 있다. 음성은 오프라인 TTS
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + `vits-mimic3-ko_KO-kss_low`(KSS 데이터셋)로 합성한다.
+`low` 품질 모델이라 기계음이 섞인다 — 실제 게시용이면 사람 목소리나 상용 TTS 로 바꿔 넣는 걸 권한다.
+
+```bash
+pip install sherpa-onnx soundfile
+curl -sSL https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-mimic3-ko_KO-kss_low.tar.bz2 | tar xj
+python3 narr.py                     # n0.wav … n5.wav
+# 각 줄을 lines.json 의 시작 시점에 놓고 섞어 영상에 입힌다
+ffmpeg -i n0.wav … -filter_complex "[0:a]adelay=400:all=1[a0];…;[a0]…amix=inputs=6:normalize=0,loudnorm=I=-16:TP=-1.5[out]" \
+  -map "[out]" narration.wav
+ffmpeg -i velog-mcp-ad.mp4 -i narration.wav -map 0:v -map 1:a -c:v copy -c:a aac -shortest velog-mcp-ad-narrated.mp4
 ```
