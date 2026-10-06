@@ -9,6 +9,8 @@ An MCP server for [Velog](https://velog.io), the Korean developer blogging platf
 Read your blog, draft posts, publish them, and back everything up — from Claude or any
 MCP client.
 
+![Demo: drafting a post, listing top posts by views, and drawing a diagram from Claude](.github/assets/demo.gif)
+
 **[한국어 문서 →](README.md)**
 
 ---

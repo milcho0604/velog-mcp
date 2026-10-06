@@ -8,6 +8,8 @@
 [벨로그](https://velog.io)를 Claude 같은 MCP 클라이언트에서 다루는 서버.
 글을 읽고, 초안을 쓰고, 발행하고, 통째로 백업한다.
 
+![Claude 에서 초안을 쓰고, 조회수 상위 글을 뽑고, 구성도를 그리는 시연](.github/assets/demo.gif)
+
 **[English →](README.en.md)**
 
 ---
