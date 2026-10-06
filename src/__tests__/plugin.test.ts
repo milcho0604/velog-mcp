@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { constants } from 'node:fs';
 import { spawn, execFile as execFileCb } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
@@ -48,6 +49,16 @@ const execFile = promisify(execFileCb);
 
 const ROOT = new URL('../../', import.meta.url);
 const PLUGIN = new URL('plugins/velog/', ROOT);
+
+/**
+ * P21 이 글자로 못 훑는 추적 파일 가운데 사람이 열어 본 것. 값은 그때 내용의 sha256.
+ * 파일을 바꾸면 해시가 어긋나 P21 이 다시 멈춘다. 다시 보고 해시를 고친다.
+ */
+const REVIEWED_BINARIES: Record<string, string> = {
+	// README 시연 GIF. 확장 블록은 반복 설정(NETSCAPE2.0)과 프레임 지연뿐이고 주석 블록이 없다.
+	// 화면에 나오는 식별자는 공개 GitHub 아이디와 npm 패키지 이름뿐이다.
+	'.github/assets/demo.gif': 'cbc59071b17fa347aa6a760d0002140414b21356967ce2f65a166912dca96998',
+};
 
 async function json(url: URL): Promise<Record<string, unknown>> {
 	return JSON.parse(await readFile(url, 'utf8')) as Record<string, unknown>;
@@ -921,8 +932,14 @@ describe('★ P5 — 배포물이 서로 어긋나지 않는다', () => {
 			`나가면 안 되는 것이 있다:\n${leaks.map((l) => `  ${l.file}: ${l.kind} ${l.value}`).join('\n')}`,
 		);
 		// ⚠️ 텍스트로 못 읽어 **검사하지 못한** 파일을 조용히 넘기면 그게 구멍이다.
-		//    `looksTextual` 은 UTF-16 을 바이너리로 오판한다(실측). 지금은 그런 파일이 없다.
-		assert.deepEqual(skipped, [], '검사하지 못한 추적 파일이 있다 — 눈으로 확인할 것');
+		//    `looksTextual` 은 UTF-16 을 바이너리로 오판한다(실측).
+		//    눈으로 본 바이너리만 내용 해시로 통과시킨다. 파일이 바뀌면 다시 걸린다.
+		const bytes = new Map(loaded);
+		const unreviewed = skipped.filter((file) => {
+			const content = bytes.get(file);
+			return !content || createHash('sha256').update(content).digest('hex') !== REVIEWED_BINARIES[file];
+		});
+		assert.deepEqual(unreviewed, [], '검사하지 못한 추적 파일이 있다 — 눈으로 확인할 것');
 	});
 
 	test('P21b — 그 걸러내는 규칙 자체를 시험한다', () => {
