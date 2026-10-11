@@ -52,3 +52,13 @@ ffmpeg -i m0.wav … -filter_complex "[0:a]adelay=400:all=1[a0];…;[a0]…amix=
   -map "[out]" narration.wav
 ffmpeg -i velog-mcp-ad.mp4 -i narration.wav -map 0:v -map 1:a -c:v copy -c:a aac -shortest velog-mcp-ad-narrated.mp4
 ```
+
+## 인스타 컷툰
+
+`cuttoon/01.png` … `09.png` — 1080×1350(4:5) 캐러셀 9장.
+블로그 미루기 3단계(새벽 버그 → 빈 에디터 → 쌓이는 임시저장) → 동료의 한마디 → 초안 · 안심(비공개 기본) · 통계 → 설치.
+캐릭터는 `toon.html` 안의 SVG 함수 `person()` 로 그린다 (표정 `eye`/`mouth`, 소품 `laptop`/`phone`).
+
+```bash
+cd docs/promo && node cuttoon/toon.mjs   # 폰트는 위 '다시 뽑기'와 같은 위치(docs/promo)
+```

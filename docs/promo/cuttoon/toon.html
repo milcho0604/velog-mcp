@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>velog-mcp cuttoon</title>
+<style>
+@font-face{font-family:P;src:url(../Pretendard-Regular.woff2);font-weight:400}
+@font-face{font-family:P;src:url(../Pretendard-SemiBold.woff2);font-weight:600}
+@font-face{font-family:P;src:url(../Pretendard-Bold.woff2);font-weight:700}
+@font-face{font-family:P;src:url(../Pretendard-ExtraBold.woff2);font-weight:800}
+@font-face{font-family:M;src:url(../JBMono.woff2);font-weight:500}
+:root{--bg:#f6f5f1;--ink:#1f2328;--g:#12b886;--g2:#0ca678;--mint:#e3f6ef;--gray:#8b939c;--line:#e4e2dc;--card:#fff;--sun:#ffe7a0}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#ccc;font-family:P,sans-serif;color:var(--ink)}
+.p{position:relative;width:1080px;height:1350px;background:var(--bg);overflow:hidden}
+.top{position:absolute;top:56px;left:72px;right:72px;display:flex;align-items:center;justify-content:space-between;font-size:26px;font-weight:700;color:var(--gray)}
+.tag{display:flex;align-items:center;gap:12px;color:var(--ink)}
+.tag i{width:34px;height:34px;border-radius:10px;background:var(--g);color:#fff;font-style:normal;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800}
+.num{font-family:M,monospace;font-size:24px}
+.cap{position:absolute;top:140px;left:72px;right:72px}
+.step{display:inline-flex;align-items:center;height:48px;padding:0 20px;border-radius:999px;background:var(--mint);color:var(--g2);font-size:24px;font-weight:800;margin-bottom:22px}
+.h{font-size:62px;font-weight:800;letter-spacing:-2px;line-height:1.22}
+.h em{font-style:normal;color:var(--g)}
+.h u{text-decoration:none;background:linear-gradient(transparent 62%,var(--sun) 62%)}
+.stage{position:absolute;left:72px;right:72px;top:420px;height:800px;background:var(--card);border-radius:44px;border:3px solid var(--ink);overflow:hidden}
+.foot{position:absolute;bottom:58px;left:72px;right:72px;display:flex;align-items:center;justify-content:space-between;font-size:26px;color:var(--gray);font-weight:600}
+.dots{display:flex;gap:10px}.dots b{width:12px;height:12px;border-radius:50%;background:#d6d3cb}.dots b.on{background:var(--ink);width:34px;border-radius:6px}
+svg.ch{position:absolute}
+.bub{position:absolute;background:#fff;border:3px solid var(--ink);border-radius:30px;padding:22px 30px;font-size:36px;font-weight:700;line-height:1.35;letter-spacing:-.5px;white-space:nowrap}
+.bub::after{content:"";position:absolute;width:26px;height:26px;background:#fff;border-right:3px solid var(--ink);border-bottom:3px solid var(--ink)}
+.bub.tl::after{left:58px;bottom:-16px;transform:rotate(45deg)}
+.bub.tr2::after{right:58px;bottom:-16px;transform:rotate(45deg)}
+.bub.g{background:var(--g);color:#fff}.bub.g::after{background:var(--g)}
+.sfx{position:absolute;font-weight:800;color:var(--g);font-size:34px}
+/* editor */
+.ed{position:absolute;left:300px;top:70px;width:560px;height:330px;border:3px solid var(--ink);border-radius:24px;background:#fbfbf9;padding:34px 36px}
+.ed .t{font-size:40px;font-weight:800;color:#c4c1b8}
+.ed .cur{display:inline-block;width:4px;height:44px;background:var(--g);vertical-align:-8px;margin-left:2px}
+.ed .ln{height:16px;border-radius:8px;background:#eeece6;margin-top:22px}
+/* drafts */
+.dr{position:absolute;width:300px;height:96px;background:#fff;border:3px solid var(--ink);border-radius:20px;display:flex;align-items:center;gap:16px;padding:0 22px;font-size:26px;font-weight:700}
+.dr span{display:inline-flex;height:36px;padding:0 12px;border-radius:999px;background:#f1efe9;color:var(--gray);font-size:20px;align-items:center}
+/* phone */
+.ph{position:absolute;left:50%;top:44px;transform:translateX(-50%);width:560px;height:760px;border:3px solid var(--ink);border-radius:56px;background:#fbfbf9;padding:40px 30px;display:flex;flex-direction:column;gap:22px}
+.ph .hd{display:flex;align-items:center;gap:12px;font-size:24px;font-weight:700;color:var(--gray);padding:0 8px 18px;border-bottom:2px solid var(--line)}
+.ph .hd i{width:30px;height:30px;border-radius:50%;background:var(--g)}
+.me{align-self:flex-end;background:var(--g);color:#fff;font-size:30px;font-weight:700;padding:20px 26px;border-radius:28px 28px 8px 28px;line-height:1.35;max-width:420px}
+.chip{align-self:flex-start;display:flex;align-items:center;gap:12px;font-family:M,monospace;font-size:24px;color:var(--g2);background:var(--mint);padding:12px 18px;border-radius:14px}
+.ok{width:30px;height:30px;border-radius:50%;background:var(--g);display:flex;align-items:center;justify-content:center}
+.dc{align-self:flex-start;width:440px;border:3px solid var(--ink);border-radius:24px;background:#fff;padding:24px 26px}
+.dc h4{font-size:28px;font-weight:800;line-height:1.3}
+.dc .pills{display:flex;gap:8px;margin:14px 0 4px}
+.dc .pills span{height:36px;display:inline-flex;align-items:center;padding:0 14px;border-radius:999px;background:var(--mint);color:var(--g2);font-size:20px;font-weight:700}
+.dc .ln{height:12px;border-radius:6px;background:#eeece6;margin-top:12px}
+.ai{align-self:flex-start;font-size:28px;line-height:1.45;font-weight:600}
+/* lock list */
+.ll{position:absolute;left:54px;right:54px;bottom:54px;display:flex;flex-direction:column;gap:16px}
+.li{display:flex;align-items:center;gap:22px;background:#fbfbf9;border:3px solid var(--ink);border-radius:24px;padding:22px 28px;font-size:30px;font-weight:700}
+.li small{display:block;font-size:22px;color:var(--gray);font-weight:600;margin-top:4px}
+.ico{flex:none;width:64px;height:64px;border-radius:18px;background:var(--mint);display:flex;align-items:center;justify-content:center}
+/* stats */
+.bars{position:absolute;left:54px;right:54px;top:54px;border:3px solid var(--ink);border-radius:28px;padding:30px 32px;background:#fbfbf9}
+.bars h5{font-size:26px;font-weight:800;margin-bottom:18px;display:flex;justify-content:space-between}
+.bars h5 span{font-family:M,monospace;color:var(--g2);font-size:22px;font-weight:500}
+.br{display:flex;align-items:center;gap:16px;margin-top:14px;font-size:22px;font-weight:600}
+.br .n{width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#555b63}
+.br .tr{flex:1;height:26px;border-radius:8px;background:#eeece6;overflow:hidden}
+.br .fl{height:100%;background:var(--g);border-radius:8px}
+.br .tr.o .fl{background:#9fe0c9}
+.br .v{width:90px;text-align:right;font-family:M,monospace;font-size:21px}
+/* cover & cta */
+.cover .h{font-size:84px;letter-spacing:-3px}
+.swipe{display:inline-flex;align-items:center;gap:12px;height:64px;padding:0 30px;border-radius:999px;background:var(--ink);color:#fff;font-size:28px;font-weight:700}
+.cmd{position:absolute;left:54px;right:54px;top:300px;background:var(--ink);border-radius:28px;padding:34px 38px;font-family:M,monospace;font-size:28px;line-height:1.8;color:#e6edf3}
+.cmd b{color:#38d9a9;font-weight:500}
+.cmd .c{color:#6e7681}
+.logo{position:absolute;left:0;right:0;top:80px;display:flex;flex-direction:column;align-items:center;gap:20px}
+.logo .mk{display:flex;align-items:center;gap:18px;font-size:76px;font-weight:800;letter-spacing:-3px}
+.logo .mk i{width:92px;height:92px;border-radius:26px;background:var(--g);color:#fff;font-style:normal;display:flex;align-items:center;justify-content:center;font-size:58px}
+.logo p{font-size:32px;color:var(--gray);font-weight:700}
+.save{position:absolute;left:54px;right:54px;bottom:54px;display:flex;align-items:center;gap:20px;padding:26px 30px;border-radius:24px;background:var(--mint);font-size:28px;font-weight:700;color:var(--g2)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const INK="#1f2328",SKIN="#fbe3cf",G="#12b886";
+// ── character ─────────────────────────────────────────
+// 360×400 원점 기준. 머리 중심 (180,175)
+function face(e){
+  const eye=(x)=>({
+    dot:`<circle cx="${x}" cy="182" r="8" fill="${INK}"/>`,
+    happy:`<path d="M${x-13} 188 Q${x} 170 ${x+13} 188" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
+    tired:`<path d="M${x-14} 184 L${x+14} 184" stroke="${INK}" stroke-width="7" stroke-linecap="round"/><path d="M${x-12} 198 Q${x} 205 ${x+12} 198" fill="none" stroke="#c9a68c" stroke-width="5" stroke-linecap="round"/>`,
+    shock:`<circle cx="${x}" cy="180" r="16" fill="#fff" stroke="${INK}" stroke-width="6"/><circle cx="${x}" cy="180" r="6" fill="${INK}"/>`,
+    smug:`<path d="M${x-13} 180 Q${x} 192 ${x+13} 180" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
+    up:`<circle cx="${x+4}" cy="174" r="8" fill="${INK}"/>`,
+    spark:`<circle cx="${x}" cy="180" r="11" fill="${INK}"/><circle cx="${x+4}" cy="176" r="4" fill="#fff"/>`,
+  })[e.eye||"dot"];
+  const mouth={
+    smile:`<path d="M162 222 Q180 238 198 222" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
+    open:`<path d="M158 218 Q180 252 202 218 Z" fill="${INK}" stroke="${INK}" stroke-width="5" stroke-linejoin="round"/><path d="M168 234 Q180 244 192 234" fill="#f08c8c"/>`,
+    flat:`<path d="M166 228 L194 228" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
+    wave:`<path d="M160 230 q7 -8 14 0 t14 0 t14 0" fill="none" stroke="${INK}" stroke-width="6" stroke-linecap="round"/>`,
+    o:`<ellipse cx="180" cy="232" rx="11" ry="14" fill="${INK}"/>`,
+    smirk:`<path d="M164 228 Q186 236 202 218" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
+    small:`<path d="M172 228 Q180 233 188 228" fill="none" stroke="${INK}" stroke-width="6" stroke-linecap="round"/>`,
+  }[e.mouth||"smile"];
+  const blush=e.blush===false?"":`<ellipse cx="122" cy="214" rx="17" ry="10" fill="#f6a6a6" opacity=".55"/><ellipse cx="238" cy="214" rx="17" ry="10" fill="#f6a6a6" opacity=".55"/>`;
+  return eye(146)+eye(214)+blush+mouth;
+}
+function person(o){
+  const top=o.top||G, hairC=o.hairC||INK;
+  const hair=o.hair==="part"
+    ? `<path d="M86 178 Q80 82 182 78 Q284 80 276 182 Q268 128 214 116 Q200 140 120 134 Q96 150 86 178 Z" fill="${hairC}" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>`
+    : `<path d="M86 180 Q84 86 180 80 Q278 84 274 180 Q256 140 226 132 Q214 152 180 140 Q146 156 128 136 Q100 150 86 180 Z" fill="${hairC}" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>`;
+  const glasses=o.glasses?`<g fill="none" stroke="${INK}" stroke-width="6"><rect x="118" y="160" width="56" height="44" rx="16"/><rect x="186" y="160" width="56" height="44" rx="16"/><path d="M174 178 L186 178"/></g>`:"";
+  const body=`<path d="M70 400 Q72 300 132 282 Q180 300 228 282 Q288 300 290 400 Z" fill="${top}" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>
+    <path d="M140 286 Q180 322 220 286" fill="none" stroke="${INK}" stroke-width="6" stroke-linecap="round" opacity=".55"/>`;
+  const head=`<ellipse cx="180" cy="190" rx="96" ry="92" fill="${SKIN}" stroke="${INK}" stroke-width="7"/>`;
+  const laptop=o.laptop?`<path d="M74 404 L98 300 Q100 292 110 292 L250 292 Q260 292 262 300 L286 404 Z" fill="#eef0f2" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/><circle cx="180" cy="348" r="16" fill="${G}"/>`:"";
+  const phone=o.phone?`<g transform="rotate(-8 250 330)"><rect x="214" y="268" width="76" height="128" rx="16" fill="${INK}"/><rect x="222" y="280" width="60" height="98" rx="8" fill="#2f363d"/><circle cx="252" cy="330" r="12" fill="${G}"/></g><ellipse cx="236" cy="372" rx="26" ry="20" fill="${SKIN}" stroke="${INK}" stroke-width="7"/>`:"";
+  const point=o.point?`<path d="M268 330 Q320 300 330 240" fill="none" stroke="${top}" stroke-width="36" stroke-linecap="round"/><path d="M268 330 Q320 300 330 240" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round" opacity="0"/><circle cx="332" cy="228" r="22" fill="${SKIN}" stroke="${INK}" stroke-width="7"/>`:"";
+  const sweat=o.sweat?`<path d="M282 132 Q296 152 288 164 Q276 170 272 158 Q272 146 282 132 Z" fill="#a5d8ff" stroke="${INK}" stroke-width="5"/>`:"";
+  const flip=o.flip?`transform="translate(360 0) scale(-1 1)"`:"";
+  return `<svg class="ch" viewBox="0 0 360 410" style="left:${o.x}px;top:${o.y}px;width:${o.w||360}px" ${""}>
+    <g ${flip}>${body}${point}${head}${hair}${face(o)}${glasses}${sweat}${laptop}${phone}</g></svg>`;
+}
+const check=`<svg width="18" height="18" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const icon={
+  lock:`<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="${G}" stroke-width="2.4" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>`,
+  key:`<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="${G}" stroke-width="2.4" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2.5 2.5M14 9l2 2"/></svg>`,
+  shield:`<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="${G}" stroke-width="2.4" stroke-linejoin="round"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M8.6 12.2l2.4 2.4 4.4-4.6" stroke-linecap="round"/></svg>`,
+  bookmark:`<svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="${G}" stroke-width="2.4" stroke-linejoin="round"><path d="M6.5 3.5h11v17l-5.5-4-5.5 4z"/></svg>`,
+  moon:`<svg width="70" height="70" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="${"#ffe7a0"}" stroke="${INK}" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
+};
+const N=9;
+function frame(i,inner,{step,h,foot="",stageStyle=""}={}){
+  return `<section class="p" id="p${i}">
+    <div class="top"><span class="tag"><i>v</i>velog-mcp</span><span class="num">${String(i).padStart(2,"0")} / ${String(N).padStart(2,"0")}</span></div>
+    <div class="cap">${step?`<span class="step">${step}</span>`:""}<div class="h">${h}</div></div>
+    <div class="stage" style="${stageStyle}">${inner}</div>
+    <div class="foot"><span>${foot}</span><span class="dots">${Array.from({length:N},(_,k)=>`<b class="${k+1===i?"on":""}"></b>`).join("")}</span></div>
+  </section>`;
+}
+const pages=[];
+
+// 1 cover
+pages.push(frame(1,`
+  ${person({x:240,y:300,w:460,eye:"tired",mouth:"wave",laptop:true,sweat:true})}
+  <div class="dr" style="left:56px;top:70px;transform:rotate(-6deg)">임시저장 <span>3주 전</span></div>
+  <div class="dr" style="left:520px;top:120px;transform:rotate(5deg)">임시저장 <span>2주 전</span></div>
+  <div class="dr" style="left:120px;top:250px;transform:rotate(3deg)">임시저장 <span>어제</span></div>
+  <div class="dr" style="left:560px;top:300px;transform:rotate(-4deg)">임시저장 <span>방금</span></div>
+`,{h:`개발자 블로그가<br>늘 <u>'임시저장'</u>에<br>머무는 이유`,foot:`<span class="swipe">옆으로 넘겨보세요 →</span>`,stageStyle:"top:500px;height:700px"}).replace('class="p"','class="p cover"').replace('<div class="foot">','<div class="foot" style="bottom:44px">'));
+
+// 2 새벽 2시
+pages.push(frame(2,`
+  <div style="position:absolute;right:70px;top:60px">${icon.moon}</div>
+  <div class="sfx" style="left:70px;top:80px;font-family:M,monospace;color:var(--gray);font-size:30px">AM 02:13</div>
+  <div class="bub tl" style="left:120px;top:150px">잡았다…!<br>이건 무조건 <span style="color:var(--g)">블로그각</span>이다</div>
+  ${person({x:260,y:300,w:430,eye:"spark",mouth:"open",laptop:true})}
+  <div class="sfx" style="left:190px;top:420px;transform:rotate(-14deg)">✦</div>
+  <div class="sfx" style="left:760px;top:390px;transform:rotate(12deg)">✦</div>
+`,{step:"STEP 1",h:`새벽 2시,<br>드디어 버그를 잡았다`,foot:"모든 블로그는 여기서 시작된다"}));
+
+// 3 빈 에디터
+pages.push(frame(3,`
+  <div class="ed"><div class="t">제목을 입력하세요<span class="cur"></span></div><div class="ln" style="width:92%"></div><div class="ln" style="width:76%"></div><div class="ln" style="width:58%"></div></div>
+  <div class="bub tr2" style="left:24px;top:290px">…뭐부터 쓰지</div>
+  ${person({x:40,y:420,w:400,eye:"dot",mouth:"flat",sweat:true,blush:false})}
+  <div class="sfx" style="left:480px;top:470px;color:var(--gray);font-size:30px">(커서만 깜빡깜빡)</div>
+`,{step:"STEP 2",h:`다음 날,<br>빈 에디터 앞에서 멈춤`,foot:"쓸 건 많은데 시작이 안 된다"}));
+
+// 4 쌓이는 임시저장
+pages.push(frame(4,`
+  ${[["Redis 커넥션 누수","3주 전",-5],["HTTP/2 정리","2주 전",4],["인덱스 실측기","10일 전",-3],["Next 캐시 삽질","5일 전",5],["오늘 고친 버그","방금",-2]].map((d,k)=>`<div class="dr" style="width:420px;left:${470+(k%2)*24}px;top:${50+k*104}px;transform:rotate(${d[2]}deg)">${d[0]} <span>${d[1]}</span></div>`).join("")}
+  <div class="bub tl" style="left:50px;top:90px">다음 주엔<br>쓰겠지…</div>
+  ${person({x:30,y:340,w:430,eye:"tired",mouth:"small"})}
+`,{step:"STEP 3",h:`그렇게 임시저장만<br><u>차곡차곡</u> 쌓인다`,foot:"익숙하다면, 다음 장으로"}));
+
+// 5 동료
+pages.push(frame(5,`
+  <div class="bub tr2 g" style="right:60px;top:80px">아직도 손으로 써?<br>그냥 Claude한테 말해</div>
+  ${person({x:520,y:330,w:420,eye:"smug",mouth:"smirk",top:"#dcd3c6",hair:"part",glasses:true,flip:true})}
+  ${person({x:0,y:400,w:420,eye:"shock",mouth:"o",blush:false})}
+  <div class="sfx" style="left:60px;top:370px;font-size:56px;color:var(--ink)">!?</div>
+`,{step:"그때",h:`옆자리 동료가<br>한마디 던졌다`,foot:"velog-mcp = 벨로그용 MCP 서버"}));
+
+// 6 채팅
+pages.push(frame(6,`
+  <div class="ph">
+    <div class="hd"><i></i>Claude · velog-mcp</div>
+    <div class="me">오늘 고친 버그로<br>벨로그 초안 잡아줘</div>
+    <div class="chip"><span class="ok">${check}</span>velog_create_draft</div>
+    <div class="dc"><h4>Redis 커넥션 풀 누수,<br>3줄로 잡은 이야기</h4><div class="pills"><span>#redis</span><span>비공개 초안</span></div><div class="ln" style="width:94%"></div><div class="ln" style="width:80%"></div><div class="ln" style="width:62%"></div></div>
+    <div class="ai">초안으로 저장했어요.<br>발행 전에 한 번 읽어보세요!</div>
+  </div>
+`,{step:"말 한마디면",h:`초안이 <em>알아서</em><br>저장까지 끝`,foot:"Claude Code · Claude Desktop · Cursor"}));
+
+// 7 안심
+pages.push(frame(7,`
+  <div class="bub tl" style="left:60px;top:50px">근데 알아서<br>공개되면 어떡해?</div>
+  ${person({x:560,y:20,w:330,eye:"up",mouth:"small",blush:false})}
+  <div class="ll">
+    <div class="li"><span class="ico">${icon.lock}</span><div>기본은 비공개 발행까지만<small>설치 직후엔 공개 글이 나갈 길이 없어요</small></div></div>
+    <div class="li"><span class="ico">${icon.key}</span><div>공개는 내가 설정에서 켤 때만<small>그 스위치는 모델이 못 건드려요</small></div></div>
+    <div class="li"><span class="ico">${icon.shield}</span><div>토큰은 키체인에 보관<small>설정 파일에 평문으로 남지 않아요</small></div></div>
+  </div>
+`,{step:"걱정 마세요",h:`발행은 <em>기본값</em>이 아니라<br><em>권한</em>이니까`,foot:"플러그인 설치 기준"}));
+
+// 8 덤
+pages.push(frame(8,`
+  <div class="bars"><h5>내 글 조회수 TOP 5 <span>velog_blog_stats</span></h5>
+    ${[["Redis 커넥션 풀 누수 잡기",16323],["HTTP/2 제대로 알고 쓰기",12880],["PostgreSQL 인덱스 실측기",9410],["사이드 프로젝트 회고",7022],["Next.js 캐시 삽질 로그",5210]].map((r,k)=>`<div class="br"><span class="n">${r[0]}</span><div class="tr ${k?"o":""}"><div class="fl" style="width:${r[1]/163.23}%"></div></div><span class="v">${r[1].toLocaleString()}</span></div>`).join("")}
+  </div>
+  <div class="bub tr2" style="right:330px;top:440px">오… 이 글이<br>제일 많이 읽혔네</div>
+  ${person({x:600,y:420,w:340,eye:"spark",mouth:"smile"})}
+`,{step:"덤으로",h:`통계도, 구성도도<br>말로 끝`,foot:"구성도는 스스로 검사한 뒤에만 올려요"}));
+
+// 9 CTA
+pages.push(frame(9,`
+  <div class="logo"><div class="mk"><i>v</i><span>velog<span style="color:var(--g)">-mcp</span></span></div><p>벨로그를 말로 쓰는 방법</p></div>
+  <div class="cmd"><span class="c"># Claude Code에서</span><br><b>❯</b> /plugin marketplace add<br>&nbsp;&nbsp;milcho0604/velog-mcp<br><b>❯</b> /plugin install velog@milcho</div>
+  <div class="save">${icon.bookmark}<span>저장해 두고, 이번 주 임시저장 하나는 꼭 발행하기</span></div>
+`,{h:`이번 주 블로그,<br><em>말로 써보세요</em>`,foot:"github.com/milcho0604/velog-mcp"}));
+
+document.getElementById("root").innerHTML=pages.join("");
+</script>
+</body>
+</html>
