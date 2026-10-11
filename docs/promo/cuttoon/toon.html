@@ -84,47 +84,67 @@ svg.ch{position:absolute}
 <body>
 <div id="root"></div>
 <script>
-const INK="#1f2328",SKIN="#fbe3cf",G="#12b886";
-// ── character ─────────────────────────────────────────
-// 360×400 원점 기준. 머리 중심 (180,175)
-function face(e){
+// ── character: 새싹 찹쌀떡 & 고양이 선배 ───────────────
+// viewBox 300×300. 몸 중심 x=150, 바닥 y≈262
+const INK="#33373d",G="#12b886",G2="#5fd3aa";
+function blob(o){
+  const cat=o.kind==="cat", melt=!!o.melt;
+  const fill=cat?"#e7e4df":"#fffaf1";
+  const top=melt?132:70, ey=melt?212:178;           // 녹으면 납작해지고 눈도 내려온다
+  const body=melt
+    ? `M150 ${top} C 232 ${top} 280 188 280 228 C 280 256 228 266 150 266 C 72 266 20 256 20 228 C 20 188 68 ${top} 150 ${top} Z`
+    : `M150 ${top} C 226 ${top} 262 140 262 204 C 262 248 214 264 150 264 C 86 264 38 248 38 204 C 38 140 74 ${top} 150 ${top} Z`;
+  const S=`stroke="${INK}" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"`;
+  let g=`<ellipse cx="150" cy="276" rx="${melt?128:98}" ry="11" fill="#000" opacity=".07"/>`;
+  if(!melt) g+=`<ellipse cx="112" cy="262" rx="22" ry="11" fill="${fill}" ${S}/><ellipse cx="188" cy="262" rx="22" ry="11" fill="${fill}" ${S}/>`;
+  if(cat) g+=`<path d="M78 112 L70 52 L124 82 Z" fill="${fill}" ${S}/><path d="M222 112 L230 52 L176 82 Z" fill="${fill}" ${S}/><path d="M82 96 L79 70 L104 84 Z" fill="#f6b8b8"/><path d="M218 96 L221 70 L196 84 Z" fill="#f6b8b8"/>`;
+  g+=`<path d="${body}" fill="${fill}" ${S}/>`;
+  if(!cat){ // 새싹
+    const sy=top+2;
+    g+=`<path d="M150 ${sy} L150 ${sy-28}" ${S} fill="none"/>
+        <path d="M150 ${sy-24} C 128 ${sy-50} 102 ${sy-42} 98 ${sy-28} C 116 ${sy-14} 138 ${sy-16} 150 ${sy-24} Z" fill="${G2}" ${S}/>
+        <path d="M150 ${sy-24} C 168 ${sy-56} 198 ${sy-52} 204 ${sy-36} C 188 ${sy-18} 164 ${sy-16} 150 ${sy-24} Z" fill="${G}" ${S}/>`;
+  } else { // 고양이 수염 + 줄무늬
+    g+=`<path d="M138 ${top+8} L138 ${top+30} M150 ${top+4} L150 ${top+32} M162 ${top+8} L162 ${top+30}" stroke="#c9c4bc" stroke-width="6" stroke-linecap="round"/>
+        <path d="M52 ${ey+22} L82 ${ey+18} M54 ${ey+36} L82 ${ey+30} M248 ${ey+22} L218 ${ey+18} M246 ${ey+36} L218 ${ey+30}" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`;
+  }
+  // arms
+  if(!o.laptop && !melt){
+    const up=o.arms==="up";
+    g+= up ? `<ellipse cx="34" cy="150" rx="15" ry="22" transform="rotate(-30 34 150)" fill="${fill}" ${S}/><ellipse cx="266" cy="150" rx="15" ry="22" transform="rotate(30 266 150)" fill="${fill}" ${S}/>`
+           : `<ellipse cx="44" cy="214" rx="14" ry="20" transform="rotate(25 44 214)" fill="${fill}" ${S}/><ellipse cx="256" cy="214" rx="14" ry="20" transform="rotate(-25 256 214)" fill="${fill}" ${S}/>`;
+  }
+  // face
+  const L=118,R=182, e=o.eye||"dot";
   const eye=(x)=>({
-    dot:`<circle cx="${x}" cy="182" r="8" fill="${INK}"/>`,
-    happy:`<path d="M${x-13} 188 Q${x} 170 ${x+13} 188" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
-    tired:`<path d="M${x-14} 184 L${x+14} 184" stroke="${INK}" stroke-width="7" stroke-linecap="round"/><path d="M${x-12} 198 Q${x} 205 ${x+12} 198" fill="none" stroke="#c9a68c" stroke-width="5" stroke-linecap="round"/>`,
-    shock:`<circle cx="${x}" cy="180" r="16" fill="#fff" stroke="${INK}" stroke-width="6"/><circle cx="${x}" cy="180" r="6" fill="${INK}"/>`,
-    smug:`<path d="M${x-13} 180 Q${x} 192 ${x+13} 180" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
-    up:`<circle cx="${x+4}" cy="174" r="8" fill="${INK}"/>`,
-    spark:`<circle cx="${x}" cy="180" r="11" fill="${INK}"/><circle cx="${x+4}" cy="176" r="4" fill="#fff"/>`,
-  })[e.eye||"dot"];
+    dot:`<circle cx="${x}" cy="${ey}" r="13" fill="${INK}"/><circle cx="${x-4}" cy="${ey-5}" r="4.5" fill="#fff"/><circle cx="${x+4}" cy="${ey+4}" r="2" fill="#fff"/>`,
+    spark:`<circle cx="${x}" cy="${ey}" r="17" fill="${INK}"/><path d="M${x-5} ${ey-12} l2.5 6 6 2.5 -6 2.5 -2.5 6 -2.5 -6 -6 -2.5 6 -2.5z" fill="#fff"/><circle cx="${x+6}" cy="${ey+6}" r="3" fill="#fff"/>`,
+    happy:`<path d="M${x-12} ${ey+4} Q${x} ${ey-12} ${x+12} ${ey+4}" fill="none" ${S}/>`,
+    small:`<circle cx="${x}" cy="${ey}" r="7" fill="${INK}"/>`,
+    line:`<path d="M${x-12} ${ey} L${x+12} ${ey}" ${S}/>`,
+    shock:`<circle cx="${x}" cy="${ey-2}" r="17" fill="#fff" ${S}/><circle cx="${x}" cy="${ey-2}" r="5" fill="${INK}"/>`,
+    smug:`<path d="M${x-13} ${ey-2} L${x+13} ${ey-2}" ${S}/><path d="M${x-11} ${ey-2} Q${x} ${ey+11} ${x+11} ${ey-2}" fill="${INK}"/>`,
+    up:`<circle cx="${x+3}" cy="${ey-6}" r="12" fill="${INK}"/><circle cx="${x}" cy="${ey-11}" r="4" fill="#fff"/>`,
+  })[e];
+  const my=ey+20;
   const mouth={
-    smile:`<path d="M162 222 Q180 238 198 222" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
-    open:`<path d="M158 218 Q180 252 202 218 Z" fill="${INK}" stroke="${INK}" stroke-width="5" stroke-linejoin="round"/><path d="M168 234 Q180 244 192 234" fill="#f08c8c"/>`,
-    flat:`<path d="M166 228 L194 228" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
-    wave:`<path d="M160 230 q7 -8 14 0 t14 0 t14 0" fill="none" stroke="${INK}" stroke-width="6" stroke-linecap="round"/>`,
-    o:`<ellipse cx="180" cy="232" rx="11" ry="14" fill="${INK}"/>`,
-    smirk:`<path d="M164 228 Q186 236 202 218" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round"/>`,
-    small:`<path d="M172 228 Q180 233 188 228" fill="none" stroke="${INK}" stroke-width="6" stroke-linecap="round"/>`,
-  }[e.mouth||"smile"];
-  const blush=e.blush===false?"":`<ellipse cx="122" cy="214" rx="17" ry="10" fill="#f6a6a6" opacity=".55"/><ellipse cx="238" cy="214" rx="17" ry="10" fill="#f6a6a6" opacity=".55"/>`;
-  return eye(146)+eye(214)+blush+mouth;
-}
-function person(o){
-  const top=o.top||G, hairC=o.hairC||INK;
-  const hair=o.hair==="part"
-    ? `<path d="M86 178 Q80 82 182 78 Q284 80 276 182 Q268 128 214 116 Q200 140 120 134 Q96 150 86 178 Z" fill="${hairC}" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>`
-    : `<path d="M86 180 Q84 86 180 80 Q278 84 274 180 Q256 140 226 132 Q214 152 180 140 Q146 156 128 136 Q100 150 86 180 Z" fill="${hairC}" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>`;
-  const glasses=o.glasses?`<g fill="none" stroke="${INK}" stroke-width="6"><rect x="118" y="160" width="56" height="44" rx="16"/><rect x="186" y="160" width="56" height="44" rx="16"/><path d="M174 178 L186 178"/></g>`:"";
-  const body=`<path d="M70 400 Q72 300 132 282 Q180 300 228 282 Q288 300 290 400 Z" fill="${top}" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/>
-    <path d="M140 286 Q180 322 220 286" fill="none" stroke="${INK}" stroke-width="6" stroke-linecap="round" opacity=".55"/>`;
-  const head=`<ellipse cx="180" cy="190" rx="96" ry="92" fill="${SKIN}" stroke="${INK}" stroke-width="7"/>`;
-  const laptop=o.laptop?`<path d="M74 404 L98 300 Q100 292 110 292 L250 292 Q260 292 262 300 L286 404 Z" fill="#eef0f2" stroke="${INK}" stroke-width="7" stroke-linejoin="round"/><circle cx="180" cy="348" r="16" fill="${G}"/>`:"";
-  const phone=o.phone?`<g transform="rotate(-8 250 330)"><rect x="214" y="268" width="76" height="128" rx="16" fill="${INK}"/><rect x="222" y="280" width="60" height="98" rx="8" fill="#2f363d"/><circle cx="252" cy="330" r="12" fill="${G}"/></g><ellipse cx="236" cy="372" rx="26" ry="20" fill="${SKIN}" stroke="${INK}" stroke-width="7"/>`:"";
-  const point=o.point?`<path d="M268 330 Q320 300 330 240" fill="none" stroke="${top}" stroke-width="36" stroke-linecap="round"/><path d="M268 330 Q320 300 330 240" fill="none" stroke="${INK}" stroke-width="7" stroke-linecap="round" opacity="0"/><circle cx="332" cy="228" r="22" fill="${SKIN}" stroke="${INK}" stroke-width="7"/>`:"";
-  const sweat=o.sweat?`<path d="M282 132 Q296 152 288 164 Q276 170 272 158 Q272 146 282 132 Z" fill="#a5d8ff" stroke="${INK}" stroke-width="5"/>`:"";
-  const flip=o.flip?`transform="translate(360 0) scale(-1 1)"`:"";
-  return `<svg class="ch" viewBox="0 0 360 410" style="left:${o.x}px;top:${o.y}px;width:${o.w||360}px" ${""}>
-    <g ${flip}>${body}${point}${head}${hair}${face(o)}${glasses}${sweat}${laptop}${phone}</g></svg>`;
+    smile:`<path d="M141 ${my} Q150 ${my+9} 159 ${my}" fill="none" ${S}/>`,
+    cat:`<path d="M138 ${my} Q144 ${my+8} 150 ${my} Q156 ${my+8} 162 ${my}" fill="none" ${S}/>`,
+    open:`<path d="M138 ${my-2} Q150 ${my+22} 162 ${my-2} Z" fill="${INK}" ${S}/><path d="M144 ${my+9} Q150 ${my+14} 156 ${my+9}" fill="#ff8f8f"/>`,
+    flat:`<path d="M142 ${my+2} L158 ${my+2}" ${S}/>`,
+    wave:`<path d="M136 ${my+2} q5 -6 9.5 0 t9.5 0 t9.5 0" fill="none" ${S}/>`,
+    o:`<ellipse cx="150" cy="${my+4}" rx="8" ry="10" fill="${INK}"/>`,
+    smirk:`<path d="M140 ${my+2} Q154 ${my+8} 164 ${my-6}" fill="none" ${S}/>`,
+  }[o.mouth||(cat?"cat":"smile")];
+  const blush=`<ellipse cx="${L-22}" cy="${ey+20}" rx="15" ry="8" fill="#ffadad" opacity=".75"/><ellipse cx="${R+22}" cy="${ey+20}" rx="15" ry="8" fill="#ffadad" opacity=".75"/>`;
+  g+=blush+eye(L)+eye(R)+mouth;
+  if(o.sweat) g+=`<path d="M236 ${top+44} Q252 ${top+66} 243 ${top+80} Q230 ${top+86} 226 ${top+72} Q226 ${top+60} 236 ${top+44} Z" fill="#a8dcff" stroke="${INK}" stroke-width="4.5"/>`;
+  if(o.laptop) g+=`<g transform="translate(0 26)"><path d="M70 288 L86 206 Q88 198 98 198 L202 198 Q212 198 214 206 L230 288 Z" fill="#eef0f2" ${S}/><circle cx="150" cy="244" r="13" fill="${G}"/>
+    <ellipse cx="80" cy="208" rx="16" ry="13" fill="${fill}" ${S}/><ellipse cx="220" cy="208" rx="16" ry="13" fill="${fill}" ${S}/></g>`;
+  if(o.mug) g+=`<g transform="translate(222 170)"><path d="M0 0 L46 0 L42 52 Q41 60 33 60 L13 60 Q5 60 4 52 Z" fill="#fff" ${S}/><path d="M45 14 Q64 14 62 30 Q60 42 43 42" fill="none" ${S}/><path d="M14 -12 q-6 -10 2 -20 M30 -12 q-6 -10 2 -20" fill="none" stroke="#c9c4bc" stroke-width="4.5" stroke-linecap="round"/></g>
+    <ellipse cx="226" cy="214" rx="15" ry="13" fill="${fill}" ${S}/>`;
+  const flip=o.flip?`transform="translate(300 0) scale(-1 1)"`:"";
+  return `<svg class="ch" viewBox="0 -20 300 320" style="left:${o.x}px;top:${o.y}px;width:${o.w||300}px;overflow:visible"><g ${flip}>${g}</g></svg>`;
 }
 const check=`<svg width="18" height="18" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const icon={
@@ -147,7 +167,7 @@ const pages=[];
 
 // 1 cover
 pages.push(frame(1,`
-  ${person({x:240,y:300,w:460,eye:"tired",mouth:"wave",laptop:true,sweat:true})}
+  ${blob({x:250,y:250,w:440,melt:true,eye:"line",mouth:"wave",sweat:true})}
   <div class="dr" style="left:56px;top:70px;transform:rotate(-6deg)">임시저장 <span>3주 전</span></div>
   <div class="dr" style="left:520px;top:120px;transform:rotate(5deg)">임시저장 <span>2주 전</span></div>
   <div class="dr" style="left:120px;top:250px;transform:rotate(3deg)">임시저장 <span>어제</span></div>
@@ -159,7 +179,7 @@ pages.push(frame(2,`
   <div style="position:absolute;right:70px;top:60px">${icon.moon}</div>
   <div class="sfx" style="left:70px;top:80px;font-family:M,monospace;color:var(--gray);font-size:30px">AM 02:13</div>
   <div class="bub tl" style="left:120px;top:150px">잡았다…!<br>이건 무조건 <span style="color:var(--g)">블로그각</span>이다</div>
-  ${person({x:260,y:300,w:430,eye:"spark",mouth:"open",laptop:true})}
+  ${blob({x:270,y:330,w:400,eye:"spark",mouth:"open",laptop:true})}
   <div class="sfx" style="left:190px;top:420px;transform:rotate(-14deg)">✦</div>
   <div class="sfx" style="left:760px;top:390px;transform:rotate(12deg)">✦</div>
 `,{step:"STEP 1",h:`새벽 2시,<br>드디어 버그를 잡았다`,foot:"모든 블로그는 여기서 시작된다"}));
@@ -168,7 +188,7 @@ pages.push(frame(2,`
 pages.push(frame(3,`
   <div class="ed"><div class="t">제목을 입력하세요<span class="cur"></span></div><div class="ln" style="width:92%"></div><div class="ln" style="width:76%"></div><div class="ln" style="width:58%"></div></div>
   <div class="bub tr2" style="left:24px;top:290px">…뭐부터 쓰지</div>
-  ${person({x:40,y:420,w:400,eye:"dot",mouth:"flat",sweat:true,blush:false})}
+  ${blob({x:60,y:450,w:330,eye:"small",mouth:"flat",sweat:true})}
   <div class="sfx" style="left:480px;top:470px;color:var(--gray);font-size:30px">(커서만 깜빡깜빡)</div>
 `,{step:"STEP 2",h:`다음 날,<br>빈 에디터 앞에서 멈춤`,foot:"쓸 건 많은데 시작이 안 된다"}));
 
@@ -176,14 +196,14 @@ pages.push(frame(3,`
 pages.push(frame(4,`
   ${[["Redis 커넥션 누수","3주 전",-5],["HTTP/2 정리","2주 전",4],["인덱스 실측기","10일 전",-3],["Next 캐시 삽질","5일 전",5],["오늘 고친 버그","방금",-2]].map((d,k)=>`<div class="dr" style="width:420px;left:${470+(k%2)*24}px;top:${50+k*104}px;transform:rotate(${d[2]}deg)">${d[0]} <span>${d[1]}</span></div>`).join("")}
   <div class="bub tl" style="left:50px;top:90px">다음 주엔<br>쓰겠지…</div>
-  ${person({x:30,y:340,w:430,eye:"tired",mouth:"small"})}
+  ${blob({x:20,y:330,w:420,melt:true,eye:"line",mouth:"wave"})}
 `,{step:"STEP 3",h:`그렇게 임시저장만<br><u>차곡차곡</u> 쌓인다`,foot:"익숙하다면, 다음 장으로"}));
 
 // 5 동료
 pages.push(frame(5,`
   <div class="bub tr2 g" style="right:60px;top:80px">아직도 손으로 써?<br>그냥 Claude한테 말해</div>
-  ${person({x:520,y:330,w:420,eye:"smug",mouth:"smirk",top:"#dcd3c6",hair:"part",glasses:true,flip:true})}
-  ${person({x:0,y:400,w:420,eye:"shock",mouth:"o",blush:false})}
+  ${blob({x:540,y:380,w:360,kind:"cat",eye:"smug",mouth:"cat",mug:true,flip:true})}
+  ${blob({x:40,y:430,w:330,eye:"shock",mouth:"o",arms:"up"})}
   <div class="sfx" style="left:60px;top:370px;font-size:56px;color:var(--ink)">!?</div>
 `,{step:"그때",h:`옆자리 동료가<br>한마디 던졌다`,foot:"velog-mcp = 벨로그용 MCP 서버"}));
 
@@ -201,7 +221,7 @@ pages.push(frame(6,`
 // 7 안심
 pages.push(frame(7,`
   <div class="bub tl" style="left:60px;top:50px">근데 알아서<br>공개되면 어떡해?</div>
-  ${person({x:560,y:20,w:330,eye:"up",mouth:"small",blush:false})}
+  ${blob({x:600,y:40,w:270,eye:"up",mouth:"wave"})}
   <div class="ll">
     <div class="li"><span class="ico">${icon.lock}</span><div>기본은 비공개 발행까지만<small>설치 직후엔 공개 글이 나갈 길이 없어요</small></div></div>
     <div class="li"><span class="ico">${icon.key}</span><div>공개는 내가 설정에서 켤 때만<small>그 스위치는 모델이 못 건드려요</small></div></div>
@@ -215,7 +235,7 @@ pages.push(frame(8,`
     ${[["Redis 커넥션 풀 누수 잡기",16323],["HTTP/2 제대로 알고 쓰기",12880],["PostgreSQL 인덱스 실측기",9410],["사이드 프로젝트 회고",7022],["Next.js 캐시 삽질 로그",5210]].map((r,k)=>`<div class="br"><span class="n">${r[0]}</span><div class="tr ${k?"o":""}"><div class="fl" style="width:${r[1]/163.23}%"></div></div><span class="v">${r[1].toLocaleString()}</span></div>`).join("")}
   </div>
   <div class="bub tr2" style="right:330px;top:440px">오… 이 글이<br>제일 많이 읽혔네</div>
-  ${person({x:600,y:420,w:340,eye:"spark",mouth:"smile"})}
+  ${blob({x:620,y:440,w:300,eye:"happy",mouth:"open",arms:"up"})}
 `,{step:"덤으로",h:`통계도, 구성도도<br>말로 끝`,foot:"구성도는 스스로 검사한 뒤에만 올려요"}));
 
 // 9 CTA
