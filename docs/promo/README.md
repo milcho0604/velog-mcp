@@ -57,7 +57,7 @@ ffmpeg -i velog-mcp-ad.mp4 -i narration.wav -map 0:v -map 1:a -c:v copy -c:a aac
 
 `cuttoon/01.png` … `09.png` — 1080×1350(4:5) 캐러셀 9장.
 블로그 미루기 3단계(새벽 버그 → 빈 에디터 → 쌓이는 임시저장) → 동료의 한마디 → 초안 · 안심(비공개 기본) · 통계 → 설치.
-캐릭터는 `toon.html` 안의 SVG 함수 `blob()` — 새싹 찹쌀떡(주인공)과 `kind:"cat"` 고양이 선배. 표정 `eye`/`mouth`, 상태 `melt`(녹아내림)·`sweat`, 소품 `laptop`/`mug`.
+캐릭터는 `toon.html` 안의 SVG 함수 `blob()` — 새싹 찹쌀떡(주인공)과 `kind:"senior"` 민트 안경 선배. 외곽선 없이 그라데이션·그림자로 입체감을 낸다. 표정 `eye`/`mouth`, 상태 `melt`(녹아내림)·`sweat`, 소품 `laptop`/`glasses`.
 
 ```bash
 cd docs/promo && node cuttoon/toon.mjs   # 폰트는 위 '다시 뽑기'와 같은 위치(docs/promo)

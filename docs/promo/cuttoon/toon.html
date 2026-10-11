@@ -9,7 +9,7 @@
 @font-face{font-family:P;src:url(../Pretendard-Bold.woff2);font-weight:700}
 @font-face{font-family:P;src:url(../Pretendard-ExtraBold.woff2);font-weight:800}
 @font-face{font-family:M;src:url(../JBMono.woff2);font-weight:500}
-:root{--bg:#f6f5f1;--ink:#1f2328;--g:#12b886;--g2:#0ca678;--mint:#e3f6ef;--gray:#8b939c;--line:#e4e2dc;--card:#fff;--sun:#ffe7a0}
+:root{--bg:#f3f2ee;--ink:#1f2328;--g:#12b886;--g2:#0ca678;--mint:#e3f6ef;--gray:#8b939c;--line:#e4e2dc;--card:#fff;--sun:#ffe7a0}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#ccc;font-family:P,sans-serif;color:var(--ink)}
 .p{position:relative;width:1080px;height:1350px;background:var(--bg);overflow:hidden}
@@ -22,32 +22,32 @@ body{background:#ccc;font-family:P,sans-serif;color:var(--ink)}
 .h{font-size:62px;font-weight:800;letter-spacing:-2px;line-height:1.22}
 .h em{font-style:normal;color:var(--g)}
 .h u{text-decoration:none;background:linear-gradient(transparent 62%,var(--sun) 62%)}
-.stage{position:absolute;left:72px;right:72px;top:420px;height:800px;background:var(--card);border-radius:44px;border:3px solid var(--ink);overflow:hidden}
+.stage{position:absolute;left:72px;right:72px;top:420px;height:800px;background:var(--card);border-radius:44px;box-shadow:0 14px 34px rgba(40,36,30,.08),0 2px 6px rgba(40,36,30,.05);overflow:hidden}
 .foot{position:absolute;bottom:58px;left:72px;right:72px;display:flex;align-items:center;justify-content:space-between;font-size:26px;color:var(--gray);font-weight:600}
 .dots{display:flex;gap:10px}.dots b{width:12px;height:12px;border-radius:50%;background:#d6d3cb}.dots b.on{background:var(--ink);width:34px;border-radius:6px}
 svg.ch{position:absolute}
-.bub{position:absolute;background:#fff;border:3px solid var(--ink);border-radius:30px;padding:22px 30px;font-size:36px;font-weight:700;line-height:1.35;letter-spacing:-.5px;white-space:nowrap}
-.bub::after{content:"";position:absolute;width:26px;height:26px;background:#fff;border-right:3px solid var(--ink);border-bottom:3px solid var(--ink)}
+.bub{position:absolute;background:#fff;box-shadow:0 10px 28px rgba(40,36,30,.10),0 1px 3px rgba(40,36,30,.06);border-radius:30px;padding:22px 30px;font-size:36px;font-weight:700;line-height:1.35;letter-spacing:-.5px;white-space:nowrap}
+.bub::after{content:"";position:absolute;width:26px;height:26px;background:#fff;border-radius:0 0 6px 0}
 .bub.tl::after{left:58px;bottom:-16px;transform:rotate(45deg)}
 .bub.tr2::after{right:58px;bottom:-16px;transform:rotate(45deg)}
 .bub.g{background:var(--g);color:#fff}.bub.g::after{background:var(--g)}
 .sfx{position:absolute;font-weight:800;color:var(--g);font-size:34px}
 /* editor */
-.ed{position:absolute;left:300px;top:70px;width:560px;height:330px;border:3px solid var(--ink);border-radius:24px;background:#fbfbf9;padding:34px 36px}
+.ed{position:absolute;left:300px;top:70px;width:560px;height:330px;border-radius:24px;background:#f7f6f2;padding:34px 36px}
 .ed .t{font-size:40px;font-weight:800;color:#c4c1b8}
 .ed .cur{display:inline-block;width:4px;height:44px;background:var(--g);vertical-align:-8px;margin-left:2px}
 .ed .ln{height:16px;border-radius:8px;background:#eeece6;margin-top:22px}
 /* drafts */
-.dr{position:absolute;width:300px;height:96px;background:#fff;border:3px solid var(--ink);border-radius:20px;display:flex;align-items:center;gap:16px;padding:0 22px;font-size:26px;font-weight:700}
+.dr{position:absolute;width:300px;height:96px;background:#fff;box-shadow:0 14px 34px rgba(40,36,30,.08),0 2px 6px rgba(40,36,30,.05);border-radius:20px;display:flex;align-items:center;gap:16px;padding:0 22px;font-size:26px;font-weight:700}
 .dr span{display:inline-flex;height:36px;padding:0 12px;border-radius:999px;background:#f1efe9;color:var(--gray);font-size:20px;align-items:center}
 /* phone */
-.ph{position:absolute;left:50%;top:44px;transform:translateX(-50%);width:560px;height:760px;border:3px solid var(--ink);border-radius:56px;background:#fbfbf9;padding:40px 30px;display:flex;flex-direction:column;gap:22px}
+.ph{position:absolute;left:50%;top:44px;transform:translateX(-50%);width:560px;height:760px;border:10px solid #f0efea;border-radius:60px;background:#fff;box-shadow:0 14px 34px rgba(40,36,30,.08),0 2px 6px rgba(40,36,30,.05);padding:40px 30px;display:flex;flex-direction:column;gap:22px}
 .ph .hd{display:flex;align-items:center;gap:12px;font-size:24px;font-weight:700;color:var(--gray);padding:0 8px 18px;border-bottom:2px solid var(--line)}
 .ph .hd i{width:30px;height:30px;border-radius:50%;background:var(--g)}
 .me{align-self:flex-end;background:var(--g);color:#fff;font-size:30px;font-weight:700;padding:20px 26px;border-radius:28px 28px 8px 28px;line-height:1.35;max-width:420px}
 .chip{align-self:flex-start;display:flex;align-items:center;gap:12px;font-family:M,monospace;font-size:24px;color:var(--g2);background:var(--mint);padding:12px 18px;border-radius:14px}
 .ok{width:30px;height:30px;border-radius:50%;background:var(--g);display:flex;align-items:center;justify-content:center}
-.dc{align-self:flex-start;width:440px;border:3px solid var(--ink);border-radius:24px;background:#fff;padding:24px 26px}
+.dc{align-self:flex-start;width:440px;border-radius:24px;background:#f7f6f2;padding:24px 26px}
 .dc h4{font-size:28px;font-weight:800;line-height:1.3}
 .dc .pills{display:flex;gap:8px;margin:14px 0 4px}
 .dc .pills span{height:36px;display:inline-flex;align-items:center;padding:0 14px;border-radius:999px;background:var(--mint);color:var(--g2);font-size:20px;font-weight:700}
@@ -55,11 +55,11 @@ svg.ch{position:absolute}
 .ai{align-self:flex-start;font-size:28px;line-height:1.45;font-weight:600}
 /* lock list */
 .ll{position:absolute;left:54px;right:54px;bottom:54px;display:flex;flex-direction:column;gap:16px}
-.li{display:flex;align-items:center;gap:22px;background:#fbfbf9;border:3px solid var(--ink);border-radius:24px;padding:22px 28px;font-size:30px;font-weight:700}
+.li{display:flex;align-items:center;gap:22px;background:#f7f6f2;border-radius:24px;padding:22px 28px;font-size:30px;font-weight:700}
 .li small{display:block;font-size:22px;color:var(--gray);font-weight:600;margin-top:4px}
 .ico{flex:none;width:64px;height:64px;border-radius:18px;background:var(--mint);display:flex;align-items:center;justify-content:center}
 /* stats */
-.bars{position:absolute;left:54px;right:54px;top:54px;border:3px solid var(--ink);border-radius:28px;padding:30px 32px;background:#fbfbf9}
+.bars{position:absolute;left:54px;right:54px;top:54px;border-radius:28px;padding:30px 32px;background:#f7f6f2}
 .bars h5{font-size:26px;font-weight:800;margin-bottom:18px;display:flex;justify-content:space-between}
 .bars h5 span{font-family:M,monospace;color:var(--g2);font-size:22px;font-weight:500}
 .br{display:flex;align-items:center;gap:16px;margin-top:14px;font-size:22px;font-weight:600}
@@ -84,67 +84,73 @@ svg.ch{position:absolute}
 <body>
 <div id="root"></div>
 <script>
-// ── character: 새싹 찹쌀떡 & 고양이 선배 ───────────────
-// viewBox 300×300. 몸 중심 x=150, 바닥 y≈262
-const INK="#33373d",G="#12b886",G2="#5fd3aa";
+// ── character: 새싹 찹쌀떡 (soft clay) ─────────────────
+// viewBox 300×300, 외곽선 없이 그라데이션·그림자만으로 입체감
+const INK="#2b2f36",G="#12b886",G2="#63d6ad";
+let _id=0;
 function blob(o){
-  const cat=o.kind==="cat", melt=!!o.melt;
-  const fill=cat?"#e7e4df":"#fffaf1";
-  const top=melt?132:70, ey=melt?212:178;           // 녹으면 납작해지고 눈도 내려온다
+  const k=++_id, sen=o.kind==="senior", melt=!!o.melt;
+  const pal=sen?["#f6fdf9","#e2f6ec","#bfe6d3"]:["#ffffff","#fdf6ec","#ecdcc6"];
+  const top=melt?134:72, ey=melt?214:176;
   const body=melt
-    ? `M150 ${top} C 232 ${top} 280 188 280 228 C 280 256 228 266 150 266 C 72 266 20 256 20 228 C 20 188 68 ${top} 150 ${top} Z`
-    : `M150 ${top} C 226 ${top} 262 140 262 204 C 262 248 214 264 150 264 C 86 264 38 248 38 204 C 38 140 74 ${top} 150 ${top} Z`;
-  const S=`stroke="${INK}" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"`;
-  let g=`<ellipse cx="150" cy="276" rx="${melt?128:98}" ry="11" fill="#000" opacity=".07"/>`;
-  if(!melt) g+=`<ellipse cx="112" cy="262" rx="22" ry="11" fill="${fill}" ${S}/><ellipse cx="188" cy="262" rx="22" ry="11" fill="${fill}" ${S}/>`;
-  if(cat) g+=`<path d="M78 112 L70 52 L124 82 Z" fill="${fill}" ${S}/><path d="M222 112 L230 52 L176 82 Z" fill="${fill}" ${S}/><path d="M82 96 L79 70 L104 84 Z" fill="#f6b8b8"/><path d="M218 96 L221 70 L196 84 Z" fill="#f6b8b8"/>`;
-  g+=`<path d="${body}" fill="${fill}" ${S}/>`;
-  if(!cat){ // 새싹
-    const sy=top+2;
-    g+=`<path d="M150 ${sy} L150 ${sy-28}" ${S} fill="none"/>
-        <path d="M150 ${sy-24} C 128 ${sy-50} 102 ${sy-42} 98 ${sy-28} C 116 ${sy-14} 138 ${sy-16} 150 ${sy-24} Z" fill="${G2}" ${S}/>
-        <path d="M150 ${sy-24} C 168 ${sy-56} 198 ${sy-52} 204 ${sy-36} C 188 ${sy-18} 164 ${sy-16} 150 ${sy-24} Z" fill="${G}" ${S}/>`;
-  } else { // 고양이 수염 + 줄무늬
-    g+=`<path d="M138 ${top+8} L138 ${top+30} M150 ${top+4} L150 ${top+32} M162 ${top+8} L162 ${top+30}" stroke="#c9c4bc" stroke-width="6" stroke-linecap="round"/>
-        <path d="M52 ${ey+22} L82 ${ey+18} M54 ${ey+36} L82 ${ey+30} M248 ${ey+22} L218 ${ey+18} M246 ${ey+36} L218 ${ey+30}" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`;
+    ? `M150 ${top} C 232 ${top} 280 188 280 230 C 280 258 228 268 150 268 C 72 268 20 258 20 230 C 20 188 68 ${top} 150 ${top} Z`
+    : `M150 ${top} C 224 ${top} 260 138 260 202 C 260 248 214 266 150 266 C 86 266 40 248 40 202 C 40 138 76 ${top} 150 ${top} Z`;
+  const defs=`<defs>
+    <radialGradient id="b${k}" cx="38%" cy="28%" r="80%"><stop offset="0" stop-color="${pal[0]}"/><stop offset=".55" stop-color="${pal[1]}"/><stop offset="1" stop-color="${pal[2]}"/></radialGradient>
+    <linearGradient id="l${k}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${G2}"/><stop offset="1" stop-color="${G}"/></linearGradient>
+    <linearGradient id="lp${k}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f7f9"/><stop offset="1" stop-color="#d9dde3"/></linearGradient>
+    <filter id="s${k}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7"/></filter>
+    <filter id="f${k}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+  </defs>`;
+  let g=`<ellipse cx="150" cy="${melt?268:266}" rx="${melt?124:96}" ry="13" fill="#3b3226" opacity=".16" filter="url(#s${k})"/>`;
+  g+=`<path d="${body}" fill="url(#b${k})"/>`;
+  g+=`<ellipse cx="${melt?110:116}" cy="${top+(melt?26:34)}" rx="${melt?36:26}" ry="${melt?10:14}" fill="#fff" opacity=".9" filter="url(#f${k})" transform="rotate(-18 116 ${top+34})"/>`;
+  // 새싹
+  const sy=top+3;
+  g+=`<path d="M150 ${sy} Q148 ${sy-16} 150 ${sy-28}" stroke="#2f9e74" stroke-width="5" fill="none" stroke-linecap="round"/>`;
+  if(sen){
+    g+=`<path d="M150 ${sy-26} C 160 ${sy-62} 200 ${sy-66} 210 ${sy-48} C 196 ${sy-24} 168 ${sy-18} 150 ${sy-26} Z" fill="url(#l${k})"/>
+        <path d="M156 ${sy-28} Q180 ${sy-44} 200 ${sy-50}" stroke="#fff" stroke-opacity=".5" stroke-width="2.5" fill="none" stroke-linecap="round"/>`;
+  } else {
+    g+=`<path d="M150 ${sy-24} C 130 ${sy-50} 104 ${sy-44} 98 ${sy-30} C 114 ${sy-14} 136 ${sy-14} 150 ${sy-24} Z" fill="${G2}"/>
+        <path d="M150 ${sy-24} C 166 ${sy-58} 198 ${sy-56} 206 ${sy-38} C 190 ${sy-18} 166 ${sy-14} 150 ${sy-24} Z" fill="url(#l${k})"/>
+        <path d="M156 ${sy-26} Q178 ${sy-40} 196 ${sy-42}" stroke="#fff" stroke-opacity=".45" stroke-width="2.5" fill="none" stroke-linecap="round"/>`;
   }
-  // arms
-  if(!o.laptop && !melt){
-    const up=o.arms==="up";
-    g+= up ? `<ellipse cx="34" cy="150" rx="15" ry="22" transform="rotate(-30 34 150)" fill="${fill}" ${S}/><ellipse cx="266" cy="150" rx="15" ry="22" transform="rotate(30 266 150)" fill="${fill}" ${S}/>`
-           : `<ellipse cx="44" cy="214" rx="14" ry="20" transform="rotate(25 44 214)" fill="${fill}" ${S}/><ellipse cx="256" cy="214" rx="14" ry="20" transform="rotate(-25 256 214)" fill="${fill}" ${S}/>`;
-  }
-  // face
-  const L=118,R=182, e=o.eye||"dot";
+  // 팔
+  const arm=(cx,cy,r)=>`<ellipse cx="${cx}" cy="${cy}" rx="15" ry="21" transform="rotate(${r} ${cx} ${cy})" fill="url(#b${k})"/><ellipse cx="${cx}" cy="${cy}" rx="15" ry="21" transform="rotate(${r} ${cx} ${cy})" fill="none" stroke="${pal[2]}" stroke-width="2" opacity=".8"/>`;
+  if(!o.laptop && !melt && !o.mug) g+= o.arms==="up" ? arm(38,146,-28)+arm(262,146,28) : arm(48,214,24)+arm(252,214,-24);
+  // 얼굴
+  const L=120,R=180,e=o.eye||"dot";
   const eye=(x)=>({
-    dot:`<circle cx="${x}" cy="${ey}" r="13" fill="${INK}"/><circle cx="${x-4}" cy="${ey-5}" r="4.5" fill="#fff"/><circle cx="${x+4}" cy="${ey+4}" r="2" fill="#fff"/>`,
-    spark:`<circle cx="${x}" cy="${ey}" r="17" fill="${INK}"/><path d="M${x-5} ${ey-12} l2.5 6 6 2.5 -6 2.5 -2.5 6 -2.5 -6 -6 -2.5 6 -2.5z" fill="#fff"/><circle cx="${x+6}" cy="${ey+6}" r="3" fill="#fff"/>`,
-    happy:`<path d="M${x-12} ${ey+4} Q${x} ${ey-12} ${x+12} ${ey+4}" fill="none" ${S}/>`,
-    small:`<circle cx="${x}" cy="${ey}" r="7" fill="${INK}"/>`,
-    line:`<path d="M${x-12} ${ey} L${x+12} ${ey}" ${S}/>`,
-    shock:`<circle cx="${x}" cy="${ey-2}" r="17" fill="#fff" ${S}/><circle cx="${x}" cy="${ey-2}" r="5" fill="${INK}"/>`,
-    smug:`<path d="M${x-13} ${ey-2} L${x+13} ${ey-2}" ${S}/><path d="M${x-11} ${ey-2} Q${x} ${ey+11} ${x+11} ${ey-2}" fill="${INK}"/>`,
-    up:`<circle cx="${x+3}" cy="${ey-6}" r="12" fill="${INK}"/><circle cx="${x}" cy="${ey-11}" r="4" fill="#fff"/>`,
+    dot:`<ellipse cx="${x}" cy="${ey}" rx="9.5" ry="11.5" fill="${INK}"/><circle cx="${x-3}" cy="${ey-4.5}" r="3.6" fill="#fff"/>`,
+    spark:`<ellipse cx="${x}" cy="${ey}" rx="12.5" ry="14.5" fill="${INK}"/><path d="M${x-4} ${ey-10} l2 4.6 4.6 2 -4.6 2 -2 4.6 -2 -4.6 -4.6 -2 4.6 -2z" fill="#fff"/><circle cx="${x+5}" cy="${ey+6}" r="2.4" fill="#fff"/>`,
+    happy:`<path d="M${x-10} ${ey+3} Q${x} ${ey-9} ${x+10} ${ey+3}" fill="none" stroke="${INK}" stroke-width="5" stroke-linecap="round"/>`,
+    small:`<circle cx="${x}" cy="${ey}" r="6" fill="${INK}"/>`,
+    line:`<path d="M${x-10} ${ey+1} Q${x} ${ey+5} ${x+10} ${ey+1}" fill="none" stroke="${INK}" stroke-width="5" stroke-linecap="round"/>`,
+    shock:`<ellipse cx="${x}" cy="${ey-2}" rx="11" ry="13" fill="${INK}"/><circle cx="${x-3}" cy="${ey-7}" r="4" fill="#fff"/><circle cx="${x+3.5}" cy="${ey+3}" r="1.8" fill="#fff"/>`,
+    calm:`<path d="M${x-10} ${ey} Q${x} ${ey+8} ${x+10} ${ey}" fill="none" stroke="${INK}" stroke-width="5" stroke-linecap="round"/>`,
+    up:`<ellipse cx="${x+2}" cy="${ey-5}" rx="9" ry="11" fill="${INK}"/><circle cx="${x-1}" cy="${ey-10}" r="3.4" fill="#fff"/>`,
   })[e];
-  const my=ey+20;
+  const my=ey+19;
   const mouth={
-    smile:`<path d="M141 ${my} Q150 ${my+9} 159 ${my}" fill="none" ${S}/>`,
-    cat:`<path d="M138 ${my} Q144 ${my+8} 150 ${my} Q156 ${my+8} 162 ${my}" fill="none" ${S}/>`,
-    open:`<path d="M138 ${my-2} Q150 ${my+22} 162 ${my-2} Z" fill="${INK}" ${S}/><path d="M144 ${my+9} Q150 ${my+14} 156 ${my+9}" fill="#ff8f8f"/>`,
-    flat:`<path d="M142 ${my+2} L158 ${my+2}" ${S}/>`,
-    wave:`<path d="M136 ${my+2} q5 -6 9.5 0 t9.5 0 t9.5 0" fill="none" ${S}/>`,
-    o:`<ellipse cx="150" cy="${my+4}" rx="8" ry="10" fill="${INK}"/>`,
-    smirk:`<path d="M140 ${my+2} Q154 ${my+8} 164 ${my-6}" fill="none" ${S}/>`,
-  }[o.mouth||(cat?"cat":"smile")];
-  const blush=`<ellipse cx="${L-22}" cy="${ey+20}" rx="15" ry="8" fill="#ffadad" opacity=".75"/><ellipse cx="${R+22}" cy="${ey+20}" rx="15" ry="8" fill="#ffadad" opacity=".75"/>`;
-  g+=blush+eye(L)+eye(R)+mouth;
-  if(o.sweat) g+=`<path d="M236 ${top+44} Q252 ${top+66} 243 ${top+80} Q230 ${top+86} 226 ${top+72} Q226 ${top+60} 236 ${top+44} Z" fill="#a8dcff" stroke="${INK}" stroke-width="4.5"/>`;
-  if(o.laptop) g+=`<g transform="translate(0 26)"><path d="M70 288 L86 206 Q88 198 98 198 L202 198 Q212 198 214 206 L230 288 Z" fill="#eef0f2" ${S}/><circle cx="150" cy="244" r="13" fill="${G}"/>
-    <ellipse cx="80" cy="208" rx="16" ry="13" fill="${fill}" ${S}/><ellipse cx="220" cy="208" rx="16" ry="13" fill="${fill}" ${S}/></g>`;
-  if(o.mug) g+=`<g transform="translate(222 170)"><path d="M0 0 L46 0 L42 52 Q41 60 33 60 L13 60 Q5 60 4 52 Z" fill="#fff" ${S}/><path d="M45 14 Q64 14 62 30 Q60 42 43 42" fill="none" ${S}/><path d="M14 -12 q-6 -10 2 -20 M30 -12 q-6 -10 2 -20" fill="none" stroke="#c9c4bc" stroke-width="4.5" stroke-linecap="round"/></g>
-    <ellipse cx="226" cy="214" rx="15" ry="13" fill="${fill}" ${S}/>`;
+    smile:`<path d="M143 ${my} Q150 ${my+7} 157 ${my}" fill="none" stroke="${INK}" stroke-width="4.5" stroke-linecap="round"/>`,
+    open:`<path d="M140 ${my-2} Q150 ${my+18} 160 ${my-2} Q150 ${my+1} 140 ${my-2} Z" fill="${INK}"/><ellipse cx="150" cy="${my+8}" rx="5" ry="3" fill="#ff9a9a"/>`,
+    flat:`<path d="M144 ${my+2} L156 ${my+2}" stroke="${INK}" stroke-width="4.5" stroke-linecap="round"/>`,
+    wave:`<path d="M139 ${my+2} q3.7 -4.5 7.3 0 t7.3 0 t7.3 0" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`,
+    o:`<ellipse cx="150" cy="${my+4}" rx="6.5" ry="8" fill="${INK}"/>`,
+    cat:`<path d="M140 ${my} Q145 ${my+6} 150 ${my} Q155 ${my+6} 160 ${my}" fill="none" stroke="${INK}" stroke-width="4.5" stroke-linecap="round"/>`,
+  }[o.mouth||"smile"];
+  g+=`<ellipse cx="${L-24}" cy="${ey+18}" rx="15" ry="8.5" fill="#ffa99f" opacity=".55" filter="url(#f${k})"/><ellipse cx="${R+24}" cy="${ey+18}" rx="15" ry="8.5" fill="#ffa99f" opacity=".55" filter="url(#f${k})"/>`;
+  g+=eye(L)+eye(R)+mouth;
+  if(o.glasses) g+=`<g fill="none" stroke="${INK}" stroke-width="3.2" opacity=".85"><circle cx="${L}" cy="${ey}" r="21"/><circle cx="${R}" cy="${ey}" r="21"/><path d="M141 ${ey-2} Q150 ${ey-7} 159 ${ey-2}"/></g>`;
+  if(o.sweat) g+=`<path d="M232 ${top+42} Q248 ${top+64} 240 ${top+78} Q226 ${top+84} 222 ${top+70} Q222 ${top+58} 232 ${top+42} Z" fill="#9fd4ff" opacity=".9"/><ellipse cx="228" cy="${top+66}" rx="3" ry="5" fill="#fff" opacity=".8"/>`;
+  if(o.laptop) g+=`<g transform="translate(0 28)"><ellipse cx="150" cy="282" rx="86" ry="8" fill="#3b3226" opacity=".12" filter="url(#f${k})"/>
+    <path d="M74 284 L88 206 Q90 196 102 196 L198 196 Q210 196 212 206 L226 284 Z" fill="url(#lp${k})"/><circle cx="150" cy="240" r="11" fill="${G}"/>
+    ${arm(84,204,70)}${arm(216,204,-70)}</g>`;
+  if(o.mug) g+=`<g transform="translate(206 176)"><path d="M0 0 L44 0 L40 50 Q39 58 31 58 L13 58 Q5 58 4 50 Z" fill="#fff"/><path d="M0 0 L44 0 L42.5 18 L1.5 18 Z" fill="${G}" opacity=".9"/><path d="M43 14 Q62 14 60 30 Q58 42 41 42" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round"/>
+    <path d="M14 -10 q-6 -10 2 -20 M30 -10 q-6 -10 2 -20" fill="none" stroke="#c8c3ba" stroke-width="4" stroke-linecap="round"/></g>${arm(210,214,-60)}`;
   const flip=o.flip?`transform="translate(300 0) scale(-1 1)"`:"";
-  return `<svg class="ch" viewBox="0 -20 300 320" style="left:${o.x}px;top:${o.y}px;width:${o.w||300}px;overflow:visible"><g ${flip}>${g}</g></svg>`;
+  return `<svg class="ch" viewBox="0 -20 300 320" style="left:${o.x}px;top:${o.y}px;width:${o.w||300}px;overflow:visible">${defs}<g ${flip}>${g}</g></svg>`;
 }
 const check=`<svg width="18" height="18" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const icon={
@@ -202,9 +208,9 @@ pages.push(frame(4,`
 // 5 동료
 pages.push(frame(5,`
   <div class="bub tr2 g" style="right:60px;top:80px">아직도 손으로 써?<br>그냥 Claude한테 말해</div>
-  ${blob({x:540,y:380,w:360,kind:"cat",eye:"smug",mouth:"cat",mug:true,flip:true})}
-  ${blob({x:40,y:430,w:330,eye:"shock",mouth:"o",arms:"up"})}
-  <div class="sfx" style="left:60px;top:370px;font-size:56px;color:var(--ink)">!?</div>
+  ${blob({x:580,y:370,w:330,kind:"senior",eye:"calm",mouth:"smile",glasses:true,flip:true})}
+  ${blob({x:60,y:420,w:330,eye:"shock",mouth:"o",arms:"up"})}
+  <div class="sfx" style="left:90px;top:380px;font-size:52px;color:var(--g)">!?</div>
 `,{step:"그때",h:`옆자리 동료가<br>한마디 던졌다`,foot:"velog-mcp = 벨로그용 MCP 서버"}));
 
 // 6 채팅
