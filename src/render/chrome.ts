@@ -216,6 +216,13 @@ const BASE_FLAGS: readonly string[] = [
 	'--hide-scrollbars',
 	// 네트워크 원천 차단. 이 페이지는 외부를 볼 일이 없다.
 	'--host-resolver-rules=MAP * ~NOTFOUND',
+	// 코드서명 복제본을 만들지 않는다. 맥 크롬은 실행마다 앱을 /var/folders/.../X/ 에
+	//   복제하고 정상 종료 때만 지운다. 우리는 SIGKILL 로 끝내고, 헤드리스는 SIGTERM 으로
+	//   끝내도 남는다(Chrome 155 실측). 렌더마다 약 1,340 항목짜리 복제본이 남아 수만 개가
+	//   쌓이면 부팅 초기 X/ 청소가 끝나지 않아 맥이 로그인 직후 멈출 수 있다.
+	//   이 플래그를 주면 SIGKILL 해도 복제본이 생기지 않는다.
+	//   --disable-features 를 하나 더 두면 크롬은 마지막 것만 쓴다. 늘릴 때는 이 줄에 합친다.
+	'--disable-features=MacAppCodeSignClone',
 ];
 
 interface RunOptions {
