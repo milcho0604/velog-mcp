@@ -195,6 +195,21 @@ describe('★ R3 — 렌더 페이지는 네트워크를 못 쓴다', () => {
 		assert.match(src, /--user-data-dir=/, '임시 프로필을 안 쓰면 사용자 크롬 프로필을 건드린다');
 	});
 
+	test('크롬이 코드서명 복제본을 남기지 않는다', async () => {
+		// 우리는 크롬을 SIGKILL 로 끝낸다. 이 플래그가 빠지면 렌더마다 /var/folders/.../X/ 에
+		//   복제본이 하나씩 남고, 수만 개가 쌓이면 맥 부팅이 X/ 청소에서 멈춘다.
+		const src = codeOnly(await readFile(new URL('../render/chrome.ts', import.meta.url), 'utf8'));
+		assert.match(
+			src,
+			/--disable-features=MacAppCodeSignClone/,
+			'복제본 차단 플래그가 사라졌다. 렌더마다 X/ 에 크롬 복제본이 쌓인다',
+		);
+		assert.equal(
+			src.match(/--disable-features=/g)?.length, 1,
+			'--disable-features 가 둘 이상이면 크롬은 마지막 것만 쓴다. 한 줄에 합쳐라',
+		);
+	});
+
 	test('렌더 모듈이 외부 리소스를 참조하지 않는다', async () => {
 		for (const name of ['page.ts', 'sequence.ts', 'cover.ts', 'icons.ts', 'tones.ts', 'index.ts', 'chrome.ts']) {
 			const src = codeOnly(await readFile(new URL(`../render/${name}`, import.meta.url), 'utf8'));
